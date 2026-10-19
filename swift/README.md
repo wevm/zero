@@ -16,7 +16,7 @@ end-to-end tests against `zero-cache` and the zbugs app.
 
 - Swift 6.2
 - iOS 26 or macOS 26. The `Zero` module also builds on Linux.
-- A `zero-cache` that speaks sync protocol 53 (Zero 1.12 or later)
+- A `zero-cache` that speaks sync protocol 53 (Zero 1.11 or later)
 
 ## Install
 
@@ -89,7 +89,7 @@ Xcode with Product › Build Documentation.
 
 | Zero for Swift | Sync protocol | `zero-cache` | Conformance vectors from |
 | -------------- | ------------- | ------------ | ------------------------ |
-| 0.1            | 53            | 1.12+        | Zero 1.12.0              |
+| 0.1            | 53            | 1.11+        | Zero 1.12 (`main`)       |
 
 ## License
 

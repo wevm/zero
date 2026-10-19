@@ -84,8 +84,11 @@ apps/zbugs-swift/           dogfood app (iOS + macOS)
   A `package` type with `@inlinable` members must itself be
   `@usableFromInline`, or other modules silently get unspecialized calls.
 - The CLI ships as the unscoped npm package `zero-swift` (we don't own the
-  `@rocicorp` scope) with a peer dependency on `@rocicorp/zero`. It is
-  versioned with the Swift releases.
+  `@rocicorp` scope) with a peer dependency on `@rocicorp/zero` (1.11 or
+  later: `drift record` must run the app's own copy). It is versioned with
+  the Swift releases. `pnpm --filter zero-swift build` bundles it with
+  esbuild, inlining the workspace sources it imports. The package stays
+  `private` until the first publish is approved.
 - License: Apache-2.0, like this repository.
 - Docs: a DocC catalog per library product, with a getting-started article
   and a JS→Swift parity matrix (`Zero.docc/JSParity.md`). Oxfmt skips the

@@ -47,6 +47,9 @@ jobs:
         run: pnpm --filter zero-swift run test
       - name: Check types
         run: pnpm --filter zero-conformance --filter zero-swift run check-types
+      # The published CLI is a bundle; this keeps it bundling.
+      - name: Build the zero-swift CLI
+        run: pnpm --filter zero-swift run build
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: generated-vectors

@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * `zero-swift codegen`: generates the Swift row types, schema, and query
  * builder of a Zero app from its TypeScript schema.
@@ -49,7 +48,7 @@ export async function codegenFile(config: Config, cwd: string) {
   );
 }
 
-async function main(argv: string[]): Promise<number> {
+export async function main(argv: string[]): Promise<number> {
   const {values, positionals} = parseArgs({
     args: argv,
     allowPositionals: true,
@@ -119,8 +118,4 @@ function writeOutput(
   }
   process.stdout.write(`Wrote ${relative(cwd, output)}\n`);
   return 0;
-}
-
-if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
-  process.exitCode = await main(process.argv.slice(2));
 }

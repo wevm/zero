@@ -1,14 +1,23 @@
 {
   "name": "zero-swift",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Generates the Swift row types and schema of a Zero app for the Zero Swift client.",
   "license": "Apache-2.0",
   "bin": {
-    "zero-swift": "./src/cli.ts"
+    "zero-swift": "./src/bin.ts"
   },
+  "files": [
+    "dist"
+  ],
   "type": "module",
+  "publishConfig": {
+    "bin": {
+      "zero-swift": "./dist/bin.js"
+    }
+  },
   "scripts": {
+    "build": "esbuild src/bin.ts --bundle --platform=node --format=esm --target=node22 --splitting --outdir=dist --external:@rocicorp/zero --external:typescript",
     "test": "vitest run",
     "generate": "UPDATE_GENERATED=1 vitest run",
     "check-types": "tsc",
@@ -20,11 +29,19 @@
     "typescript": "6.0.3"
   },
   "devDependencies": {
+    "@rocicorp/zero": "workspace:*",
     "@types/node": "^22.10.5",
+    "esbuild": "0.27.7",
     "oxfmt": "^0.65.0",
     "vitest": "^5.0.0",
     "zero-schema": "workspace:*",
     "zero-types": "workspace:*",
     "zql": "workspace:*"
+  },
+  "peerDependencies": {
+    "@rocicorp/zero": ">=1.11.0"
+  },
+  "engines": {
+    "node": ">=22.18"
   }
 }
