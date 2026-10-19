@@ -22,7 +22,7 @@
     @ObservationIgnored private var token: String?
     private let defaults: UserDefaults
 
-    public static let projectName = zeroProjectName
+    public nonisolated static let projectName = zeroProjectName
 
     public init(defaults: UserDefaults = .standard) {
       self.defaults = defaults
