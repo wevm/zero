@@ -35,47 +35,48 @@ mode, Node 22.23. Medians; lower is better.
 
 | Benchmark                                  | JS      | Swift   |
 | ------------------------------------------ | ------- | ------- |
-| zero.bench: all 1000 rows x 10 columns     | 263 µs  | 220 µs  |
-| zero.bench: pk = N                         | 7.72 µs | 7.68 µs |
-| zero.bench: lower 500 rows                 | 261 µs  | 213 µs  |
-| materialize 1,000 rows                     | 282 µs  | 135 µs  |
-| materialize 10,000 rows                    | 2.70 ms | 1.69 ms |
-| materialize 100,000 rows                   | 43.2 ms | 23.2 ms |
-| memory for 100,000 rows and a view of them | 164 MB  | 98 MB   |
-| optimistic update with a 1000-row view     | 178 µs  | 21 µs   |
+| zero.bench: all 1000 rows x 10 columns     | 263 µs  | 197 µs  |
+| zero.bench: pk = N                         | 7.72 µs | 8.11 µs |
+| zero.bench: lower 500 rows                 | 261 µs  | 206 µs  |
+| materialize 1,000 rows                     | 282 µs  | 111 µs  |
+| materialize 10,000 rows                    | 2.70 ms | 1.21 ms |
+| materialize 100,000 rows                   | 43.2 ms | 11.5 ms |
+| memory for 100,000 rows and a view of them | 164 MB  | 128 MB  |
+| optimistic update with a 1000-row view     | 178 µs  | 23 µs   |
 
 Swift only:
 
 | Benchmark                                                 | Swift   |
 | --------------------------------------------------------- | ------- |
-| materialize 1,000 rows as structs                         | 552 µs  |
-| materialize 10,000 rows as structs                        | 6.19 ms |
-| materialize 100,000 rows as structs                       | 85.5 ms |
-| optimistic update with a 1000-row live query of structs   | 92 µs   |
-| poke putting 1 row, 1000-row view                         | 28 µs   |
-| poke putting 100 rows, 1000-row view                      | 1.08 ms |
-| poke putting 1000 rows, 1000-row view                     | 10.7 ms |
-| round trip (update, push, confirming poke), 1000-row view | 79 µs   |
+| materialize 1,000 rows as structs                         | 256 µs  |
+| materialize 10,000 rows as structs                        | 2.86 ms |
+| materialize 100,000 rows as structs                       | 29.7 ms |
+| optimistic update with a 1000-row live query of structs   | 91 µs   |
+| poke putting 1 row, 1000-row view                         | 29 µs   |
+| poke putting 100 rows, 1000-row view                      | 1.00 ms |
+| poke putting 1000 rows, 1000-row view                     | 9.82 ms |
+| round trip (update, push, confirming poke), 1000-row view | 80 µs   |
 
 JS views hand out their rows; Swift apps read them as structs, which costs
-about four times the materialization. A live query reads only the rows
-that changed after the first read.
+about two and a half times the materialization, and less than JS takes to
+materialize the rows alone. A live query reads only the rows that changed
+after the first read.
 
 ### Data structures
 
 | Benchmark                              | JS                          | Swift                    |
 | -------------------------------------- | --------------------------- | ------------------------ |
-| BTreeSet values() full scan (1000)     | 3.60 µs                     | 2.67 µs                  |
-| BTreeSet valuesFrom() from mid         | 2.35 µs                     | 1.40 µs                  |
-| BTreeSet valuesReversed() full scan    | 4.29 µs                     | 0.92 µs                  |
-| BTreeSet valuesFromReversed() from mid | 2.55 µs                     | 0.59 µs                  |
-| BTreeSet has() hit (x3)                | 67 ns                       | 199 ns                   |
-| BTreeSet has() miss (x3)               | 63 ns                       | 91 ns                    |
-| BTreeSet get() hit (x3)                | 70 ns                       | 193 ns                   |
-| BTreeSet add() then delete()           | 109 ns                      | 160 ns                   |
-| BTreeSet add() 100 sequential keys     | 6.29 µs                     | 4.62 µs                  |
-| BTreeSet add() 1000 sequential keys    | 63.6 µs                     | 71.5 µs                  |
-| BTreeSet sort, then add() 1000 keys    | 104 µs                      | 42 µs                    |
+| BTreeSet values() full scan (1000)     | 3.60 µs                     | 2.71 µs                  |
+| BTreeSet valuesFrom() from mid         | 2.35 µs                     | 1.45 µs                  |
+| BTreeSet valuesReversed() full scan    | 4.29 µs                     | 0.99 µs                  |
+| BTreeSet valuesFromReversed() from mid | 2.55 µs                     | 0.60 µs                  |
+| BTreeSet has() hit (x3)                | 67 ns                       | 139 ns                   |
+| BTreeSet has() miss (x3)               | 63 ns                       | 61 ns                    |
+| BTreeSet get() hit (x3)                | 70 ns                       | 129 ns                   |
+| BTreeSet add() then delete()           | 109 ns                      | 149 ns                   |
+| BTreeSet add() 100 sequential keys     | 6.29 µs                     | 4.34 µs                  |
+| BTreeSet add() 1000 sequential keys    | 63.6 µs                     | 64.3 µs                  |
+| BTreeSet sort, then add() 1000 keys    | 104 µs                      | 38 µs                    |
 | h32, 64 / 1024 / 8192 chars            | 290 ns / 2.78 µs / 23.7 µs  | 23 ns / 168 ns / 1.26 µs |
 | h64, 64 / 1024 / 8192 chars            | 552 ns / 5.46 µs / 41.3 µs  | 35 ns / 318 ns / 2.45 µs |
 | h128, 64 / 1024 / 8192 chars           | 1.02 µs / 10.2 µs / 82.0 µs | 54 ns / 628 ns / 5.0 µs  |
@@ -99,8 +100,15 @@ times faster.
   every row.
 - Comparing strings in UTF-8 order walked them with iterators rather than
   their bytes.
+- A row was a `[String: JSONValue]`, so reading a column hashed its name:
+  comparing rows by key and reading rows as structs mostly hashed. Rows are
+  now keyed by column index (see DESIGN.md). Reading 100,000 rows as structs
+  went from 86 to 30 ms, and materializing them from 23 to 12 ms. The cost
+  is memory: a source's row no longer shares its storage with the local
+  store's copy, which adds about 30 MB per 100,000 rows of 10 columns.
+- B-tree lookups retained each node they passed (a lookup took about
+  64 ns, now 43 ns).
 
-Where Swift is still slower: B-tree lookups call their comparator through
-a closure, which V8 inlines. And a row is a `[String: JSONValue]`, so
-reading a column hashes its name: comparing rows by key and reading rows as
-structs mostly hash. Rows keyed by column index would remove most of that.
+Where Swift is still slower: B-tree lookups, which call their comparator
+through a closure that V8 inlines, and retain each node's keys as they read
+them.

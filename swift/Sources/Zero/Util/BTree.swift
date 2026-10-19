@@ -79,15 +79,22 @@ package struct BTreeSet<Element> {
   /// The stored element equal to `element`.
   @inlinable
   package func get(_ element: Element) -> Element? {
-    var node = root
-    while !node.isLeaf {
-      let i = lowerBound(node.keys) { compare($0, element) }
-      if i == node.keys.count { return nil }
-      node = node.children[i]
+    // The tree keeps its nodes alive for the walk, which therefore needn't
+    // retain each one it passes.
+    withExtendedLifetime(root) {
+      unowned(unsafe) var node = root
+      while !node.isLeaf {
+        let i = node.keys.withUnsafeBufferPointer { keys in
+          lowerBound(keys) { compare($0, element) }
+        }
+        if i == node.keys.count { return nil }
+        node = node.children.withUnsafeBufferPointer { $0[i] }
+      }
+      return node.keys.withUnsafeBufferPointer { keys in
+        let i = lowerBound(keys) { compare($0, element) }
+        return i < keys.count && compare(keys[i], element) == 0 ? keys[i] : nil
+      }
     }
-    let i = lowerBound(node.keys) { compare($0, element) }
-    if i < node.keys.count && compare(node.keys[i], element) == 0 { return node.keys[i] }
-    return nil
   }
 
   @inlinable
@@ -318,6 +325,18 @@ package struct BTreeSet<Element> {
       return nil
     }
   }
+}
+
+/// The first index whose element compares `>= 0`.
+@inlinable
+func lowerBound<E>(_ keys: UnsafeBufferPointer<E>, _ cmp: (E) -> Int) -> Int {
+  var low = 0
+  var high = keys.count
+  while low < high {
+    let mid = (low + high) >> 1
+    if cmp(keys[mid]) < 0 { low = mid + 1 } else { high = mid }
+  }
+  return low
 }
 
 /// The first index whose element compares `>= 0`.
