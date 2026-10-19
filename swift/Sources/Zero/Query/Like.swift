@@ -157,3 +157,15 @@ enum JSCase {
     return cu
   }
 }
+
+/// Escapes the wildcards of `value` (`%` and `_`) for a `LIKE` pattern, as
+/// in `.where { $0.title.ilike("%\(escapeLike(text))%") }`
+/// (`packages/zql/src/query/escape-like.ts`).
+public func escapeLike(_ value: String) -> String {
+  var out = ""
+  for c in value.unicodeScalars {
+    if c == "%" || c == "_" { out.unicodeScalars.append("\\") }
+    out.unicodeScalars.append(c)
+  }
+  return out
+}

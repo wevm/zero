@@ -17,6 +17,39 @@ where Result.Row == Row {
   }
 }
 
+/// A named query whose arguments can come as JSON: what the drift harness
+/// checks against the TS definition of the same name.
+public protocol NamedQuery<Context>: Sendable {
+  associatedtype Context: Sendable
+  var name: String { get }
+  /// The query for `args` (none, or one JSON value) read as the
+  /// definition's argument type, with the arguments it sends for them.
+  func query(json args: [JSONValue], context: Context) throws -> (AnyQuery, args: [JSONValue])
+}
+
+extension QueryDefinition: NamedQuery where Args: Decodable {
+  public func query(
+    json args: [JSONValue], context: Context
+  ) throws -> (
+    AnyQuery, args: [JSONValue]
+  ) {
+    let decoded = try JSONValueDecoder.decode(Args.self, from: args.first ?? .null)
+    let request = self(decoded)
+    return (request.query(context), request.args)
+  }
+}
+
+extension NoArgsQueryDefinition: NamedQuery {
+  public func query(
+    json args: [JSONValue], context: Context
+  ) throws -> (
+    AnyQuery, args: [JSONValue]
+  ) {
+    let request = self()
+    return (request.query(context), request.args)
+  }
+}
+
 /// A named query without arguments.
 public struct NoArgsQueryDefinition<Context: Sendable, Row: ZeroRow, Result: QueryResult>: Sendable
 where Result.Row == Row {
@@ -101,6 +134,13 @@ public protocol Mutator<Context>: Sendable {
   /// Runs the mutator in `tx`. `args` is nil when the caller passed none.
   /// Returns what the caller's `client` result carries.
   @MainActor func run(_ tx: Transaction, args: JSONValue?, context: Context) throws -> JSONValue?
+  /// `args` read as the mutator's argument type and encoded again: what
+  /// the client would send for them.
+  func reencode(args: JSONValue?) throws -> JSONValue?
+}
+
+extension Mutator {
+  public func reencode(args: JSONValue?) throws -> JSONValue? { args }
 }
 
 /// A mutator defined in Swift (`defineMutator` in
@@ -122,6 +162,10 @@ public struct MutatorDefinition<Args: Codable & Sendable, Context: Sendable>: Mu
   public func run(_ tx: Transaction, args: JSONValue?, context: Context) throws -> JSONValue? {
     let decoded = try JSONValueDecoder.decode(Args.self, from: args ?? .null)
     return try body(tx, decoded, context)
+  }
+
+  public func reencode(args: JSONValue?) throws -> JSONValue? {
+    encodeArgs(try JSONValueDecoder.decode(Args.self, from: args ?? .null))
   }
 }
 
@@ -145,6 +189,13 @@ public struct MutateRequest<Context: Sendable>: Sendable {
   public let mutator: any Mutator<Context>
   /// nil when the mutator takes no arguments (JS `undefined`).
   public let args: JSONValue?
+
+  /// A request with arguments already in their JSON form, for example to
+  /// replay a mutation by name. Prefer calling the mutator definition.
+  public init(mutator: any Mutator<Context>, args: JSONValue?) {
+    self.mutator = mutator
+    self.args = args
+  }
 
   public var name: String { mutator.name }
 }

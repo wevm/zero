@@ -130,6 +130,14 @@ public struct Query<Row: ZeroRow, Result: QueryResult>: Sendable where Result.Ro
     Self(any.where(Row.column(column), op, value.zeroValue))
   }
 
+  /// Compares a column with a value that may be nil. nil compares with
+  /// `op` as JS compares `undefined`, so `.eq` with nil matches no row.
+  public func `where`<V: ZeroValue>(
+    _ column: KeyPath<Row, V>, _ op: AST.SimpleOperator, _ value: V?
+  ) -> Self {
+    Self(any.where(Row.column(column), op, value?.zeroValue ?? .null))
+  }
+
   /// `IN` and `NOT IN`.
   public func `where`<V: ZeroValue>(
     _ column: KeyPath<Row, V>, _ op: AST.SimpleOperator, _ values: [V]
@@ -198,6 +206,17 @@ public struct Query<Row: ZeroRow, Result: QueryResult>: Sendable where Result.Ro
   /// Starts after `row`, or at it when `inclusive`.
   public func start(_ row: Row, inclusive: Bool = false) -> Self {
     Self(any.start(row.columnValues, inclusive: inclusive))
+  }
+
+  /// Starts after the row with these column values, or at it when
+  /// `inclusive`: a cursor that holds only the columns the query orders by,
+  /// as in `.start([\.created: page.created, \.id: page.id])`.
+  public func start(
+    _ values: [PartialKeyPath<Row>: any ZeroValue], inclusive: Bool = false
+  ) -> Self {
+    var row: [String: JSONValue] = [:]
+    for (keyPath, value) in values { row[Row.column(keyPath)] = value.zeroValue }
+    return Self(any.start(row, inclusive: inclusive))
   }
 
   /// At most one row.
@@ -325,12 +344,20 @@ public struct RowExpression<Row: ZeroRow>: Sendable {
         name, flip: flip, scalar: scalar, sub.map { sub in { sub(Query<R, [R]>($0)).any } }))
   }
 
-  public func and(_ conditions: Condition...) -> Condition {
-    Condition(andConditions(conditions.map(\.ast)))
+  /// All of `conditions`, leaving out the nil ones; true when there are
+  /// none.
+  public func and(_ conditions: Condition?...) -> Condition { and(conditions) }
+
+  public func and(_ conditions: [Condition?]) -> Condition {
+    Condition(andConditions(conditions.compactMap { $0?.ast }))
   }
 
-  public func or(_ conditions: Condition...) -> Condition {
-    Condition(orConditions(conditions.map(\.ast)))
+  /// Any of `conditions`, leaving out the nil ones; false when there are
+  /// none.
+  public func or(_ conditions: Condition?...) -> Condition { or(conditions) }
+
+  public func or(_ conditions: [Condition?]) -> Condition {
+    Condition(orConditions(conditions.compactMap { $0?.ast }))
   }
 
   public func not(_ condition: Condition) -> Condition { !condition }

@@ -181,3 +181,35 @@ extension KeyedEncodingContainer {
     try encodeIfPresent(value.wrappedValue, forKey: key)
   }
 }
+
+/// An argument the TS validator declares `nullable` (`z.nullable(…)`):
+/// `nil` encodes as `null`. A plain optional is omitted when `nil`, as an
+/// `optional` field is.
+@propertyWrapper
+public struct Nullable<Value> {
+  public var wrappedValue: Value?
+
+  public init(wrappedValue: Value?) { self.wrappedValue = wrappedValue }
+}
+
+extension Nullable: Sendable where Value: Sendable {}
+extension Nullable: Equatable where Value: Equatable {}
+extension Nullable: Hashable where Value: Hashable {}
+
+extension Nullable: Codable where Value: Codable {
+  public init(from decoder: any Decoder) throws {
+    let c = try decoder.singleValueContainer()
+    self.init(wrappedValue: c.decodeNil() ? nil : try c.decode(Value.self))
+  }
+
+  public func encode(to encoder: any Encoder) throws {
+    var c = encoder.singleValueContainer()
+    if let v = wrappedValue { try c.encode(v) } else { try c.encodeNil() }
+  }
+}
+
+extension KeyedDecodingContainer {
+  public func decode<V: Codable>(_ type: Nullable<V>.Type, forKey key: Key) throws -> Nullable<V> {
+    try decodeIfPresent(type, forKey: key) ?? Nullable(wrappedValue: nil)
+  }
+}

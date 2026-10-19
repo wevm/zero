@@ -44,7 +44,7 @@ public struct AST: Sendable, Hashable {
     }
   }
 
-  public enum Direction: String, Sendable, Hashable {
+  public enum Direction: String, Codable, Sendable, Hashable {
     case asc, desc
   }
 
