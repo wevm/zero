@@ -51,6 +51,14 @@ Log in from the account menu with the printed token, or through GitHub when
 the API server has `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` (it
 redirects back to `zbugs-swift://auth`). Servers… points the app elsewhere.
 
+On an iPhone or an iPad, start the backend with `ZBUGS_HOST=0.0.0.0` so the
+device can reach it, and in the app set Servers… to this Mac's address on the
+network (for example `http://192.168.1.20:4848` and
+`http://192.168.1.20:5173`), then log in with the token. The app keeps both.
+A token and servers passed in its environment, as Xcode's scheme or the UI
+test passes them, last only for that launch: opened from the home screen, the
+app goes back to the saved ones.
+
 ## End-to-end tests
 
 `BackendTests` runs the Swift queries and mutators against the backend: the
