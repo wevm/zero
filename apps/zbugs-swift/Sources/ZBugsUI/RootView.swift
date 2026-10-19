@@ -30,8 +30,11 @@
     /// around.
     @State private var columns = NavigationSplitViewVisibility.all
     /// The column an iPhone shows: the list, with the filters before it and
-    /// the selected issue after.
-    @State private var compactColumn = NavigationSplitViewColumn.content
+    /// the selected issue after. It starts at the filters and moves to the
+    /// list as the view appears: a list that has rows before its navigation
+    /// bar is set up (from the local store, offline) opens with its large
+    /// title collapsed.
+    @State private var compactColumn = NavigationSplitViewColumn.sidebar
     #if os(iOS)
       @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
@@ -79,6 +82,7 @@
           ContentUnavailableView("No Issue Selected", systemImage: "list.bullet.rectangle")
         }
       }
+      .onAppear { compactColumn = .content }
       // A new issue is selected outside a List, which a collapsed split
       // view doesn't follow on its own.
       .onChange(of: selection) { _, selection in
