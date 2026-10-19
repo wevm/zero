@@ -41,6 +41,8 @@ export type ScenarioOptions = {
   queryURL?: string | undefined;
   queryHeaders?: Record<string, string> | undefined;
   storageKey?: string | undefined;
+  /** Defaults to 5 minutes, the JS default. */
+  hiddenTabDisconnectDelay?: number | undefined;
 };
 
 export type Step =
@@ -88,6 +90,11 @@ export type Step =
       socket?: number;
     }
   | {op: 'advance'; ms: number}
+  /**
+   * The app goes to the background (`hidden`) or comes back (`visible`), as a
+   * tab does (`document.visibilityState`).
+   */
+  | {op: 'visibility'; state: 'visible' | 'hidden'}
   /** `zero.connection.connect()`. */
   | {op: 'connect'; auth?: string}
   | {op: 'close'}
@@ -117,6 +124,32 @@ export type Scenario = {
 };
 
 type Settled = 'pending' | ReadonlyJSONValue;
+
+/** The document whose visibility the client follows. */
+class FakeDocument {
+  visibilityState: DocumentVisibilityState = 'visible';
+  readonly #listeners = new Set<() => void>();
+
+  addEventListener(
+    _type: string,
+    listener: () => void,
+    options?: {signal?: AbortSignal},
+  ): void {
+    this.#listeners.add(listener);
+    options?.signal?.addEventListener('abort', () =>
+      this.#listeners.delete(listener),
+    );
+  }
+
+  removeEventListener(_type: string, listener: () => void): void {
+    this.#listeners.delete(listener);
+  }
+
+  setVisibility(state: DocumentVisibilityState): void {
+    this.visibilityState = state;
+    for (const listener of [...this.#listeners]) listener();
+  }
+}
 
 export type StepResult = {
   /** Thrown synchronously by the step, such as an unknown query. */
@@ -227,6 +260,8 @@ export async function runScenario(scenario: Scenario): Promise<StepResult[]> {
   }
   vi.stubGlobal('WebSocket', RecordingSocket);
   vi.stubGlobal('CloseEvent', CloseEventPolyfill);
+  const document = new FakeDocument();
+  vi.stubGlobal('document', document);
 
   const events: ReadonlyJSONValue[] = [];
   const scenarioKey = ++scenarioCount;
@@ -252,6 +287,7 @@ export async function runScenario(scenario: Scenario): Promise<StepResult[]> {
       mutateHeaders: options.mutateHeaders,
       queryURL: options.queryURL,
       queryHeaders: options.queryHeaders,
+      hiddenTabDisconnectDelay: options.hiddenTabDisconnectDelay,
       // In-memory stores outlive their Zero instance, keyed by name, so every
       // scenario gets a store of its own. The storage key is not sent.
       storageKey: `${options.storageKey ?? ''}#scenario-${scenarioKey}`,
@@ -449,6 +485,9 @@ export async function runScenario(scenario: Scenario): Promise<StepResult[]> {
         return;
       case 'advance':
         await vi.advanceTimersByTimeAsync(step.ms);
+        return;
+      case 'visibility':
+        document.setVisibility(step.state);
         return;
       case 'connect':
         void z.connection.connect(

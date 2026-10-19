@@ -5,6 +5,7 @@ import {mutationScenarios} from './scenarios/mutations.ts';
 import {persistenceScenarios} from './scenarios/persistence.ts';
 import {pokeScenarios} from './scenarios/pokes.ts';
 import {queryScenarios} from './scenarios/queries.ts';
+import {visibilityScenarios} from './scenarios/visibility.ts';
 
 export const scenarios: Scenario[] = [
   ...connectionScenarios,
@@ -13,4 +14,5 @@ export const scenarios: Scenario[] = [
   ...queryScenarios,
   ...mutationScenarios,
   ...persistenceScenarios,
+  ...visibilityScenarios,
 ];
