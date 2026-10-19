@@ -74,14 +74,21 @@
             .foregroundStyle(issue.open ? Color.green : Color.purple)
           Text(issue.title).font(.headline).lineLimit(2)
         }
-        HStack(spacing: 6) {
-          // On one line, before the labels.
-          Text(issue.subtitle).lineLimit(1).layoutPriority(1)
-          ForEach(issue.labels ?? [], id: \.id) { label in
-            Text(label.name)
-              .lineLimit(1)
-              .padding(.horizontal, 6)
-              .background(.quaternary, in: Capsule())
+        Group {
+          if (issue.labels ?? []).isEmpty {
+            subtitle
+          } else {
+            // The labels after the subtitle, or below it in a narrow column.
+            ViewThatFits(in: .horizontal) {
+              HStack(spacing: 6) {
+                subtitle
+                labels
+              }
+              VStack(alignment: .leading, spacing: 4) {
+                subtitle
+                HStack(spacing: 6) { labels }
+              }
+            }
           }
         }
         .font(.caption)
@@ -90,6 +97,20 @@
       .padding(.vertical, 2)
       .accessibilityElement(children: .combine)
       .accessibilityIdentifier("IssueRow")
+    }
+
+    private var subtitle: some View {
+      Text(issue.subtitle).lineLimit(1)
+    }
+
+    /// Whole, never squeezed.
+    private var labels: some View {
+      ForEach(issue.labels ?? [], id: \.id) { label in
+        Text(label.name)
+          .padding(.horizontal, 6)
+          .background(.quaternary, in: Capsule())
+          .fixedSize()
+      }
     }
   }
 
