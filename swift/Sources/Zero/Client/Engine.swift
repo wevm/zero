@@ -1170,7 +1170,7 @@ final class Engine {
           clientID: clientID, id: mutationID, name: name, args: pending.args,
           timestamp: pending.timestamp))
     ])
-    context.processChanges(diff)
+    context.processChanges(diff, rows: tx.rows)
     requestPush(now: false)
     fireWatchers(diff)
     client.resolve(.success(data: result))

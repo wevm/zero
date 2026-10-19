@@ -2,18 +2,26 @@
 /// `undefined` property does in JS.
 ///
 /// It reads and writes like a `[String: JSONValue]`. Inside, the values sit
-/// in an array, in the order of a layout the rows of a table share, so code
+/// in one buffer, in the order of a layout the rows of a table share, so code
 /// that knows the layout reads a column by index instead of hashing its
-/// name.
-public struct Row: Sendable {
-  @usableFromInline package var layout: RowLayout
-  /// A value for each of the layout's columns; nil where the row has none.
-  @usableFromInline package var slots: [JSONValue?]
+/// name. Copies share the buffer until one of them changes.
+// Unchecked: a row only writes storage it alone owns.
+public struct Row: @unchecked Sendable {
+  @usableFromInline var storage: RowStorage
 
   @inlinable
+  init(storage: RowStorage) {
+    self.storage = storage
+  }
+
+  /// A row of `slots`, a value or nil for each of `layout`'s columns.
   package init(layout: RowLayout, slots: [JSONValue?]) {
-    self.layout = layout
-    self.slots = slots
+    precondition(slots.count == layout.names.count)
+    storage = .make(layout) { values in
+      slots.withUnsafeBufferPointer {
+        values.initialize(from: $0.baseAddress!, count: $0.count)
+      }
+    }
   }
 
   /// An empty row.
@@ -30,21 +38,25 @@ public struct Row: Sendable {
   /// The row of `dictionary`'s columns in `layout`, with any others after
   /// them.
   package init(_ dictionary: [String: JSONValue], layout: RowLayout) {
-    var slots = [JSONValue?](repeating: nil, count: layout.names.count)
     var others: [String] = []
-    for (name, value) in dictionary {
-      if let i = layout.index(of: name) {
-        slots[i] = value
-      } else {
-        others.append(name)
+    let storage = RowStorage.make(layout) { values in
+      values.initialize(repeating: nil, count: layout.names.count)
+      for (name, value) in dictionary {
+        if let i = layout.index(of: name) {
+          values[i] = value
+        } else {
+          others.append(name)
+        }
       }
     }
     if others.isEmpty {
-      self.init(layout: layout, slots: slots)
+      self.init(storage: storage)
     } else {
       others.sort(by: StringCompare.utf16Less)
+      let row = Row(storage: storage)
       self.init(
-        layout: RowLayout(layout.names + others), slots: slots + others.map { dictionary[$0] })
+        layout: RowLayout(layout.names + others),
+        slots: (0..<row.slotCount).map { row[slot: $0] } + others.map { dictionary[$0] })
     }
   }
 
@@ -52,18 +64,44 @@ public struct Row: Sendable {
   /// itself when it's in `layout` already.
   package func conformed(to layout: RowLayout) -> Row {
     if self.layout === layout { return self }
-    var slots = [JSONValue?](repeating: nil, count: layout.names.count)
     var others: [(String, JSONValue)] = []
-    for (name, value) in self {
-      if let i = layout.index(of: name) {
-        slots[i] = value
-      } else {
-        others.append((name, value))
+    let storage = RowStorage.make(layout) { values in
+      values.initialize(repeating: nil, count: layout.names.count)
+      for (name, value) in self {
+        if let i = layout.index(of: name) {
+          values[i] = value
+        } else {
+          others.append((name, value))
+        }
       }
     }
-    if others.isEmpty { return Row(layout: layout, slots: slots) }
+    let row = Row(storage: storage)
+    if others.isEmpty { return row }
     return Row(
-      layout: RowLayout(layout.names + others.map(\.0)), slots: slots + others.map(\.1))
+      layout: RowLayout(layout.names + others.map(\.0)),
+      slots: (0..<row.slotCount).map { row[slot: $0] } + others.map(\.1))
+  }
+
+  /// The layout of the row's columns.
+  @inlinable
+  package var layout: RowLayout { storage.header.layout }
+
+  /// How many columns the layout has.
+  @inlinable
+  package var slotCount: Int { storage.header.count }
+
+  /// The value of the layout's column `i`.
+  @inlinable
+  package subscript(slot i: Int) -> JSONValue? {
+    get {
+      precondition(i >= 0 && i < slotCount)
+      return storage.withUnsafeMutablePointerToElements { $0[i] }
+    }
+    set {
+      precondition(i >= 0 && i < slotCount)
+      if !isKnownUniquelyReferenced(&storage) { storage = storage.copy() }
+      storage.withUnsafeMutablePointerToElements { $0[i] = newValue }
+    }
   }
 
   /// The value of the column `name`.
@@ -71,15 +109,14 @@ public struct Row: Sendable {
   public subscript(name: String) -> JSONValue? {
     get {
       guard let i = layout.index(of: name) else { return nil }
-      return slots[i]
+      return self[slot: i]
     }
     set {
       if let i = layout.index(of: name) {
-        slots[i] = newValue
+        self[slot: i] = newValue
       } else if let newValue {
         // A new layout: others' rows keep theirs.
-        layout = layout.appending(name)
-        slots.append(newValue)
+        storage = storage.appending(name, newValue)
       }
     }
   }
@@ -95,7 +132,7 @@ public struct Row: Sendable {
   package subscript(column column: ColumnRef) -> JSONValue? {
     if layout === column.layout {
       guard let i = column.index else { return nil }
-      return slots[i]
+      return self[slot: i]
     }
     return self[column.name]
   }
@@ -104,28 +141,26 @@ public struct Row: Sendable {
   @discardableResult
   public mutating func removeValue(forKey name: String) -> JSONValue? {
     guard let i = layout.index(of: name) else { return nil }
-    defer { slots[i] = nil }
-    return slots[i]
+    defer { self[slot: i] = nil }
+    return self[slot: i]
   }
 
   /// How many columns have a value.
   public var count: Int {
     var n = 0
-    for slot in slots where slot != nil { n += 1 }
+    for i in 0..<slotCount where self[slot: i] != nil { n += 1 }
     return n
   }
 
-  public var isEmpty: Bool { slots.allSatisfy { $0 == nil } }
+  public var isEmpty: Bool { count == 0 }
 
   /// The names of the columns with a value, in the layout's order.
-  public var keys: [String] {
-    zip(layout.names, slots).compactMap { $1 == nil ? nil : $0 }
-  }
+  public var keys: [String] { map(\.key) }
 
   /// The row as a dictionary.
   public var dictionary: [String: JSONValue] {
     var out: [String: JSONValue] = [:]
-    out.reserveCapacity(slots.count)
+    out.reserveCapacity(slotCount)
     for (name, value) in self { out[name] = value }
     return out
   }
@@ -141,9 +176,9 @@ extension Row: Sequence {
 
     @inlinable
     public mutating func next() -> (key: String, value: JSONValue)? {
-      while i < row.slots.count {
+      while i < row.slotCount {
         defer { i += 1 }
-        if let value = row.slots[i] { return (row.layout.names[i], value) }
+        if let value = row[slot: i] { return (row.layout.names[i], value) }
       }
       return nil
     }
@@ -177,7 +212,11 @@ extension Row: ExpressibleByDictionaryLiteral {
 extension Row: Hashable {
   /// The same columns with equal values, whatever the layouts.
   public static func == (a: Row, b: Row) -> Bool {
-    if a.layout === b.layout { return a.slots == b.slots }
+    if a.storage === b.storage { return true }
+    if a.layout === b.layout {
+      for i in 0..<a.slotCount where a[slot: i] != b[slot: i] { return false }
+      return true
+    }
     var n = 0
     for (name, value) in a {
       guard let other = b[name], other == value else { return false }
@@ -256,7 +295,6 @@ package final class RowLayout: Sendable {
   }
 
   /// This layout with `name` after its columns.
-  @usableFromInline
   func appending(_ name: String) -> RowLayout {
     var indices = indices
     indices[name] = names.count
@@ -278,5 +316,64 @@ package struct ColumnRef: Sendable {
     self.layout = layout
     self.index = index
     self.name = name
+  }
+}
+
+@usableFromInline
+struct RowHeader {
+  @usableFromInline let layout: RowLayout
+  /// How many values follow: one for each of the layout's columns.
+  @usableFromInline let count: Int
+
+  @inlinable
+  init(layout: RowLayout, count: Int) {
+    self.layout = layout
+    self.count = count
+  }
+}
+
+/// A row's layout and its values, in one allocation. Rows share it until
+/// one changes, which copies it first unless it's the only owner.
+@usableFromInline
+final class RowStorage: ManagedBuffer<RowHeader, JSONValue?> {
+  /// Storage for a value for each of `layout`'s columns, which
+  /// `initialize` must initialize.
+  @inlinable
+  static func make(
+    _ layout: RowLayout, _ initialize: (UnsafeMutablePointer<JSONValue?>) throws -> Void
+  ) rethrows -> RowStorage {
+    let count = layout.names.count
+    let storage = unsafeDowncast(
+      create(minimumCapacity: count) { _ in RowHeader(layout: layout, count: count) },
+      to: RowStorage.self)
+    try storage.withUnsafeMutablePointerToElements { try initialize($0) }
+    return storage
+  }
+
+  @inlinable
+  func copy() -> RowStorage {
+    withUnsafeMutablePointers { header, values in
+      RowStorage.make(header.pointee.layout) {
+        $0.initialize(from: values, count: header.pointee.count)
+      }
+    }
+  }
+
+  /// A copy with the column `name` after the others.
+  @usableFromInline
+  func appending(_ name: String, _ value: JSONValue) -> RowStorage {
+    withUnsafeMutablePointers { header, values in
+      let count = header.pointee.count
+      return RowStorage.make(header.pointee.layout.appending(name)) {
+        $0.initialize(from: values, count: count)
+        ($0 + count).initialize(to: value)
+      }
+    }
+  }
+
+  deinit {
+    withUnsafeMutablePointers { header, values in
+      _ = values.deinitialize(count: header.pointee.count)
+    }
   }
 }

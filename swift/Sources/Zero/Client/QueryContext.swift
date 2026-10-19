@@ -102,9 +102,9 @@ final class QueryContext {
   }
 
   /// Pushes `diff` into the branch and flushes the views.
-  func processChanges(_ diff: KVDiff) {
+  func processChanges(_ diff: KVDiff, rows: [String: Row] = [:]) {
     batchViewUpdates {
-      branch.apply(diff)
+      branch.apply(diff, rows: rows)
       endTransaction()
     }
   }

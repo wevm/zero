@@ -58,7 +58,7 @@ extension ViewEntry {
   public func column<V: ZeroValue>(_ name: String, _ index: Int) throws(ZeroValueError) -> V {
     let names = row.layout.names
     if index < names.count && names[index] == name {
-      return try Self.decode(name, row.slots[index] ?? .null)
+      return try Self.decode(name, row[slot: index] ?? .null)
     }
     return try Self.decode(name, row[name] ?? .null)
   }

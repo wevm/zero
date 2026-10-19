@@ -51,7 +51,12 @@ package final class MemorySource: Source {
   package let layout: RowLayout
 
   package convenience init(_ table: TableSchema) {
-    self.init(table: table, layout: RowLayout(table), primaryIndexData: nil)
+    self.init(table, layout: RowLayout(table))
+  }
+
+  /// A source whose rows are in `layout`, which has `table`'s columns.
+  package convenience init(_ table: TableSchema, layout: RowLayout) {
+    self.init(table: table, layout: layout, primaryIndexData: nil)
   }
 
   init(table: TableSchema, layout: RowLayout, primaryIndexData: BTreeSet<Row>?) {

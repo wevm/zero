@@ -146,11 +146,11 @@ Rationale:
 - **Rows are keyed by column index inside the engine.** A JS row is an
   object, whose property reads V8 makes cheap; a Swift dictionary hashes the
   name on every read. A `Row` reads and writes like a dictionary but stores
-  its values in an array, in the order of a layout the rows of a table
-  share. A source puts the rows it gets in its table's layout, so its
-  comparators and generated `init(entry:)`s read columns by index, and fall
-  back to the name for a row in another layout. Rows on the wire and in
-  storage stay dictionaries.
+  its values in one buffer, in the order of a layout the rows of a table
+  share (a branch and its forks too). A source puts the rows it gets in its
+  table's layout, so its comparators and generated `init(entry:)`s read
+  columns by index, and fall back to the name for a row in another layout.
+  Rows on the wire and in storage stay dictionaries.
 
 ### Threading
 

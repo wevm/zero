@@ -21,6 +21,9 @@ public final class Transaction {
   let write: KVWrite
   let branch: IVMBranch
   let schema: ZeroSchema
+  /// The rows written, by key, as the branch has them, so the main branch
+  /// can take the same rows rather than a copy of each.
+  private(set) var rows: [String: Row] = [:]
   private lazy var context = QueryContext.local(branch)
 
   init(
@@ -75,6 +78,7 @@ public final class Transaction {
     var row = value.conformed(to: source.layout)
     for column in table.columnNames where row[column] == nil { row[column] = .null }
     write.set(key, JSONValue(row))
+    rows[key] = row
     source.push(.add(row))
   }
 
@@ -96,7 +100,9 @@ public final class Transaction {
     for (k, v) in value { next[k] = v }
     write.set(key, .object(next))
     let source = source(tableName)
-    source.push(.edit(Row(next, layout: source.layout), oldRow: Row(prev, layout: source.layout)))
+    let row = Row(next, layout: source.layout)
+    rows[key] = row
+    source.push(.edit(row, oldRow: Row(prev, layout: source.layout)))
   }
 
   func delete(_ tableName: String, _ id: Row) throws {
@@ -104,6 +110,7 @@ public final class Transaction {
     let key = try key(table, id)
     guard let prev = write.get(key)?.objectValue else { return }
     write.delete(key)
+    rows[key] = nil
     let source = source(tableName)
     source.push(.remove(Row(prev, layout: source.layout)))
   }

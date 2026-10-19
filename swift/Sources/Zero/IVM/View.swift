@@ -262,7 +262,9 @@ enum ViewApply {
   /// `{...existing, ...row}`.
   static func applyEdit(_ entry: inout ViewEntry, _ row: Row) {
     if entry.row.layout === row.layout {
-      for (i, value) in row.slots.enumerated() where value != nil { entry.row.slots[i] = value }
+      for i in 0..<row.slotCount {
+        if let value = row[slot: i] { entry.row[slot: i] = value }
+      }
     } else {
       for (name, value) in row { entry.row[name] = value }
     }

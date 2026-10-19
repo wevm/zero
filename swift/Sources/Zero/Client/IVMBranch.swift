@@ -5,27 +5,36 @@
 final class IVMBranch {
   private var sources: [String: MemorySource?]
   private let schema: ZeroSchema
+  /// The layout of each table's rows. Forks share them, so the rows a
+  /// mutator writes in a fork go into this branch's sources as they are.
+  private let layouts: [String: RowLayout]
 
-  init(schema: ZeroSchema, sources: [String: MemorySource?] = [:]) {
+  convenience init(schema: ZeroSchema) {
+    self.init(schema: schema, sources: [:], layouts: schema.tables.mapValues { RowLayout($0) })
+  }
+
+  private init(schema: ZeroSchema, sources: [String: MemorySource?], layouts: [String: RowLayout]) {
     self.schema = schema
     self.sources = sources
+    self.layouts = layouts
   }
 
   func source(_ table: String) -> MemorySource? {
     if let source = sources[table] { return source }
-    let source = schema.tables[table].map { MemorySource($0) }
+    let source = schema.tables[table].map { MemorySource($0, layout: layouts[table]!) }
     sources[table] = .some(source)
     return source
   }
 
   /// A copy whose sources share rows with these until written.
   func fork() -> IVMBranch {
-    IVMBranch(schema: schema, sources: sources.mapValues { $0?.fork() })
+    IVMBranch(schema: schema, sources: sources.mapValues { $0?.fork() }, layouts: layouts)
   }
 
   /// Applies the entity changes of `diff` (`applyDiffs`). A run of adds to
-  /// one table is pushed together.
-  func apply(_ diff: KVDiff) {
+  /// one table is pushed together. A row in `rows`, by key, is the one a
+  /// transaction wrote, which is the value the diff has for it.
+  func apply(_ diff: KVDiff, rows written: [String: Row] = [:]) {
     let prefix = Keys.entitiesPrefix
     var i = 0
     while i < diff.count {
@@ -43,10 +52,10 @@ final class IVMBranch {
       case .del(_, let old):
         source.push(.remove(Row(old.objectValue ?? [:], layout: source.layout)))
         i += 1
-      case .change(_, let old, let new):
+      case .change(let key, let old, let new):
         source.push(
           .edit(
-            Row(new.objectValue ?? [:], layout: source.layout),
+            written[key] ?? Row(new.objectValue ?? [:], layout: source.layout),
             oldRow: Row(old.objectValue ?? [:], layout: source.layout)))
         i += 1
       case .add:
@@ -55,7 +64,7 @@ final class IVMBranch {
         while i < diff.count, case .add(let key, let value) = diff[i],
           key.utf8.starts(with: tablePrefix.utf8)
         {
-          rows.append(Row(value.objectValue ?? [:], layout: source.layout))
+          rows.append(written[key] ?? Row(value.objectValue ?? [:], layout: source.layout))
           i += 1
         }
         source.pushAdds(rows)
