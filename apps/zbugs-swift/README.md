@@ -25,6 +25,19 @@ ZBUGS_PG=postgresql://user:password@127.0.0.1:6434/postgres \
 It recreates the `zbugs_swift` database with zbugs' seed data, then prints a
 token for a crew user and `ready <zero-cache> <API>` (ports 4848 and 5173).
 
+Each start makes new signing keys and a new database, so an app that ran
+against the last one needs the new token and starts over from an empty local
+store. To keep both across restarts, set `ZBUGS_KEEP=1` and a directory for
+the replica and the keys:
+
+```sh
+ZBUGS_KEEP=1 ZBUGS_DIR=~/.zbugs-swift ZBUGS_PG=... \
+  node apps/zbugs-swift/server/server.ts
+```
+
+It seeds the database only when it doesn't exist; drop it, or run once
+without `ZBUGS_KEEP`, to start over.
+
 Then generate the Xcode project and run the `ZBugsApp` scheme on a Mac or an
 iOS simulator:
 

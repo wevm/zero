@@ -2,7 +2,9 @@
  * Runs zbugs' backend for the Swift app, in development and in the
  * end-to-end tests: a fresh Postgres database with zbugs' migrations and
  * seed data, zbugs' API server (apps/zbugs/api), and zero-cache, all from
- * this repository's sources.
+ * this repository's sources. With `ZBUGS_KEEP=1` it keeps the database, the
+ * replica, and its signing keys from the last run instead, so an app keeps
+ * its local data and its token across restarts.
  *
  *   node apps/zbugs-swift/server/server.ts
  *
@@ -22,9 +24,18 @@
  *   ZBUGS_PORT       zero-cache port (default 4848)
  *   ZBUGS_API_PORT   API server port (default 5173)
  *   ZBUGS_DIR        working directory for the replica (default a temp dir)
+ *   ZBUGS_KEEP       1 to keep the last run's database, and the replica and
+ *                    keys in ZBUGS_DIR, which it needs
  */
 import {execFileSync, spawn} from 'node:child_process';
-import {mkdtempSync, readdirSync} from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import {registerHooks} from 'node:module';
 import {networkInterfaces, tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -42,6 +53,13 @@ const localHost = everywhere ? '127.0.0.1' : host;
 const port = Number(env['ZBUGS_PORT'] ?? 4848);
 const apiPort = Number(env['ZBUGS_API_PORT'] ?? 5173);
 const workDir = env['ZBUGS_DIR'] ?? mkdtempSync(join(tmpdir(), 'zbugs-swift-'));
+const keep = env['ZBUGS_KEEP'] === '1';
+if (keep && !env['ZBUGS_DIR']) {
+  process.stderr.write(
+    'ZBUGS_KEEP needs ZBUGS_DIR, for the replica and keys\n',
+  );
+  process.exit(2);
+}
 
 const here = (path: string) => fileURLToPath(new URL(path, import.meta.url));
 const zbugs = here('../../zbugs/');
@@ -77,29 +95,43 @@ function psql(url: string, ...args: string[]) {
   });
 }
 
-// The database: zbugs' migrations, then its seed script.
-psql(adminURL, '-c', `DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
-psql(adminURL, '-c', `CREATE DATABASE ${dbName}`);
-const migrations = join(zbugs, 'db/migrations');
-for (const file of readdirSync(migrations)
-  .filter(f => f.endsWith('.sql'))
-  .sort()) {
-  // In a transaction each, as drizzle-kit applies them.
-  psql(upstreamURL, '--single-transaction', '-f', join(migrations, file));
+// The database: zbugs' migrations, then its seed script. Kept, it also
+// holds zero-cache's client groups, which an app's local data belongs to.
+const kept =
+  keep &&
+  execFileSync(
+    'psql',
+    [adminURL, '-tAc', `SELECT 1 FROM pg_database WHERE datname = '${dbName}'`],
+    {encoding: 'utf8'},
+  ).trim() === '1';
+if (!kept) {
+  psql(adminURL, '-c', `DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+  psql(adminURL, '-c', `CREATE DATABASE ${dbName}`);
+  const migrations = join(zbugs, 'db/migrations');
+  for (const file of readdirSync(migrations)
+    .filter(f => f.endsWith('.sql'))
+    .sort()) {
+    // In a transaction each, as drizzle-kit applies them.
+    psql(upstreamURL, '--single-transaction', '-f', join(migrations, file));
+  }
+  execFileSync(process.execPath, [join(zbugs, 'scripts/seed.ts')], {
+    cwd: zbugs,
+    stdio: ['ignore', 'ignore', 'inherit'],
+    env: {
+      ...env,
+      ['ZERO_UPSTREAM_DB']: upstreamURL,
+      ['ZERO_SEED_DATA_DIR']: join(
+        zbugs,
+        'db/seed-data',
+        env['ZBUGS_SEED'] ?? 'github',
+      ),
+    },
+  });
+  // A replica of an earlier database.
+  for (const file of readdirSync(workDir)) {
+    if (file.startsWith('replica.db')) rmSync(join(workDir, file));
+  }
 }
-execFileSync(process.execPath, [join(zbugs, 'scripts/seed.ts')], {
-  cwd: zbugs,
-  stdio: ['ignore', 'ignore', 'inherit'],
-  env: {
-    ...env,
-    ['ZERO_UPSTREAM_DB']: upstreamURL,
-    ['ZERO_SEED_DATA_DIR']: join(
-      zbugs,
-      'db/seed-data',
-      env['ZBUGS_SEED'] ?? 'github',
-    ),
-  },
-});
 const crewID = execFileSync(
   'psql',
   [
@@ -110,8 +142,18 @@ const crewID = execFileSync(
   {encoding: 'utf8'},
 ).trim();
 
-// The API server, as `pnpm dev` runs it in apps/zbugs, with keys of its own.
-const {privateJwk, publicJwk} = await createJwkPair();
+// The API server, as `pnpm dev` runs it in apps/zbugs, with keys of its own:
+// the last run's, kept, so that the tokens it printed still work.
+const keysFile = join(workDir, 'keys.json');
+const {privateJwk, publicJwk} =
+  keep && existsSync(keysFile)
+    ? (JSON.parse(readFileSync(keysFile, 'utf8')) as Awaited<
+        ReturnType<typeof createJwkPair>
+      >)
+    : await createJwkPair();
+if (keep) {
+  writeFileSync(keysFile, JSON.stringify({privateJwk, publicJwk}));
+}
 env['ZERO_UPSTREAM_DB'] = upstreamURL;
 env['PRIVATE_JWK'] = JSON.stringify(privateJwk);
 env['VITE_PUBLIC_JWK'] = JSON.stringify(publicJwk);
