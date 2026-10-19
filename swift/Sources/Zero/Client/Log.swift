@@ -25,8 +25,10 @@ public enum LogLevel: Int, Sendable, Comparable, CaseIterable, CustomStringConve
 
 /// Where the client's log messages go (`LogSink` in `@rocicorp/logger`).
 public protocol LogSink: Sendable {
-  /// - Parameter context: Which client logged the message, such as
-  ///   `clientID`.
+  /// - Parameters:
+  ///   - level: How severe the message is.
+  ///   - message: The message, without the context.
+  ///   - context: Which client logged the message, such as `clientID`.
   func log(level: LogLevel, message: String, context: [String: String])
 }
 

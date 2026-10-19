@@ -53,12 +53,16 @@ be lowered later with `@available` shims.
 ```
 swift/                      Swift package (source of truth)
   Package.swift
-  Sources/Zero/             core engine, platform-agnostic
-  Sources/ZeroUI/           SwiftUI, UIKit, AppKit helpers; URLSession transport
+  README.md                 the mirror's front page
+  Sources/Zero/             core engine; on Apple platforms, the URLSession
+                            transport and app lifecycle too
+  Sources/Zero/Zero.docc/   DocC: getting started, the JS parity matrix
+  Sources/ZeroUI/           SwiftUI, UIKit, AppKit helpers
   Sources/ZeroTesting/      drift-harness replay API and test helpers
   Sources/ZeroNIOTesting/   SwiftNIO WebSocket transport for Linux end-to-end tests
   Sources/ZeroBenchmarks/   benchmarks (BENCHMARKS.md)
   Tests/...
+  scripts/docs.sh           builds the DocC catalogs, failing on warnings
   VERSION
 packages/zero-conformance/  private JS package: fixtures, vector generators, JS runners
 packages/zero-swift-cli/    npm package `zero-swift`: `codegen`, `drift record`
@@ -83,7 +87,9 @@ apps/zbugs-swift/           dogfood app (iOS + macOS)
   `@rocicorp` scope) with a peer dependency on `@rocicorp/zero`. It is
   versioned with the Swift releases.
 - License: Apache-2.0, like this repository.
-- Docs: DocC, plus a JS→Swift parity matrix.
+- Docs: a DocC catalog per library product, with a getting-started article
+  and a JS→Swift parity matrix (`Zero.docc/JSParity.md`). Oxfmt skips the
+  catalogs; it would turn DocC's ` ``Symbol`` ` links into code voice.
 
 ### Versioning and releases
 
@@ -481,12 +487,14 @@ the Zero convention of passing IDs and timestamps as arguments.
 
 - **Linux, every PR.** Swift build, unit tests, and conformance vectors; the
   vector and drift-vector staleness checks; `apps/zbugs-swift`'s drift test;
-  an end-to-end run against a real `zero-cache` and Postgres; and
-  `apps/zbugs-swift` against zbugs' backend (`server/server.ts`).
+  an end-to-end run against a real `zero-cache` and Postgres;
+  `apps/zbugs-swift` against zbugs' backend (`server/server.ts`); and the
+  `Zero` and `ZeroTesting` docs, where a broken symbol link or an
+  undocumented parameter fails.
 - **macOS, path-filtered to `swift/`, `packages/zero-conformance/`, and
   `apps/zbugs-swift/`.** The Apple layer (URLSession transport against a local
   mock WebSocket server, SwiftUI, UIKit, and AppKit helpers), iOS simulator
-  tests, and the zbugs app built for iOS and macOS.
+  tests, all three DocC catalogs, and the zbugs app built for iOS and macOS.
 - **Benchmarks.** Ports of the key JS benchmarks
   (`zero-client/src/client/zero.bench.ts`, the shared B-tree and hash
   benchmarks) plus Swift benchmarks for query hydration over N rows, poke

@@ -77,6 +77,10 @@ jobs:
         run: swift build --build-tests
       - name: Test
         run: swift test --skip-build
+      # Broken symbol links and undocumented parameters fail. ZeroUI is
+      # Apple-only; swift-macos.yml checks it.
+      - name: Docs
+        run: scripts/docs.sh Zero ZeroTesting
       # zbugs' Swift port, checked against zbugs' TS queries and mutators on
       # the samples in drift-samples.ts (the vectors job checks the record is
       # current).

@@ -26,8 +26,12 @@ public final class Zero<Context: Sendable> {
   #endif
 
   /// - Parameters:
+  ///   - schema: The generated schema, such as `.app`.
+  ///   - context: What queries and mutators are given besides their
+  ///     arguments, such as the logged-in user's auth data.
   ///   - mutators: Every mutator the client may run. Pending mutations are
   ///     replayed by name, so each must be registered.
+  ///   - options: Where to sync from, and how.
   ///   - scheduler: The clock and timers. With the system clock, the client
   ///     also follows the app's lifecycle and the network; tests pass a
   ///     manual one.

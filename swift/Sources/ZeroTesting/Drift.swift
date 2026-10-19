@@ -21,6 +21,7 @@ public enum Drift {
   /// - Parameters:
   ///   - vectors: The contents of the `drift-vectors.json` that
   ///     `zero-swift drift record` wrote.
+  ///   - schema: The app's schema, which the mutator samples' rows are in.
   ///   - queries: Every named query of the app.
   ///   - mutators: Every mutator of the app.
   public static func failures<Context: Decodable & Sendable>(

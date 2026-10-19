@@ -42,6 +42,8 @@ jobs:
       - run: swift --version
       - name: Build and test (macOS)
         run: swift test
+      - name: Docs
+        run: scripts/docs.sh
       - name: Test (iOS Simulator)
         run: |
           device="$(xcrun simctl list devices available -j |
