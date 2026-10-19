@@ -32,6 +32,17 @@ const fixtures: {name: string; config: Config}[] = [
     },
   },
   {
+    name: 'zql test schema for the end-to-end tests',
+    config: {
+      schema: 'packages/zql/src/query/test/test-schemas.ts',
+      output: 'swift/Tests/E2ETests/Generated/TestSchema.swift',
+      schemaName: 'test',
+      zql: 'testZQL',
+      typePrefix: 'Test',
+      access: 'internal',
+    },
+  },
+  {
     name: 'codegen fixture schema',
     config: {
       schema: 'packages/zero-swift-cli/test/fixture-schema.ts',
