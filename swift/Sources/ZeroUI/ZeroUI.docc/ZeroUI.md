@@ -28,6 +28,11 @@ struct IssueList: View {
 }
 ```
 
+Make the client once, in the `App` as here, or in an object the app owns.
+Don't make it in a view's `@State` initializer. SwiftUI runs that
+initializer each time it re-creates the view, and each client it makes
+connects before being dropped.
+
 The `zero-react` hooks map to it as follows:
 
 | zero-react                   | ZeroUI                       |

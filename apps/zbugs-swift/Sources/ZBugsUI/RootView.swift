@@ -16,8 +16,12 @@
   }
 
   /// The app: filters, the issue list, and the selected issue.
+  ///
+  /// The app makes the model once and passes it in: SwiftUI runs a view's
+  /// `@State` initializer each time it re-creates the view, and each model
+  /// starts a client.
   public struct RootView: View {
-    @State private var model = AppModel()
+    let model: AppModel
     @State private var filter = IssueFilter()
     @State private var selection: String?
     @State private var listLayer = ListLayer.swiftUI
@@ -34,7 +38,9 @@
       var id: Self { self }
     }
 
-    public init() {}
+    public init(model: AppModel) {
+      self.model = model
+    }
 
     public var body: some View {
       NavigationSplitView(preferredCompactColumn: $compactColumn) {
