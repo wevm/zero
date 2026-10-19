@@ -20,7 +20,7 @@ import {
 import {decodeSecProtocols} from '../../../zero-protocol/src/connect.ts';
 import {POKE_CHUNK_MESSAGE_TYPE} from '../../../zero-protocol/src/poke.ts';
 import type {TTL} from '../../../zql/src/query/ttl.ts';
-import {mutators, queries, schema} from './app.ts';
+import {issueMutators, mutators, queries, schema} from './app.ts';
 
 /** `Date.now()` when every scenario starts. */
 export const START_TIME = 1_700_000_000_000;
@@ -90,7 +90,23 @@ export type Step =
   | {op: 'advance'; ms: number}
   /** `zero.connection.connect()`. */
   | {op: 'connect'; auth?: string}
-  | {op: 'close'};
+  | {op: 'close'}
+  /**
+   * Closes the client and starts a new one on the same storage, as an app
+   * does when it is relaunched. `advance` moves the clock while no client
+   * runs. `options` replace the scenario's options; the storage stays the
+   * scenario's unless they set another `storageKey`. `mutators: 'issues'`
+   * registers only the `issue` mutators. The old client's views, runs,
+   * mutations and preloads are dropped, and its IDs become `$clientID.<n>`
+   * and `$clientGroupID.<n>` for the n-th client, from 0. The step settles
+   * once the new client has opened its storage.
+   */
+  | {
+      op: 'restart';
+      advance?: number;
+      options?: ScenarioOptions;
+      mutators?: 'all' | 'issues';
+    };
 
 type Args = ReadonlyJSONValue | undefined;
 
@@ -212,43 +228,50 @@ export async function runScenario(scenario: Scenario): Promise<StepResult[]> {
   vi.stubGlobal('WebSocket', RecordingSocket);
   vi.stubGlobal('CloseEvent', CloseEventPolyfill);
 
-  const options = scenario.options ?? {};
   const events: ReadonlyJSONValue[] = [];
-  const z = new TestZero({
-    cacheURL:
-      options.cacheURL === null
-        ? undefined
-        : (options.cacheURL ?? 'http://zero.test'),
-    userID: options.userID === null ? undefined : (options.userID ?? 'u1'),
-    auth: options.auth,
-    schema,
-    mutators,
-    kvStore: 'mem',
-    pingTimeoutMs: options.pingTimeoutMs,
-    disconnectTimeoutMs: options.disconnectTimeoutMs,
-    queryChangeThrottleMs: options.queryChangeThrottleMs,
-    maxHeaderLength: options.maxHeaderLength,
-    mutateURL: options.mutateURL,
-    mutateHeaders: options.mutateHeaders,
-    queryURL: options.queryURL,
-    queryHeaders: options.queryHeaders,
-    // In-memory stores outlive their Zero instance, keyed by name, so every
-    // scenario gets a store of its own. The storage key is not sent.
-    storageKey: `${options.storageKey ?? ''}#scenario-${++scenarioCount}`,
-    onUpdateNeeded: reason => {
-      events.push({onUpdateNeeded: json(reason)});
-    },
-    onClientStateNotFound: () => {
-      events.push('onClientStateNotFound');
-    },
-  });
-  const {clientID} = z;
-  const clientGroupID = await z.clientGroupID;
+  const scenarioKey = ++scenarioCount;
+  const makeZero = (
+    options: ScenarioOptions,
+    registered: 'all' | 'issues' = 'all',
+  ) =>
+    new TestZero({
+      cacheURL:
+        options.cacheURL === null
+          ? undefined
+          : (options.cacheURL ?? 'http://zero.test'),
+      userID: options.userID === null ? undefined : (options.userID ?? 'u1'),
+      auth: options.auth,
+      schema,
+      mutators: registered === 'all' ? mutators : issueMutators,
+      kvStore: 'mem',
+      pingTimeoutMs: options.pingTimeoutMs,
+      disconnectTimeoutMs: options.disconnectTimeoutMs,
+      queryChangeThrottleMs: options.queryChangeThrottleMs,
+      maxHeaderLength: options.maxHeaderLength,
+      mutateURL: options.mutateURL,
+      mutateHeaders: options.mutateHeaders,
+      queryURL: options.queryURL,
+      queryHeaders: options.queryHeaders,
+      // In-memory stores outlive their Zero instance, keyed by name, so every
+      // scenario gets a store of its own. The storage key is not sent.
+      storageKey: `${options.storageKey ?? ''}#scenario-${scenarioKey}`,
+      onUpdateNeeded: reason => {
+        events.push({onUpdateNeeded: json(reason)});
+      },
+      onClientStateNotFound: () => {
+        events.push('onClientStateNotFound');
+      },
+    });
+  let z = makeZero(scenario.options ?? {});
+  let {clientID} = z;
+  let clientGroupID = await z.clientGroupID;
+  let restarts = 0;
 
   const placeholders = new Map<string, string>([
     [clientID, '$clientID'],
     [clientGroupID, '$clientGroupID'],
   ]);
+  const ids = new Map<string, string>([['$clientID', clientID]]);
   const normalize = (v: ReadonlyJSONValue, key?: string): ReadonlyJSONValue => {
     if (typeof v === 'string') {
       if (key === 'requestID') return '$requestID';
@@ -266,12 +289,12 @@ export async function runScenario(scenario: Scenario): Promise<StepResult[]> {
     return v;
   };
   const substitute = (v: ReadonlyJSONValue): ReadonlyJSONValue => {
-    if (v === '$clientID') return clientID;
+    if (typeof v === 'string') return ids.get(v) ?? v;
     if (Array.isArray(v)) return v.map(substitute);
     if (v !== null && typeof v === 'object') {
       return Object.fromEntries(
         Object.entries(v).map(([k, e]) => [
-          k === '$clientID' ? clientID : k,
+          ids.get(k) ?? k,
           substitute(e as ReadonlyJSONValue),
         ]),
       );
@@ -435,6 +458,31 @@ export async function runScenario(scenario: Scenario): Promise<StepResult[]> {
       case 'close':
         void z.close();
         return;
+      case 'restart': {
+        await z.close();
+        await settle();
+        if (step.advance !== undefined) {
+          await vi.advanceTimersByTimeAsync(step.advance);
+        }
+        const n = restarts++;
+        const old = {clientID, clientGroupID};
+        z = makeZero(step.options ?? scenario.options ?? {}, step.mutators);
+        clientID = z.clientID;
+        clientGroupID = await z.clientGroupID;
+        placeholders.set(old.clientID, `$clientID.${n}`);
+        ids.set(`$clientID.${n}`, old.clientID);
+        if (old.clientGroupID !== clientGroupID) {
+          placeholders.set(old.clientGroupID, `$clientGroupID.${n}`);
+        }
+        placeholders.set(clientID, '$clientID');
+        placeholders.set(clientGroupID, '$clientGroupID');
+        ids.set('$clientID', clientID);
+        views.clear();
+        mutations.clear();
+        runs.clear();
+        preloads.clear();
+        return;
+      }
     }
   }
 
