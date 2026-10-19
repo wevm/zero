@@ -1,10 +1,10 @@
 /// Row predicates from conditions (`packages/zql/src/builder/filter.ts`).
-public typealias RowPredicate = (Row) -> Bool
+package typealias RowPredicate = (Row) -> Bool
 
 /// An error building a pipeline, where JS throws.
-public struct PipelineError: Error, CustomStringConvertible {
-  public let description: String
-  public init(_ description: String) { self.description = description }
+package struct PipelineError: Error, CustomStringConvertible {
+  package let description: String
+  package init(_ description: String) { self.description = description }
 }
 
 /// `createPredicate(condition)` for a condition without subqueries.
@@ -175,7 +175,7 @@ func transformFilters(
 }
 
 /// `simplifyCondition` (`packages/zql/src/query/expression.ts`).
-public func simplifyCondition(_ c: AST.Condition) -> AST.Condition {
+package func simplifyCondition(_ c: AST.Condition) -> AST.Condition {
   switch c {
   case .simple, .correlatedSubquery:
     return c
@@ -204,9 +204,9 @@ func flatten(_ isAnd: Bool, _ conditions: [AST.Condition]) -> [AST.Condition] {
 
 extension AST.Condition {
   /// `TRUE`: an empty AND.
-  public static var trueCondition: AST.Condition { .and([]) }
+  package static var trueCondition: AST.Condition { .and([]) }
   /// `FALSE`: an empty OR.
-  public static var falseCondition: AST.Condition { .or([]) }
+  package static var falseCondition: AST.Condition { .or([]) }
 
   var isAlwaysTrue: Bool {
     if case .and(let c) = self { c.isEmpty } else { false }

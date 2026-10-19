@@ -1,17 +1,17 @@
 /// The schema of an operator's output (`packages/zql/src/ivm/schema.ts`).
-public final class SourceSchema {
-  public let tableName: String
-  public let columns: [String: ColumnSchema]
-  public let primaryKey: [String]
+package final class SourceSchema {
+  package let tableName: String
+  package let columns: [String: ColumnSchema]
+  package let primaryKey: [String]
   /// Relationship schemas, in the order they were added.
-  public let relationships: [(name: String, schema: SourceSchema)]
-  public let isHidden: Bool
-  public let system: AST.System
-  public let compareRows: Comparator
+  package let relationships: [(name: String, schema: SourceSchema)]
+  package let isHidden: Bool
+  package let system: AST.System
+  package let compareRows: Comparator
   /// `nil` for an unordered input.
-  public let sort: AST.Ordering?
+  package let sort: AST.Ordering?
 
-  public init(
+  package init(
     tableName: String,
     columns: [String: ColumnSchema],
     primaryKey: [String],
@@ -31,12 +31,12 @@ public final class SourceSchema {
     self.sort = sort
   }
 
-  public func relationship(_ name: String) -> SourceSchema? {
+  package func relationship(_ name: String) -> SourceSchema? {
     for r in relationships where r.name == name { return r.schema }
     return nil
   }
 
-  public var relationshipNames: [String] { relationships.map(\.name) }
+  package var relationshipNames: [String] { relationships.map(\.name) }
 
   /// A copy with the given fields replaced.
   func with(
@@ -63,32 +63,32 @@ public final class SourceSchema {
 }
 
 /// Where a fetch starts (`Start` in `operator.ts`).
-public struct Start {
-  public enum Basis: Sendable { case at, after }
-  public var row: Row
-  public var basis: Basis
+package struct Start {
+  package enum Basis: Sendable { case at, after }
+  package var row: Row
+  package var basis: Basis
 
-  public init(row: Row, basis: Basis) {
+  package init(row: Row, basis: Basis) {
     self.row = row
     self.basis = basis
   }
 }
 
 /// `FetchRequest` in `operator.ts`.
-public struct FetchRequest {
-  public var constraint: Constraint?
+package struct FetchRequest {
+  package var constraint: Constraint?
   /// Multi-row IN clauses, all ANDed together and with `constraint`.
-  public var multiConstraints: [[Constraint]]?
+  package var multiConstraints: [[Constraint]]?
   /// If supplied, `start.row` must have previously been output by fetch or
   /// push.
-  public var start: Start?
+  package var start: Start?
   /// Whether to fetch in reverse order of the schema's sort.
-  public var reverse: Bool
+  package var reverse: Bool
   /// A predicate without subqueries for the source to apply. Only
   /// `FilterStart` introduces one; pass-through operators keep it.
-  public var filter: AST.Condition?
+  package var filter: AST.Condition?
 
-  public init(
+  package init(
     constraint: Constraint? = nil,
     multiConstraints: [[Constraint]]? = nil,
     start: Start? = nil,
@@ -104,14 +104,14 @@ public struct FetchRequest {
 }
 
 /// `InputBase` in `operator.ts`.
-public protocol InputBase: AnyObject {
+package protocol InputBase: AnyObject {
   func getSchema() -> SourceSchema
   func destroy()
 }
 
 /// An operator's input: something that can be fetched from and pushes to an
 /// output.
-public protocol Input: InputBase {
+package protocol Input: InputBase {
   func setOutput(_ output: any Output)
   func fetch(_ req: FetchRequest) -> NodeStream
 }
@@ -121,14 +121,14 @@ public protocol Input: InputBase {
 /// Pushing is two-phase. `push` propagates a change; once every change of a
 /// source push has propagated, `reconcile` lets bounded operators (`Take`)
 /// refill and push the rows that refill them.
-public protocol Output: AnyObject {
+package protocol Output: AnyObject {
   func push(_ change: Change, pusher: any InputBase)
   /// Phase two. Sinks can ignore it; operators must forward it.
   func reconcile(pusher: any InputBase)
 }
 
 extension Output {
-  public func reconcile(pusher: any InputBase) {}
+  package func reconcile(pusher: any InputBase) {}
 }
 
 /// An operator in a pipeline: an input to the next and an output of the
@@ -137,7 +137,7 @@ extension Output {
 /// Operators hold their inputs strongly and their outputs weakly, so the
 /// view at the end of a pipeline owns it. A push that reaches a released
 /// output is dropped.
-public protocol Operator: Input, Output {}
+package protocol Operator: Input, Output {}
 
 /// Routes an input's pushes to closures, as JS operators do with object
 /// literals. The operator owns it: inputs hold their outputs weakly.
@@ -155,22 +155,22 @@ final class ClosureOutput: Output {
 }
 
 /// The `where` sub-graph's input (`FilterInput` in `filter-operators.ts`).
-public protocol FilterInput: InputBase {
+package protocol FilterInput: InputBase {
   func setFilterOutput(_ output: any FilterOutput)
 }
 
 /// The `where` sub-graph's output. Filter operators have no `fetch`; a fetch
 /// through the sub-graph asks `filter` whether each node passes.
-public protocol FilterOutput: Output {
+package protocol FilterOutput: Output {
   func beginFilter()
   func filter(_ node: Node) -> Bool
   func endFilter()
 }
 
-public protocol FilterOperator: FilterInput, FilterOutput {}
+package protocol FilterOperator: FilterInput, FilterOutput {}
 
 /// A source of rows for pipelines (`Source` in `source.ts`).
-public protocol Source: AnyObject {
+package protocol Source: AnyObject {
   var tableSchema: TableSchema { get }
   /// Connects a pipeline. `sort` is `nil` for an unordered connection.
   func connect(
@@ -180,7 +180,7 @@ public protocol Source: AnyObject {
 }
 
 /// A source's connection to one pipeline.
-public protocol SourceInput: Input {
+package protocol SourceInput: Input {
   /// Whether the source applies all of the connection's filters, so no
   /// `Filter` operators are needed above it.
   var fullyAppliedFilters: Bool { get }

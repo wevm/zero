@@ -125,7 +125,7 @@ public struct Query<Row: ZeroRow, Result: QueryResult>: Sendable where Result.Ro
   }
 
   public var ast: AST { any.ast }
-  public var format: Format { any.format }
+  package var format: Format { any.format }
   public var hash: String { any.hash }
 
   /// Compares a column with a value. Comparing with nil uses `IS`, since

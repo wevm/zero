@@ -48,22 +48,22 @@ public struct SocketClosed: Error, Sendable, Hashable {
 
 /// The query parameters of the sync connect URL, in the order JS sets them
 /// (`createConnectionURL` in `packages/zero-client/src/client/zero.ts`).
-public struct ConnectionURL: Sendable, Hashable {
-  public var socketOrigin: String
-  public var clientID: String
-  public var clientGroupID: String
-  public var userID: String?
+package struct ConnectionURL: Sendable, Hashable {
+  package var socketOrigin: String
+  package var clientID: String
+  package var clientGroupID: String
+  package var userID: String?
   /// The cookie of the client's last server snapshot, nil for none.
-  public var baseCookie: String?
+  package var baseCookie: String?
   /// The `ts` parameter, `performance.now()` in JS.
-  public var timestamp: Double
-  public var lastMutationID: Double
-  public var wsid: String
-  public var profileID: String
-  public var debugPerf: Bool
-  public var additionalParams: [(String, String)]
+  package var timestamp: Double
+  package var lastMutationID: Double
+  package var wsid: String
+  package var profileID: String
+  package var debugPerf: Bool
+  package var additionalParams: [(String, String)]
 
-  public init(
+  package init(
     socketOrigin: String, clientID: String, clientGroupID: String, userID: String? = nil,
     baseCookie: String? = nil, timestamp: Double, lastMutationID: Double, wsid: String,
     profileID: String, debugPerf: Bool = false, additionalParams: [(String, String)] = []
@@ -81,10 +81,10 @@ public struct ConnectionURL: Sendable, Hashable {
     self.additionalParams = additionalParams
   }
 
-  public static func == (a: ConnectionURL, b: ConnectionURL) -> Bool { a.string == b.string }
-  public func hash(into hasher: inout Hasher) { hasher.combine(string) }
+  package static func == (a: ConnectionURL, b: ConnectionURL) -> Bool { a.string == b.string }
+  package func hash(into hasher: inout Hasher) { hasher.combine(string) }
 
-  public var string: String {
+  package var string: String {
     var params: [(String, String)] = [
       ("clientID", clientID), ("clientGroupID", clientGroupID),
     ]

@@ -1,12 +1,12 @@
 /// The body of an `error` message (`errorBodySchema` in
 /// `packages/zero-protocol/src/error.ts`).
-public enum ErrorBody: Sendable, Hashable, JSONCodable {
+package enum ErrorBody: Sendable, Hashable, JSONCodable {
   case basic(BasicErrorBody)
   case backoff(BackoffErrorBody)
   case pushFailed(PushFailedBody)
   case transformFailed(TransformFailedBody)
 
-  public var kind: ErrorKind {
+  package var kind: ErrorKind {
     switch self {
     case .basic(let b): b.kind
     case .backoff(let b): b.kind
@@ -16,7 +16,7 @@ public enum ErrorBody: Sendable, Hashable, JSONCodable {
   }
 
   /// Where the error came from; nil from servers too old to say.
-  public var origin: ErrorOrigin? {
+  package var origin: ErrorOrigin? {
     switch self {
     case .basic(let b): b.origin
     case .backoff(let b): b.origin
@@ -25,7 +25,7 @@ public enum ErrorBody: Sendable, Hashable, JSONCodable {
     }
   }
 
-  public var message: String {
+  package var message: String {
     switch self {
     case .basic(let b): b.message
     case .backoff(let b): b.message
@@ -34,7 +34,7 @@ public enum ErrorBody: Sendable, Hashable, JSONCodable {
     }
   }
 
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let r = try JSONObjectReader(json, "error body")
     let kind = try r.literalUnion("kind", ErrorKind.self)
     if ErrorKind.basic.contains(kind) {
@@ -76,7 +76,7 @@ public enum ErrorBody: Sendable, Hashable, JSONCodable {
     }
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     var o = JSONObjectBuilder()
     o.set("kind", .string(kind.rawValue))
     o.set("message", message)
@@ -102,12 +102,12 @@ public enum ErrorBody: Sendable, Hashable, JSONCodable {
 }
 
 /// `basicErrorBodySchema`. `origin` is `server` or `zeroCache` when set.
-public struct BasicErrorBody: Sendable, Hashable {
-  public var kind: ErrorKind
-  public var message: String
-  public var origin: ErrorOrigin?
+package struct BasicErrorBody: Sendable, Hashable {
+  package var kind: ErrorKind
+  package var message: String
+  package var origin: ErrorOrigin?
 
-  public init(kind: ErrorKind, message: String, origin: ErrorOrigin? = nil) {
+  package init(kind: ErrorKind, message: String, origin: ErrorOrigin? = nil) {
     self.kind = kind
     self.message = message
     self.origin = origin
@@ -116,16 +116,16 @@ public struct BasicErrorBody: Sendable, Hashable {
 
 /// `backoffBodySchema`: zero-cache asks the client to reconnect later.
 /// `origin` is `zeroCache` when set.
-public struct BackoffErrorBody: Sendable, Hashable {
-  public var kind: ErrorKind
-  public var message: String
-  public var minBackoffMs: Double?
-  public var maxBackoffMs: Double?
+package struct BackoffErrorBody: Sendable, Hashable {
+  package var kind: ErrorKind
+  package var message: String
+  package var minBackoffMs: Double?
+  package var maxBackoffMs: Double?
   /// Query parameters to send in the next reconnect only.
-  public var reconnectParams: [String: String]?
-  public var origin: ErrorOrigin?
+  package var reconnectParams: [String: String]?
+  package var origin: ErrorOrigin?
 
-  public init(
+  package init(
     kind: ErrorKind, message: String, minBackoffMs: Double? = nil, maxBackoffMs: Double? = nil,
     reconnectParams: [String: String]? = nil, origin: ErrorOrigin? = nil
   ) {
@@ -141,7 +141,7 @@ public struct BackoffErrorBody: Sendable, Hashable {
 /// Why a push or transform failed: the `origin` and `reason` of
 /// `pushFailedBodySchema` and `transformFailedBodySchema`, whose three
 /// variants each allow different combinations.
-public enum FailureCause: Sendable, Hashable {
+package enum FailureCause: Sendable, Hashable {
   /// `origin: 'server'`: the API server reported the failure.
   case server(reason: ErrorReason)
   /// `origin: 'zeroCache', reason: 'http'`: the API server answered with a
@@ -150,12 +150,12 @@ public enum FailureCause: Sendable, Hashable {
   /// `origin: 'zeroCache'` with reason `timeout`, `parse`, or `internal`.
   case zeroCache(reason: ErrorReason)
 
-  public var origin: ErrorOrigin {
+  package var origin: ErrorOrigin {
     if case .server = self { return .server }
     return .zeroCache
   }
 
-  public var reason: ErrorReason {
+  package var reason: ErrorReason {
     switch self {
     case .server(let reason), .zeroCache(let reason): reason
     case .http: .http
@@ -192,17 +192,17 @@ public enum FailureCause: Sendable, Hashable {
 
 /// `pushFailedBodySchema`: the API server or zero-cache failed to process
 /// a push. `mutationIDs` may be a subset of the pushed mutations.
-public struct PushFailedBody: Sendable, Hashable {
-  public var message: String
-  public var mutationIDs: [MutationID]
-  public var details: JSONValue?
-  public var cause: FailureCause
+package struct PushFailedBody: Sendable, Hashable {
+  package var message: String
+  package var mutationIDs: [MutationID]
+  package var details: JSONValue?
+  package var cause: FailureCause
 
   static let serverReasons: Set<ErrorReason> = [
     .database, .parse, .outOfOrderMutation, .unsupportedPushVersion, .internal,
   ]
 
-  public init(
+  package init(
     message: String, mutationIDs: [MutationID], details: JSONValue? = nil, cause: FailureCause
   ) {
     self.message = message
@@ -214,15 +214,15 @@ public struct PushFailedBody: Sendable, Hashable {
 
 /// `transformFailedBodySchema`: the API server or zero-cache failed to
 /// transform custom queries.
-public struct TransformFailedBody: Sendable, Hashable {
-  public var message: String
-  public var queryIDs: [String]
-  public var details: JSONValue?
-  public var cause: FailureCause
+package struct TransformFailedBody: Sendable, Hashable {
+  package var message: String
+  package var queryIDs: [String]
+  package var details: JSONValue?
+  package var cause: FailureCause
 
   static let serverReasons: Set<ErrorReason> = [.database, .parse, .internal]
 
-  public init(
+  package init(
     message: String, queryIDs: [String], details: JSONValue? = nil, cause: FailureCause
   ) {
     self.message = message

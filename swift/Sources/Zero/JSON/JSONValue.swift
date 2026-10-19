@@ -20,7 +20,7 @@ public enum JSONValue: Sendable {
 public typealias Row = [String: JSONValue]
 
 /// A value in a row or a query literal.
-public typealias Value = JSONValue
+package typealias Value = JSONValue
 
 extension JSONValue: Hashable {
   public static func == (lhs: JSONValue, rhs: JSONValue) -> Bool {

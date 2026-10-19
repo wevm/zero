@@ -1,13 +1,13 @@
 /// Value comparison for IVM (`packages/zql/src/ivm/data.ts`).
-public enum ValueCompare {
-  public struct IncomparableError: Error, CustomStringConvertible {
-    public let description: String
+package enum ValueCompare {
+  package struct IncomparableError: Error, CustomStringConvertible {
+    package let description: String
   }
 
   /// `compareValues(a, b)`: strings by UTF-8 bytes, numbers numerically,
   /// `false < true`, and `null` before everything. Values of different
   /// non-null types, and arrays or objects, can't be compared: JS throws.
-  public static func compareChecked(_ a: Value, _ b: Value) throws(IncomparableError) -> Int {
+  package static func compareChecked(_ a: Value, _ b: Value) throws(IncomparableError) -> Int {
     switch (a, b) {
     case (.string(let x), .string(let y)):
       return StringCompare.utf8(x, y)
@@ -34,7 +34,7 @@ public enum ValueCompare {
   /// type, then by JSON encoding. Pipelines use this so a bad `orderBy` (on
   /// a json column) degrades instead of trapping.
   @inlinable
-  public static func compare(_ a: Value, _ b: Value) -> Int {
+  package static func compare(_ a: Value, _ b: Value) -> Int {
     switch (a, b) {
     case (.string(let x), .string(let y)):
       return StringCompare.utf8(x, y)
@@ -74,7 +74,7 @@ public enum ValueCompare {
   /// SQL joins). Arrays and objects are never equal: JS compares them by
   /// reference.
   @inlinable
-  public static func equal(_ a: Value, _ b: Value) -> Bool {
+  package static func equal(_ a: Value, _ b: Value) -> Bool {
     switch (a, b) {
     case (.null, _), (_, .null): return false
     case (.string(let x), .string(let y)): return StringCompare.equal(x, y)
@@ -86,13 +86,13 @@ public enum ValueCompare {
 
   /// `compareValues` on possibly missing values: `undefined` reads as `null`.
   @inlinable
-  public static func compare(_ a: Value?, _ b: Value?) -> Int {
+  package static func compare(_ a: Value?, _ b: Value?) -> Int {
     compare(a ?? .null, b ?? .null)
   }
 
   /// `valuesEqual` on possibly missing values: `undefined` equals nothing.
   @inlinable
-  public static func equal(_ a: Value?, _ b: Value?) -> Bool {
+  package static func equal(_ a: Value?, _ b: Value?) -> Bool {
     guard let a, let b else { return false }
     return equal(a, b)
   }
@@ -100,7 +100,7 @@ public enum ValueCompare {
   /// JS `===` on possibly missing values. Strings compare by code unit;
   /// arrays and objects are never identical, since rows are decoded fresh.
   @inlinable
-  public static func identical(_ a: Value?, _ b: Value?) -> Bool {
+  package static func identical(_ a: Value?, _ b: Value?) -> Bool {
     switch (a, b) {
     case (nil, nil): return true
     case (nil, _), (_, nil): return false
@@ -114,16 +114,16 @@ public enum ValueCompare {
 
   /// A row's value for `column`; a missing column reads as `null`.
   @inlinable
-  public static func value(_ row: Row, _ column: String) -> Value {
+  package static func value(_ row: Row, _ column: String) -> Value {
     row[column] ?? .null
   }
 }
 
 /// Orders rows (`Comparator` in `data.ts`).
-public typealias Comparator = (Row, Row) -> Int
+package typealias Comparator = (Row, Row) -> Int
 
 /// `makeComparator(order, reverse)`.
-public func makeComparator(_ order: AST.Ordering, reverse: Bool = false) -> Comparator {
+package func makeComparator(_ order: AST.Ordering, reverse: Bool = false) -> Comparator {
   if order.count == 1 && order[0].direction == .asc && !reverse {
     let field = order[0].field
     return { a, b in ValueCompare.compare(a[field], b[field]) }

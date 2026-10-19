@@ -1,21 +1,21 @@
 /// The body of a `push` message (`pushBodySchema` in
 /// `packages/zero-protocol/src/push.ts`).
-public struct PushBody: Sendable, Hashable, JSONCodable {
-  public var clientGroupID: String
-  public var mutations: [Mutation]
-  public var pushVersion: Double
+package struct PushBody: Sendable, Hashable, JSONCodable {
+  package var clientGroupID: String
+  package var mutations: [Mutation]
+  package var pushVersion: Double
   /// The schema version of CRUD mutations. Custom mutations leave schema
   /// versioning to the API server.
-  public var schemaVersion: Double?
-  public var timestamp: Double
-  public var requestID: String
+  package var schemaVersion: Double?
+  package var timestamp: Double
+  package var requestID: String
   /// Deprecated: auth is set for the client group by `initConnection` and
   /// `updateAuth`.
-  public var auth: String?
+  package var auth: String?
   /// A W3C traceparent header for distributed tracing.
-  public var traceparent: String?
+  package var traceparent: String?
 
-  public init(
+  package init(
     clientGroupID: String, mutations: [Mutation], pushVersion: Double,
     schemaVersion: Double? = nil, timestamp: Double, requestID: String, auth: String? = nil,
     traceparent: String? = nil
@@ -30,7 +30,7 @@ public struct PushBody: Sendable, Hashable, JSONCodable {
     self.traceparent = traceparent
   }
 
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let r = try JSONObjectReader(json, "push body")
     clientGroupID = try r.string("clientGroupID")
     mutations = try r.required("mutations") { (v) throws(DecodingError) in
@@ -44,7 +44,7 @@ public struct PushBody: Sendable, Hashable, JSONCodable {
     traceparent = try r.optionalString("traceparent")
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     var o = JSONObjectBuilder()
     o.set("clientGroupID", clientGroupID)
     o.set("mutations", .array(mutations.map(\.json)))
@@ -61,20 +61,20 @@ public struct PushBody: Sendable, Hashable, JSONCodable {
 /// The deprecated error responses to a push (`pushErrorSchema` in
 /// `packages/zero-protocol/src/push.ts`). zero-cache now reports push
 /// failures with `error` messages.
-public enum PushError: Sendable, Hashable, JSONCodable {
+package enum PushError: Sendable, Hashable, JSONCodable {
   case unsupportedPushVersion(mutationIDs: [MutationID]?)
   case unsupportedSchemaVersion(mutationIDs: [MutationID]?)
   case http(status: Double, details: String, mutationIDs: [MutationID]?)
   case zeroPusher(details: String, mutationIDs: [MutationID]?)
 
-  public var mutationIDs: [MutationID]? {
+  package var mutationIDs: [MutationID]? {
     switch self {
     case .unsupportedPushVersion(let ids), .unsupportedSchemaVersion(let ids): ids
     case .http(_, _, let ids), .zeroPusher(_, let ids): ids
     }
   }
 
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let r = try JSONObjectReader(json, "push error")
     let error = try r.string("error")
     let ids = { () throws(DecodingError) in
@@ -95,7 +95,7 @@ public enum PushError: Sendable, Hashable, JSONCodable {
     }
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     var o = JSONObjectBuilder()
     switch self {
     case .unsupportedPushVersion: o.set("error", "unsupportedPushVersion")
@@ -118,11 +118,11 @@ public enum PushError: Sendable, Hashable, JSONCodable {
 ///
 /// valita tries the OK variant first, and it has no discriminator: a body
 /// with a valid `mutations` array is OK even if it also has an `error` key.
-public enum PushResponseBody: Sendable, Hashable, JSONCodable {
+package enum PushResponseBody: Sendable, Hashable, JSONCodable {
   case ok(mutations: [MutationResponse])
   case error(PushError)
 
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let r = try JSONObjectReader(json, "pushResponse body")
     do {
       self = .ok(
@@ -134,7 +134,7 @@ public enum PushResponseBody: Sendable, Hashable, JSONCodable {
     }
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     switch self {
     case .ok(let mutations): ["mutations": .array(mutations.map(\.json))]
     case .error(let e): e.json

@@ -5,9 +5,9 @@
 /// flag. That regexp works on UTF-16 code units: `_` matches one code unit
 /// (half of a surrogate pair), and `i` folds case per code unit through
 /// simple uppercasing. This reproduces both paths.
-public struct LikePattern: Sendable {
-  public struct InvalidPattern: Error, CustomStringConvertible {
-    public let description: String
+package struct LikePattern: Sendable {
+  package struct InvalidPattern: Error, CustomStringConvertible {
+    package let description: String
   }
 
   enum Token: Sendable, Equatable {
@@ -24,7 +24,7 @@ public struct LikePattern: Sendable {
 
   let matcher: Matcher
 
-  public init(_ pattern: String, caseInsensitive: Bool) throws(InvalidPattern) {
+  package init(_ pattern: String, caseInsensitive: Bool) throws(InvalidPattern) {
     let units = Array(pattern.utf16)
     let hasSpecial = units.contains { $0 == 0x5F || $0 == 0x25 || $0 == 0x5C }
     if !hasSpecial {
@@ -52,7 +52,7 @@ public struct LikePattern: Sendable {
     matcher = .wildcard(tokens, caseInsensitive: caseInsensitive)
   }
 
-  public func matches(_ input: String) -> Bool {
+  package func matches(_ input: String) -> Bool {
     switch matcher {
     case .exact(let p):
       // Code unit equality: Swift's `==` would equate canonically

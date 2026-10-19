@@ -1,3 +1,4 @@
+import Foundation
 import Zero
 
 /// Who the client acts for: the `sub` and `role` of the zbugs JWT
@@ -97,7 +98,7 @@ extension AuthData {
   public init?(jwt: String, now: Double) {
     let parts = jwt.split(separator: ".", omittingEmptySubsequences: false)
     guard parts.count == 3, let payload = base64URLDecode(parts[1]),
-      let claims = try? JSONParser.parse(payload),
+      let claims = try? JSONDecoder().decode(JSONValue.self, from: Data(payload)),
       let sub = claims["sub"]?.stringValue,
       let role = claims["role"]?.stringValue.flatMap(UserRole.init(rawValue:))
     else { return nil }

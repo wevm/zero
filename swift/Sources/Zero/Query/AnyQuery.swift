@@ -1,6 +1,6 @@
 /// The prefix of the aliases the builder gives `exists` subqueries
 /// (`SUBQ_PREFIX` in `packages/zero-protocol/src/ast.ts`).
-public let subqueryAliasPrefix = "zsubq_"
+package let subqueryAliasPrefix = "zsubq_"
 
 /// The name and arguments of the named query a query was built by.
 public struct CustomQueryID: Sendable, Hashable {
@@ -44,7 +44,7 @@ public struct AnyQuery: Sendable {
   public let schema: ZeroSchema
   public let table: String
   public let ast: AST
-  public let format: Format
+  package let format: Format
   public let system: AST.System
   public let customQueryID: CustomQueryID?
   /// The two-hop relationship this query is the destination of, if any.

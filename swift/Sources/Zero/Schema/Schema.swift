@@ -96,7 +96,7 @@ public struct RelationshipHop: Sendable, Hashable {
 public typealias Relationship = [RelationshipHop]
 
 extension ZeroSchema: JSONCodable {
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let o = try JSONObjectReader(json)
     let tablesJSON = try o.required("tables", JSONDecode.object)
     var tables: [TableSchema] = []
@@ -118,7 +118,7 @@ extension ZeroSchema: JSONCodable {
     self.init(tables: tables, relationships: relationships)
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     var tables: [String: JSONValue] = [:]
     for (name, table) in self.tables { tables[name] = table.json }
     var rels: [String: JSONValue] = [:]
@@ -140,7 +140,7 @@ extension TableSchema: JSONCodable {
 
   /// Decodes a table. JSON objects lose their key order in `JSONValue`, so
   /// columns are ordered by an optional `columnOrder` array, else by name.
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let o = try JSONObjectReader(json)
     let name = try o.optionalString("name") ?? ""
     let serverName = try o.optionalString("serverName")
@@ -178,7 +178,7 @@ extension TableSchema: JSONCodable {
       uniqueKeys: uniqueKeys)
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     var columns: [String: JSONValue] = [:]
     for (name, column) in self.columns {
       var c: [String: JSONValue] = ["type": .string(column.type.rawValue)]
@@ -199,7 +199,7 @@ extension TableSchema: JSONCodable {
 }
 
 extension RelationshipHop: JSONCodable {
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let o = try JSONObjectReader(json)
     let cardinality = try o.string("cardinality")
     self.init(
@@ -213,7 +213,7 @@ extension RelationshipHop: JSONCodable {
       cardinality: cardinality == "one" ? .one : .many)
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     [
       "sourceField": sourceField.json,
       "destField": destField.json,

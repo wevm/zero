@@ -7,34 +7,35 @@
 ///
 /// The JS `'yield'` tokens, which only hand control back to a scheduler,
 /// have no counterpart: the Swift engine hydrates synchronously.
-public struct IVMStream<Element>: Sequence {
+@usableFromInline
+package struct IVMStream<Element>: Sequence {
   @usableFromInline let make: () -> AnyIterator<Element>
 
   /// A stream whose iterator `make` builds on the first `next()`.
   @inlinable
-  public init(_ make: @escaping () -> AnyIterator<Element>) {
+  package init(_ make: @escaping () -> AnyIterator<Element>) {
     self.make = make
   }
 
   /// A stream that yields `elements`.
   @inlinable
-  public init(_ elements: [Element]) {
+  package init(_ elements: [Element]) {
     self.make = { AnyIterator(elements.makeIterator()) }
   }
 
   @inlinable
-  public static var empty: IVMStream<Element> {
+  package static var empty: IVMStream<Element> {
     IVMStream { AnyIterator { nil } }
   }
 
   @inlinable
-  public func makeIterator() -> LazyIterator<Element> {
+  package func makeIterator() -> LazyIterator<Element> {
     LazyIterator(make)
   }
 
   /// Maps each element; `f` runs as elements are pulled.
   @inlinable
-  public func mapLazy<T>(_ f: @escaping (Element) -> T) -> IVMStream<T> {
+  package func mapLazy<T>(_ f: @escaping (Element) -> T) -> IVMStream<T> {
     let source = self
     return IVMStream<T> {
       var it = source.makeIterator()
@@ -44,7 +45,8 @@ public struct IVMStream<Element>: Sequence {
 }
 
 /// Starts the underlying iterator on the first `next()`.
-public struct LazyIterator<Element>: IteratorProtocol {
+@usableFromInline
+package struct LazyIterator<Element>: IteratorProtocol {
   @usableFromInline var make: (() -> AnyIterator<Element>)?
   @usableFromInline var iterator: AnyIterator<Element>?
 
@@ -54,7 +56,7 @@ public struct LazyIterator<Element>: IteratorProtocol {
   }
 
   @inlinable
-  public mutating func next() -> Element? {
+  package mutating func next() -> Element? {
     if let make {
       iterator = make()
       self.make = nil
@@ -66,7 +68,7 @@ public struct LazyIterator<Element>: IteratorProtocol {
 /// Builds an iterator from a closure over local state; the closure runs
 /// when the first element is requested.
 @inlinable
-func lazyStream<Element>(_ body: @escaping () -> () -> Element?) -> IVMStream<Element> {
+package func lazyStream<Element>(_ body: @escaping () -> () -> Element?) -> IVMStream<Element> {
   IVMStream { AnyIterator(body()) }
 }
 
@@ -86,4 +88,4 @@ extension Sequence {
   }
 }
 
-public typealias NodeStream = IVMStream<Node>
+package typealias NodeStream = IVMStream<Node>

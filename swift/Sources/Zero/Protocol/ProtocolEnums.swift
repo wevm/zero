@@ -1,6 +1,6 @@
 /// The kind of a protocol error
 /// (`packages/zero-protocol/src/error-kind-enum.ts`).
-public enum ErrorKind: String, Sendable, Hashable, CaseIterable {
+package enum ErrorKind: String, Sendable, Hashable, CaseIterable {
   case authInvalidated = "AuthInvalidated"
   case clientNotFound = "ClientNotFound"
   case invalidConnectionRequest = "InvalidConnectionRequest"
@@ -23,7 +23,7 @@ public enum ErrorKind: String, Sendable, Hashable, CaseIterable {
 
   /// The kinds of a basic error body (`basicErrorKindSchema` in
   /// `packages/zero-protocol/src/error.ts`).
-  public static let basic: Set<ErrorKind> = [
+  package static let basic: Set<ErrorKind> = [
     .authInvalidated, .clientNotFound, .invalidConnectionRequest,
     .invalidConnectionRequestBaseCookie, .invalidConnectionRequestLastMutationID,
     .invalidConnectionRequestClientDeleted, .invalidMessage, .invalidPush,
@@ -33,12 +33,12 @@ public enum ErrorKind: String, Sendable, Hashable, CaseIterable {
 
   /// The kinds whose body carries backoff parameters
   /// (`backoffErrorKindSchema`).
-  public static let backoff: Set<ErrorKind> = [.rebalance, .rehome, .serverOverloaded]
+  package static let backoff: Set<ErrorKind> = [.rebalance, .rehome, .serverOverloaded]
 }
 
 /// Where an error came from
 /// (`packages/zero-protocol/src/error-origin-enum.ts`).
-public enum ErrorOrigin: String, Sendable, Hashable, CaseIterable {
+package enum ErrorOrigin: String, Sendable, Hashable, CaseIterable {
   case client
   case server
   case zeroCache
@@ -46,7 +46,7 @@ public enum ErrorOrigin: String, Sendable, Hashable, CaseIterable {
 
 /// Why a push or transform failed
 /// (`packages/zero-protocol/src/error-reason-enum.ts`).
-public enum ErrorReason: String, Sendable, Hashable, CaseIterable {
+package enum ErrorReason: String, Sendable, Hashable, CaseIterable {
   case database
   case parse
   case outOfOrderMutation = "oooMutation"
@@ -57,7 +57,7 @@ public enum ErrorReason: String, Sendable, Hashable, CaseIterable {
 }
 
 /// `packages/zero-protocol/src/mutation-type-enum.ts`.
-public enum MutationType: String, Sendable, Hashable, CaseIterable {
+package enum MutationType: String, Sendable, Hashable, CaseIterable {
   case crud
   case custom
 }

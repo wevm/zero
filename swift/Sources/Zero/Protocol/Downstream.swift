@@ -5,7 +5,7 @@
 /// know as invalid and disconnects (`#onMessage` in
 /// `packages/zero-client/src/client/zero.ts`, which parses in `passthrough`
 /// mode).
-public enum Downstream: Sendable, Hashable, JSONCodable {
+package enum Downstream: Sendable, Hashable, JSONCodable {
   case connected(ConnectedBody)
   case error(ErrorBody)
   case pong
@@ -19,7 +19,7 @@ public enum Downstream: Sendable, Hashable, JSONCodable {
   /// Custom queries the API server failed to transform.
   case transformError([ErroredQuery])
 
-  public var tag: String {
+  package var tag: String {
     switch self {
     case .connected: "connected"
     case .error: "error"
@@ -35,7 +35,7 @@ public enum Downstream: Sendable, Hashable, JSONCodable {
     }
   }
 
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     guard case .array(let a) = json else { throw DecodingError("Expected array") }
     guard a.count == 2, case .string(let tag) = a[0] else {
       throw DecodingError("Expected [tag, body] tuple")
@@ -67,11 +67,11 @@ public enum Downstream: Sendable, Hashable, JSONCodable {
   }
 
   /// Parses message text, as the client receives it.
-  public init(text: String) throws(DecodingError) {
+  package init(text: String) throws(DecodingError) {
     try self.init(json: try JSONValue.parseMessage(text))
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     switch self {
     case .connected(let b): .message(tag, b.json)
     case .error(let b): .message(tag, b.json)
@@ -88,5 +88,5 @@ public enum Downstream: Sendable, Hashable, JSONCodable {
   }
 
   /// The message text to send.
-  public var text: String { JSONSerializer.stringify(json) }
+  package var text: String { JSONSerializer.stringify(json) }
 }

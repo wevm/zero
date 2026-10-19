@@ -1,14 +1,14 @@
 /// Storage key layout (`packages/zero-client/src/client/keys.ts`).
-public enum Keys {
-  public static let desiredQueriesPrefix = "d/"
-  public static let gotQueriesPrefix = "g/"
-  public static let entitiesPrefix = "e/"
-  public static let mutationsPrefix = "m/"
+package enum Keys {
+  package static let desiredQueriesPrefix = "d/"
+  package static let gotQueriesPrefix = "g/"
+  package static let entitiesPrefix = "e/"
+  package static let mutationsPrefix = "m/"
 
-  public struct InvalidPrimaryKeyValue: Error, CustomStringConvertible {
-    public let column: String
-    public let value: JSONValue?
-    public var description: String {
+  package struct InvalidPrimaryKeyValue: Error, CustomStringConvertible {
+    package let column: String
+    package let value: JSONValue?
+    package var description: String {
       "Invalid primary key value for \(column): \(value.map(JSONSerializer.stringify) ?? "undefined")"
     }
   }
@@ -16,7 +16,7 @@ public enum Keys {
   /// `toPrimaryKeyString`: `e/<table>/<id>`. A single-column key is the value
   /// as JS `String()` prints it; a compound key is the decimal `h128` of the
   /// JSON array of its values.
-  public static func primaryKeyString(
+  package static func primaryKeyString(
     table: String, primaryKey: [String], row: Row
   ) throws(InvalidPrimaryKeyValue) -> String {
     func scalar(_ column: String) throws(InvalidPrimaryKeyValue) -> JSONValue {
@@ -47,15 +47,15 @@ public enum Keys {
     }
   }
 
-  public static func desiredQueriesKey(clientID: String, hash: String) -> String {
+  package static func desiredQueriesKey(clientID: String, hash: String) -> String {
     desiredQueriesPrefix + clientID + "/" + hash
   }
 
-  public static func gotQueriesKey(hash: String) -> String {
+  package static func gotQueriesKey(hash: String) -> String {
     gotQueriesPrefix + hash
   }
 
-  public static func mutationResponseKey(clientID: String, id: Double) -> String {
+  package static func mutationResponseKey(clientID: String, id: Double) -> String {
     mutationsPrefix + clientID + "/" + JSNumber.format(id)
   }
 }

@@ -1,21 +1,21 @@
 /// The body of the `connected` message zero-cache sends once a connection
 /// is set up (`connectedBodySchema` in `packages/zero-protocol/src/connect.ts`).
-public struct ConnectedBody: Sendable, Hashable, JSONCodable {
-  public var wsid: String
-  public var timestamp: Double?
+package struct ConnectedBody: Sendable, Hashable, JSONCodable {
+  package var wsid: String
+  package var timestamp: Double?
 
-  public init(wsid: String, timestamp: Double? = nil) {
+  package init(wsid: String, timestamp: Double? = nil) {
     self.wsid = wsid
     self.timestamp = timestamp
   }
 
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let r = try JSONObjectReader(json, "connected body")
     wsid = try r.string("wsid")
     timestamp = try r.optionalNumber("timestamp")
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     var o = JSONObjectBuilder()
     o.set("wsid", wsid)
     o.set("timestamp", timestamp)
@@ -26,25 +26,25 @@ public struct ConnectedBody: Sendable, Hashable, JSONCodable {
 /// The body of the first message a client sends, usually in the
 /// `Sec-WebSocket-Protocol` header (`initConnectionBodySchema` in
 /// `packages/zero-protocol/src/connect.ts`).
-public struct InitConnectionBody: Sendable, Hashable, JSONCodable {
-  public var desiredQueriesPatch: UpQueriesPatch
+package struct InitConnectionBody: Sendable, Hashable, JSONCodable {
+  package var desiredQueriesPatch: UpQueriesPatch
   /// Sent only when the client has no server snapshot yet: the schema can be
   /// large, and zero-cache keeps it for the client group.
-  public var clientSchema: ClientSchema?
-  public var deleted: DeleteClientsBody?
+  package var clientSchema: ClientSchema?
+  package var deleted: DeleteClientsBody?
   /// Configures the push endpoint of the API server.
-  public var userPushURL: String?
-  public var userPushHeaders: [String: String]?
+  package var userPushURL: String?
+  package var userPushHeaders: [String: String]?
   /// Configures the query endpoint of the API server.
-  public var userQueryURL: String?
-  public var userQueryHeaders: [String: String]?
+  package var userQueryURL: String?
+  package var userQueryHeaders: [String: String]?
   /// The client IDs that are running in the client group, so zero-cache can
   /// inactivate the queries of the others.
-  public var activeClients: [String]?
+  package var activeClients: [String]?
   /// A W3C traceparent header for distributed tracing.
-  public var traceparent: String?
+  package var traceparent: String?
 
-  public init(
+  package init(
     desiredQueriesPatch: UpQueriesPatch, clientSchema: ClientSchema? = nil,
     deleted: DeleteClientsBody? = nil, userPushURL: String? = nil,
     userPushHeaders: [String: String]? = nil, userQueryURL: String? = nil,
@@ -62,7 +62,7 @@ public struct InitConnectionBody: Sendable, Hashable, JSONCodable {
     self.traceparent = traceparent
   }
 
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let r = try JSONObjectReader(json, "initConnection body")
     desiredQueriesPatch = try r.required("desiredQueriesPatch", JSONDecode.upQueriesPatch)
     clientSchema = try r.optional("clientSchema", ClientSchema.init(json:))
@@ -75,7 +75,7 @@ public struct InitConnectionBody: Sendable, Hashable, JSONCodable {
     traceparent = try r.optionalString("traceparent")
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     var o = JSONObjectBuilder()
     o.set("desiredQueriesPatch", .array(desiredQueriesPatch.map(\.json)))
     o.set("clientSchema", clientSchema?.json)
@@ -95,8 +95,8 @@ public struct InitConnectionBody: Sendable, Hashable, JSONCodable {
 /// `decodeSecProtocols` in `packages/zero-protocol/src/connect.ts`): the
 /// UTF-8 of `JSON.stringify({initConnectionMessage, authToken})`, base64
 /// encoded, then URI encoded.
-public enum SecProtocols {
-  public static func encode(initConnection: InitConnectionBody?, authToken: String?) -> String {
+package enum SecProtocols {
+  package static func encode(initConnection: InitConnectionBody?, authToken: String?) -> String {
     var o = JSONObjectBuilder()
     o.set(
       "initConnectionMessage", initConnection.map { JSONValue.message("initConnection", $0.json) })
@@ -118,7 +118,7 @@ public enum SecProtocols {
 
   /// Decodes a protocol header value into the JSON it carries, as
   /// `JSON.parse` returns it: `decodeSecProtocols` does not validate it.
-  public static func decode(_ secProtocol: String) throws(DecodingError) -> JSONValue {
+  package static func decode(_ secProtocol: String) throws(DecodingError) -> JSONValue {
     let base64 = try URIComponent.decode(secProtocol)
     guard let bytes = Base64.forgivingDecode(base64) else {
       throw DecodingError("The string to be decoded is not correctly encoded")

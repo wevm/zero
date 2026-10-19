@@ -62,7 +62,7 @@ public struct UpdateNeededReason: Sendable, Hashable {
   public var type: String
   public var message: String?
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     var o: [String: JSONValue] = ["type": .string(type)]
     if let message { o["message"] = .string(message) }
     return .object(o)

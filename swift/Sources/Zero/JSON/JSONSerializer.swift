@@ -4,18 +4,18 @@
 /// Object keys are written sorted by UTF-16 code unit (`Object.keys().sort()`
 /// order), since `JSONValue` objects are unordered. The output is therefore
 /// deterministic.
-public enum JSONSerializer {
-  public static func stringify(_ value: JSONValue) -> String {
+package enum JSONSerializer {
+  package static func stringify(_ value: JSONValue) -> String {
     var out = ""
     write(value, into: &out)
     return out
   }
 
-  public static func data(_ value: JSONValue) -> [UInt8] {
+  package static func data(_ value: JSONValue) -> [UInt8] {
     Array(stringify(value).utf8)
   }
 
-  public static func write(_ value: JSONValue, into out: inout String) {
+  package static func write(_ value: JSONValue, into out: inout String) {
     switch value {
     case .null:
       out += "null"
@@ -48,7 +48,7 @@ public enum JSONSerializer {
 
   static let hex: [Character] = Array("0123456789abcdef")
 
-  public static func writeString(_ s: String, into out: inout String) {
+  package static func writeString(_ s: String, into out: inout String) {
     out += "\""
     var needsEscape = false
     for u in s.utf8 where u < 0x20 || u == 0x22 || u == 0x5C {

@@ -1,10 +1,10 @@
 /// The name of every CRUD mutation (`CRUD_MUTATION_NAME` in
 /// `packages/zero-protocol/src/mutation.ts`).
-public let crudMutationName = "_zero_crud"
+package let crudMutationName = "_zero_crud"
 
 /// One operation of a CRUD mutation (`crudOpSchema` in
 /// `packages/zero-protocol/src/mutation.ts`).
-public enum CRUDOp: Sendable, Hashable, JSONCodable {
+package enum CRUDOp: Sendable, Hashable, JSONCodable {
   case insert(tableName: String, primaryKey: [String], value: Row)
   case upsert(tableName: String, primaryKey: [String], value: Row)
   /// `value` is a partial row with at least the primary key columns.
@@ -12,7 +12,7 @@ public enum CRUDOp: Sendable, Hashable, JSONCodable {
   /// `value` holds the primary key columns.
   case delete(tableName: String, primaryKey: [String], value: PrimaryKeyValueRecord)
 
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let r = try JSONObjectReader(json, "CRUD op")
     let op = try r.string("op")
     switch op {
@@ -42,7 +42,7 @@ public enum CRUDOp: Sendable, Hashable, JSONCodable {
     }
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     let (op, tableName, primaryKey, value): (String, String, [String], Row) =
       switch self {
       case .insert(let t, let pk, let v): ("insert", t, pk, v)
@@ -59,13 +59,13 @@ public enum CRUDOp: Sendable, Hashable, JSONCodable {
 
 /// A mutation of the legacy CRUD mutators (`crudMutationSchema`). Its name is
 /// always ``crudMutationName`` and its args are `[{ops}]`.
-public struct CRUDMutation: Sendable, Hashable {
-  public var id: Double
-  public var clientID: String
-  public var ops: [CRUDOp]
-  public var timestamp: Double
+package struct CRUDMutation: Sendable, Hashable {
+  package var id: Double
+  package var clientID: String
+  package var ops: [CRUDOp]
+  package var timestamp: Double
 
-  public init(id: Double, clientID: String, ops: [CRUDOp], timestamp: Double) {
+  package init(id: Double, clientID: String, ops: [CRUDOp], timestamp: Double) {
     self.id = id
     self.clientID = clientID
     self.ops = ops
@@ -74,14 +74,14 @@ public struct CRUDMutation: Sendable, Hashable {
 }
 
 /// A mutation of a custom mutator (`customMutationSchema`).
-public struct CustomMutation: Sendable, Hashable {
-  public var id: Double
-  public var clientID: String
-  public var name: String
-  public var args: [JSONValue]
-  public var timestamp: Double
+package struct CustomMutation: Sendable, Hashable {
+  package var id: Double
+  package var clientID: String
+  package var name: String
+  package var args: [JSONValue]
+  package var timestamp: Double
 
-  public init(id: Double, clientID: String, name: String, args: [JSONValue], timestamp: Double) {
+  package init(id: Double, clientID: String, name: String, args: [JSONValue], timestamp: Double) {
     self.id = id
     self.clientID = clientID
     self.name = name
@@ -91,25 +91,25 @@ public struct CustomMutation: Sendable, Hashable {
 }
 
 /// A mutation as pushed to zero-cache (`mutationSchema`).
-public enum Mutation: Sendable, Hashable, JSONCodable {
+package enum Mutation: Sendable, Hashable, JSONCodable {
   case crud(CRUDMutation)
   case custom(CustomMutation)
 
-  public var id: Double {
+  package var id: Double {
     switch self {
     case .crud(let m): m.id
     case .custom(let m): m.id
     }
   }
 
-  public var clientID: String {
+  package var clientID: String {
     switch self {
     case .crud(let m): m.clientID
     case .custom(let m): m.clientID
     }
   }
 
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let r = try JSONObjectReader(json, "mutation")
     switch try r.literalUnion("type", MutationType.self) {
     case .crud:
@@ -140,7 +140,7 @@ public enum Mutation: Sendable, Hashable, JSONCodable {
     }
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     switch self {
     case .crud(let m):
       return [
@@ -161,21 +161,21 @@ public enum Mutation: Sendable, Hashable, JSONCodable {
 /// A failed mutation's result (`mutationErrorSchema` in
 /// `packages/zero-protocol/src/mutation.ts`). The fields are kept as sent:
 /// see ``MutationResult`` for which results are errors.
-public struct MutationError: Sendable, Hashable {
+package struct MutationError: Sendable, Hashable {
   /// `"app"` for an error the mutator threw; `"oooMutation"` or
   /// `"alreadyProcessed"` for one from zero.
-  public var error: JSONValue
-  public var message: JSONValue?
-  public var details: JSONValue?
+  package var error: JSONValue
+  package var message: JSONValue?
+  package var details: JSONValue?
 
-  public init(error: JSONValue, message: JSONValue? = nil, details: JSONValue? = nil) {
+  package init(error: JSONValue, message: JSONValue? = nil, details: JSONValue? = nil) {
     self.error = error
     self.message = message
     self.details = details
   }
 
   /// An application error (`appErrorSchema`).
-  public static func app(message: String? = nil, details: JSONValue? = nil) -> MutationError {
+  package static func app(message: String? = nil, details: JSONValue? = nil) -> MutationError {
     MutationError(error: "app", message: message.map { .string($0) }, details: details)
   }
 }
@@ -192,12 +192,12 @@ public struct MutationError: Sendable, Hashable {
 /// field's matcher returns a value, as `jsonSchema` always does. So a result
 /// with `data` is OK even if it has an `error`, and any other result with an
 /// `error`, whatever its value, is an error.
-public enum MutationResult: Sendable, Hashable, JSONCodable {
+package enum MutationResult: Sendable, Hashable, JSONCodable {
   /// `mutationOkSchema`, with the data the mutator returned, if any.
   case ok(data: JSONValue?)
   case error(MutationError)
 
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let r = try JSONObjectReader(json, "mutation result")
     if let data = r.object["data"] {
       self = .ok(data: data)
@@ -209,7 +209,7 @@ public enum MutationResult: Sendable, Hashable, JSONCodable {
     }
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     var o = JSONObjectBuilder()
     switch self {
     case .ok(let data):
@@ -224,33 +224,33 @@ public enum MutationResult: Sendable, Hashable, JSONCodable {
 }
 
 /// `mutationResponseSchema`.
-public struct MutationResponse: Sendable, Hashable, JSONCodable {
-  public var id: MutationID
-  public var result: MutationResult
+package struct MutationResponse: Sendable, Hashable, JSONCodable {
+  package var id: MutationID
+  package var result: MutationResult
 
-  public init(id: MutationID, result: MutationResult) {
+  package init(id: MutationID, result: MutationResult) {
     self.id = id
     self.result = result
   }
 
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let r = try JSONObjectReader(json, "mutation response")
     id = try r.required("id", MutationID.init(json:))
     result = try r.required("result", MutationResult.init(json:))
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     ["id": id.json, "result": result.json]
   }
 }
 
 /// A change to the mutation results zero-cache tracks for a client
 /// (`patchOpSchema` in `packages/zero-protocol/src/mutations-patch.ts`).
-public enum MutationPatchOp: Sendable, Hashable, JSONCodable {
+package enum MutationPatchOp: Sendable, Hashable, JSONCodable {
   case put(MutationResponse)
   case del(MutationID)
 
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let r = try JSONObjectReader(json, "mutations patch op")
     switch try r.string("op") {
     case "put": self = .put(try r.required("mutation", MutationResponse.init(json:)))
@@ -259,7 +259,7 @@ public enum MutationPatchOp: Sendable, Hashable, JSONCodable {
     }
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     switch self {
     case .put(let m): ["op": "put", "mutation": m.json]
     case .del(let id): ["op": "del", "id": id.json]
@@ -268,4 +268,4 @@ public enum MutationPatchOp: Sendable, Hashable, JSONCodable {
 }
 
 /// `mutationsPatchSchema`.
-public typealias MutationsPatch = [MutationPatchOp]
+package typealias MutationsPatch = [MutationPatchOp]

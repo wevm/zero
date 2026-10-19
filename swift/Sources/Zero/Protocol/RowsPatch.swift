@@ -1,6 +1,6 @@
 /// A change to the synced rows (`rowPatchOpSchema` in
 /// `packages/zero-protocol/src/row-patch.ts`).
-public enum RowPatchOp: Sendable, Hashable, JSONCodable {
+package enum RowPatchOp: Sendable, Hashable, JSONCodable {
   /// Inserts or replaces the row.
   case put(tableName: String, value: Row)
   /// Merges `merge` into the row with primary key `id`. `merge` is a
@@ -14,7 +14,7 @@ public enum RowPatchOp: Sendable, Hashable, JSONCodable {
   /// Deletes every row.
   case clear
 
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let r = try JSONObjectReader(json, "row patch op")
     switch try r.string("op") {
     case "put":
@@ -35,7 +35,7 @@ public enum RowPatchOp: Sendable, Hashable, JSONCodable {
     }
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     switch self {
     case .put(let tableName, let value):
       return ["op": "put", "tableName": .string(tableName), "value": .object(value)]
@@ -56,7 +56,7 @@ public enum RowPatchOp: Sendable, Hashable, JSONCodable {
 }
 
 /// `rowsPatchSchema`.
-public typealias RowsPatch = [RowPatchOp]
+package typealias RowsPatch = [RowPatchOp]
 
 extension JSONDecode {
   /// `rowSchema` (`packages/zero-protocol/src/data.ts`): a record of JSON

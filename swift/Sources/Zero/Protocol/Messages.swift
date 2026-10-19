@@ -1,22 +1,22 @@
 /// The body of a `changeDesiredQueries` message
 /// (`packages/zero-protocol/src/change-desired-queries.ts`).
-public struct ChangeDesiredQueriesBody: Sendable, Hashable, JSONCodable {
-  public var desiredQueriesPatch: UpQueriesPatch
+package struct ChangeDesiredQueriesBody: Sendable, Hashable, JSONCodable {
+  package var desiredQueriesPatch: UpQueriesPatch
   /// A W3C traceparent header for distributed tracing.
-  public var traceparent: String?
+  package var traceparent: String?
 
-  public init(desiredQueriesPatch: UpQueriesPatch, traceparent: String? = nil) {
+  package init(desiredQueriesPatch: UpQueriesPatch, traceparent: String? = nil) {
     self.desiredQueriesPatch = desiredQueriesPatch
     self.traceparent = traceparent
   }
 
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let r = try JSONObjectReader(json, "changeDesiredQueries body")
     desiredQueriesPatch = try r.required("desiredQueriesPatch", JSONDecode.upQueriesPatch)
     traceparent = try r.optionalString("traceparent")
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     var o = JSONObjectBuilder()
     o.set("desiredQueriesPatch", .array(desiredQueriesPatch.map(\.json)))
     o.set("traceparent", traceparent)
@@ -26,25 +26,25 @@ public struct ChangeDesiredQueriesBody: Sendable, Hashable, JSONCodable {
 
 /// The body of a `pull` request (`pullRequestBodySchema` in
 /// `packages/zero-protocol/src/pull.ts`).
-public struct PullRequestBody: Sendable, Hashable, JSONCodable {
-  public var clientGroupID: String
-  public var cookie: Version?
-  public var requestID: String
+package struct PullRequestBody: Sendable, Hashable, JSONCodable {
+  package var clientGroupID: String
+  package var cookie: Version?
+  package var requestID: String
 
-  public init(clientGroupID: String, cookie: Version?, requestID: String) {
+  package init(clientGroupID: String, cookie: Version?, requestID: String) {
     self.clientGroupID = clientGroupID
     self.cookie = cookie
     self.requestID = requestID
   }
 
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let r = try JSONObjectReader(json, "pull request body")
     clientGroupID = try r.string("clientGroupID")
     cookie = try r.required("cookie", NullableVersion.decode)
     requestID = try r.string("requestID")
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     [
       "clientGroupID": .string(clientGroupID), "cookie": NullableVersion.json(cookie),
       "requestID": .string(requestID),
@@ -55,26 +55,26 @@ public struct PullRequestBody: Sendable, Hashable, JSONCodable {
 /// The body of a `pull` response (`pullResponseBodySchema` in
 /// `packages/zero-protocol/src/pull.ts`). Pull is only used to recover
 /// mutations, so it carries no patch.
-public struct PullResponseBody: Sendable, Hashable, JSONCodable {
-  public var cookie: Version
+package struct PullResponseBody: Sendable, Hashable, JSONCodable {
+  package var cookie: Version
   /// The `requestID` of the pull request this answers.
-  public var requestID: String
-  public var lastMutationIDChanges: [String: Double]
+  package var requestID: String
+  package var lastMutationIDChanges: [String: Double]
 
-  public init(cookie: Version, requestID: String, lastMutationIDChanges: [String: Double]) {
+  package init(cookie: Version, requestID: String, lastMutationIDChanges: [String: Double]) {
     self.cookie = cookie
     self.requestID = requestID
     self.lastMutationIDChanges = lastMutationIDChanges
   }
 
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let r = try JSONObjectReader(json, "pull response body")
     cookie = try r.string("cookie")
     requestID = try r.string("requestID")
     lastMutationIDChanges = try r.required("lastMutationIDChanges", JSONDecode.numberRecord)
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     [
       "cookie": .string(cookie), "requestID": .string(requestID),
       "lastMutationIDChanges": .numberRecord(lastMutationIDChanges),
@@ -84,22 +84,22 @@ public struct PullResponseBody: Sendable, Hashable, JSONCodable {
 
 /// The body of a `deleteClients` message, in either direction
 /// (`packages/zero-protocol/src/delete-clients.ts`).
-public struct DeleteClientsBody: Sendable, Hashable, JSONCodable {
-  public var clientIDs: [String]?
-  public var clientGroupIDs: [String]?
+package struct DeleteClientsBody: Sendable, Hashable, JSONCodable {
+  package var clientIDs: [String]?
+  package var clientGroupIDs: [String]?
 
-  public init(clientIDs: [String]? = nil, clientGroupIDs: [String]? = nil) {
+  package init(clientIDs: [String]? = nil, clientGroupIDs: [String]? = nil) {
     self.clientIDs = clientIDs
     self.clientGroupIDs = clientGroupIDs
   }
 
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let r = try JSONObjectReader(json, "deleteClients body")
     clientIDs = try r.optional("clientIDs", JSONDecode.strings)
     clientGroupIDs = try r.optional("clientGroupIDs", JSONDecode.strings)
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     var o = JSONObjectBuilder()
     o.set("clientIDs", clientIDs.map(JSONValue.strings))
     o.set("clientGroupIDs", clientGroupIDs.map(JSONValue.strings))
@@ -109,18 +109,18 @@ public struct DeleteClientsBody: Sendable, Hashable, JSONCodable {
 
 /// The body of an `updateAuth` message
 /// (`packages/zero-protocol/src/update-auth.ts`).
-public struct UpdateAuthBody: Sendable, Hashable, JSONCodable {
-  public var auth: String
+package struct UpdateAuthBody: Sendable, Hashable, JSONCodable {
+  package var auth: String
 
-  public init(auth: String) {
+  package init(auth: String) {
     self.auth = auth
   }
 
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     auth = try JSONObjectReader(json, "updateAuth body").string("auth")
   }
 
-  public var json: JSONValue { ["auth": .string(auth)] }
+  package var json: JSONValue { ["auth": .string(auth)] }
 }
 
 /// A custom query the API server failed to transform (`erroredQuerySchema`
@@ -144,7 +144,7 @@ public enum ErroredQuery: Sendable, Hashable, JSONCodable {
     }
   }
 
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let r = try JSONObjectReader(json, "errored query")
     switch try r.string("error") {
     case "app":
@@ -160,7 +160,7 @@ public enum ErroredQuery: Sendable, Hashable, JSONCodable {
     }
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     var o = JSONObjectBuilder()
     switch self {
     case .app(let id, let name, let message, let details):

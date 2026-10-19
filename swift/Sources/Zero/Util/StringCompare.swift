@@ -7,10 +7,10 @@
 ///
 /// Both differ from Swift's `String <`, which compares by Unicode canonical
 /// equivalence.
-public enum StringCompare {
+package enum StringCompare {
   /// `compareUTF8(a, b)`: negative, zero, or positive.
   @inlinable
-  public static func utf8(_ a: String, _ b: String) -> Int {
+  package static func utf8(_ a: String, _ b: String) -> Int {
     // No `a == b` shortcut: Swift's `==` equates canonically equivalent
     // strings ("é" and "e\u{301}"), which are distinct in Zero.
     let contiguous = a.utf8.withContiguousStorageIfAvailable { a in
@@ -31,7 +31,7 @@ public enum StringCompare {
   }
 
   @inlinable
-  public static func utf8Less(_ a: String, _ b: String) -> Bool { utf8(a, b) < 0 }
+  package static func utf8Less(_ a: String, _ b: String) -> Bool { utf8(a, b) < 0 }
 
   /// Byte order: negative, zero, or positive.
   @inlinable
@@ -48,7 +48,7 @@ public enum StringCompare {
 
   /// JS `a < b ? -1 : a > b ? 1 : 0` for strings.
   @inlinable
-  public static func utf16(_ a: String, _ b: String) -> Int {
+  package static func utf16(_ a: String, _ b: String) -> Int {
     var ai = a.utf16.makeIterator()
     var bi = b.utf16.makeIterator()
     while true {
@@ -63,11 +63,11 @@ public enum StringCompare {
   }
 
   @inlinable
-  public static func utf16Less(_ a: String, _ b: String) -> Bool { utf16(a, b) < 0 }
+  package static func utf16Less(_ a: String, _ b: String) -> Bool { utf16(a, b) < 0 }
 
   /// Code unit equality, as JS `===` compares strings.
   @inlinable
-  public static func equal(_ a: String, _ b: String) -> Bool {
+  package static func equal(_ a: String, _ b: String) -> Bool {
     let contiguous = a.utf8.withContiguousStorageIfAvailable { a in
       b.utf8.withContiguousStorageIfAvailable { b in
         a.count == b.count && compare(a, b) == 0
@@ -80,20 +80,20 @@ public enum StringCompare {
 
 /// A string key compared by code units, like a JS `Map` key. Swift's own
 /// `String` equality treats canonically equivalent strings as equal.
-public struct JSKey: Hashable, Sendable, CustomStringConvertible {
-  public let string: String
+package struct JSKey: Hashable, Sendable, CustomStringConvertible {
+  package let string: String
 
   @inlinable
-  public init(_ string: String) { self.string = string }
+  package init(_ string: String) { self.string = string }
 
   @inlinable
-  public static func == (a: JSKey, b: JSKey) -> Bool { StringCompare.equal(a.string, b.string) }
+  package static func == (a: JSKey, b: JSKey) -> Bool { StringCompare.equal(a.string, b.string) }
 
   @inlinable
-  public func hash(into hasher: inout Hasher) {
+  package func hash(into hasher: inout Hasher) {
     var s = string
     s.withUTF8 { hasher.combine(bytes: UnsafeRawBufferPointer($0)) }
   }
 
-  public var description: String { string }
+  package var description: String { string }
 }

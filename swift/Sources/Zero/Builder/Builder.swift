@@ -1,6 +1,6 @@
 /// Connects a pipeline being built to its environment
 /// (`BuilderDelegate` in `packages/zql/src/builder/builder.ts`).
-public protocol BuilderDelegate: AnyObject {
+package protocol BuilderDelegate: AnyObject {
   /// Apply `where` filters even when the source applies them all.
   var applyFiltersAnyway: Bool { get }
   /// Allow NOT EXISTS. Only the server does: a client cannot tell a row
@@ -18,16 +18,16 @@ public protocol BuilderDelegate: AnyObject {
 }
 
 extension BuilderDelegate {
-  public var applyFiltersAnyway: Bool { false }
-  public var enableNotExists: Bool { false }
-  public var disableCorrelatedPredicatePushdown: Bool { false }
-  public func decorateInput(_ input: any Input, name: String) -> any Input { input }
-  public func addEdge(_ source: any InputBase, _ dest: any InputBase) {}
-  public func decorateFilterInput(_ input: any FilterInput, name: String) -> any FilterInput {
+  package var applyFiltersAnyway: Bool { false }
+  package var enableNotExists: Bool { false }
+  package var disableCorrelatedPredicatePushdown: Bool { false }
+  package func decorateInput(_ input: any Input, name: String) -> any Input { input }
+  package func addEdge(_ source: any InputBase, _ dest: any InputBase) {}
+  package func decorateFilterInput(_ input: any FilterInput, name: String) -> any FilterInput {
     input
   }
-  public func decorateSourceInput(_ input: any SourceInput, queryID: String) -> any Input { input }
-  public func mapAst(_ ast: AST) -> AST { ast }
+  package func decorateSourceInput(_ input: any SourceInput, queryID: String) -> any Input { input }
+  package func mapAst(_ ast: AST) -> AST { ast }
 }
 
 /// The limit put on EXISTS subqueries: one row is enough, a few more keep
@@ -36,7 +36,7 @@ let existsLimit = 3
 let permissionsExistsLimit = 1
 
 /// Builds a pipeline from an AST (`buildPipeline`).
-public func buildPipeline(
+package func buildPipeline(
   _ ast: AST, _ delegate: any BuilderDelegate, queryID: String
 )
   throws(PipelineError) -> any Input
@@ -55,18 +55,18 @@ public func buildPipeline(
 }
 
 /// Values for static parameters (`StaticQueryParameters`).
-public struct StaticQueryParameters {
-  public var authData: [String: JSONValue]?
-  public var preMutationRow: Row?
+package struct StaticQueryParameters {
+  package var authData: [String: JSONValue]?
+  package var preMutationRow: Row?
 
-  public init(authData: [String: JSONValue]?, preMutationRow: Row? = nil) {
+  package init(authData: [String: JSONValue]?, preMutationRow: Row? = nil) {
     self.authData = authData
     self.preMutationRow = preMutationRow
   }
 }
 
 /// `bindStaticParameters`: replaces static parameters with their values.
-public func bindStaticParameters(_ ast: AST, _ params: StaticQueryParameters?) -> AST {
+package func bindStaticParameters(_ ast: AST, _ params: StaticQueryParameters?) -> AST {
   func bindValue(_ v: AST.ValuePosition) -> AST.ValuePosition {
     guard case .static(let anchor, let field) = v else { return v }
     guard let params else { preconditionFailure("Static query params do not exist") }

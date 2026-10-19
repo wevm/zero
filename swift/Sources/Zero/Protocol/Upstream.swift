@@ -1,6 +1,6 @@
 /// A message from the client to zero-cache (`upstreamSchema` in
 /// `packages/zero-protocol/src/up.ts`).
-public enum Upstream: Sendable, Hashable, JSONCodable {
+package enum Upstream: Sendable, Hashable, JSONCodable {
   case initConnection(InitConnectionBody)
   case ping
   case deleteClients(DeleteClientsBody)
@@ -19,7 +19,7 @@ public enum Upstream: Sendable, Hashable, JSONCodable {
   /// messages parse (`v.UnrecognizedTuple`).
   case unrecognized([JSONValue])
 
-  public var tag: String {
+  package var tag: String {
     switch self {
     case .initConnection: "initConnection"
     case .ping: "ping"
@@ -35,7 +35,7 @@ public enum Upstream: Sendable, Hashable, JSONCodable {
     }
   }
 
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     guard case .array(let a) = json else { throw DecodingError("Expected array") }
     guard case .string(let tag)? = a.first else {
       throw DecodingError("Expected string", path: ["0"])
@@ -69,11 +69,11 @@ public enum Upstream: Sendable, Hashable, JSONCodable {
   }
 
   /// Parses message text, as zero-cache receives it.
-  public init(text: String) throws(DecodingError) {
+  package init(text: String) throws(DecodingError) {
     try self.init(json: try JSONValue.parseMessage(text))
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     switch self {
     case .initConnection(let b): .message(tag, b.json)
     case .ping: .message(tag, [:])
@@ -90,5 +90,5 @@ public enum Upstream: Sendable, Hashable, JSONCodable {
   }
 
   /// The message text to send.
-  public var text: String { JSONSerializer.stringify(json) }
+  package var text: String { JSONSerializer.stringify(json) }
 }

@@ -74,6 +74,11 @@ apps/zbugs-swift/           dogfood app (iOS + macOS)
   in this public monorepo either way.
 - SwiftPM products: `Zero`, `ZeroUI`, `ZeroTesting`, and `ZeroNIOTesting`
   (test-only; the only product that depends on SwiftNIO).
+- The public API is what apps and the generated code use. The engine (IVM
+  operators, the wire protocol, the B-tree, hashes) is `package`: the
+  package's own modules (tests, `ZeroTesting`, benchmarks) see it, apps don't.
+  A `package` type with `@inlinable` members must itself be
+  `@usableFromInline`, or other modules silently get unspecialized calls.
 - The CLI ships as the unscoped npm package `zero-swift` (we don't own the
   `@rocicorp` scope) with a peer dependency on `@rocicorp/zero`. It is
   versioned with the Swift releases.

@@ -313,7 +313,7 @@ public enum ConnectionState: Sendable, Hashable {
   }
 
   /// The JSON form of the JS `ConnectionState`.
-  public var json: JSONValue {
+  package var json: JSONValue {
     var o: [String: JSONValue] = ["name": .string(status.rawValue)]
     switch self {
     case .initializing, .connected: break
@@ -353,7 +353,7 @@ public enum NeedsAuthReason: Sendable, Hashable {
     self = .zeroCache(reason: error.message)
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     switch self {
     case .mutate(let status, let body), .query(let status, let body):
       var o: [String: JSONValue] = [

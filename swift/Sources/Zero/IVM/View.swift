@@ -1,10 +1,10 @@
 /// The shape of a query result: whether it is a single row, and the
 /// formats of its relationships (`packages/zero-types/src/format.ts`).
-public struct Format: Sendable, Hashable {
-  public var singular: Bool
-  public var relationships: [String: Format]
+package struct Format: Sendable, Hashable {
+  package var singular: Bool
+  package var relationships: [String: Format]
 
-  public init(singular: Bool = false, relationships: [String: Format] = [:]) {
+  package init(singular: Bool = false, relationships: [String: Format] = [:]) {
     self.singular = singular
     self.relationships = relationships
   }
@@ -338,8 +338,8 @@ public enum ResultType: String, Sendable, Hashable {
 ///
 /// Listeners are notified on `flush`, which the engine calls when a
 /// transaction commits.
-public final class ArrayView: Output {
-  public typealias Listener = (ViewValue, ResultType) -> Void
+package final class ArrayView: Output {
+  package typealias Listener = (ViewValue, ResultType) -> Void
 
   let input: any Input
   let format: Format
@@ -352,19 +352,19 @@ public final class ArrayView: Output {
   private var held = false
   private var heldResultType: ResultType = .unknown
   private var heldError: ErroredQuery?
-  public private(set) var resultType: ResultType = .unknown
+  package private(set) var resultType: ResultType = .unknown
   /// Why the query failed, when `resultType` is `.error`.
-  public private(set) var error: ErroredQuery?
-  public var onDestroy: (() -> Void)?
+  package private(set) var error: ErroredQuery?
+  package var onDestroy: (() -> Void)?
 
   /// Hydrates from `input`. `complete` marks the result complete from the
   /// start.
-  public convenience init(_ input: any Input, format: Format, complete: Bool = false) {
+  package convenience init(_ input: any Input, format: Format, complete: Bool = false) {
     self.init(input, format: format, error: nil, complete: complete)
   }
 
   /// Hydrates from `input`, starting as failed when `error` is set.
-  public init(_ input: any Input, format: Format, error: ErroredQuery?, complete: Bool) {
+  package init(_ input: any Input, format: Format, error: ErroredQuery?, complete: Bool) {
     self.input = input
     self.format = format
     root = ViewEntry(row: [:])
@@ -380,7 +380,7 @@ public final class ArrayView: Output {
   }
 
   /// The current rows.
-  public var data: ViewValue {
+  package var data: ViewValue {
     (committedRoot ?? root).relationships[""]!
   }
 
@@ -394,7 +394,7 @@ public final class ArrayView: Output {
   /// Adds a listener, calls it with the current data, and returns a
   /// function that removes it.
   @discardableResult
-  public func addListener(_ listener: @escaping Listener) -> () -> Void {
+  package func addListener(_ listener: @escaping Listener) -> () -> Void {
     let id = nextListenerID
     nextListenerID += 1
     listeners.append((id, listener))
@@ -413,7 +413,7 @@ public final class ArrayView: Output {
     for (_, listener) in listeners { listener(data, type) }
   }
 
-  public func destroy() { onDestroy?() }
+  package func destroy() { onDestroy?() }
 
   private func hydrate() {
     dirty = true
@@ -421,7 +421,7 @@ public final class ArrayView: Output {
     flush()
   }
 
-  public func push(_ change: Change, pusher: any InputBase) {
+  package func push(_ change: Change, pusher: any InputBase) {
     if ViewApply.apply(&root, change, getSchema(), "", format) {
       dirty = true
     }
@@ -429,7 +429,7 @@ public final class ArrayView: Output {
 
   /// Keeps exposing the current snapshot until `releaseData` or the next
   /// `flush`.
-  public func holdData() {
+  package func holdData() {
     committedRoot = root
     held = true
     heldResultType = resultType
@@ -437,14 +437,14 @@ public final class ArrayView: Output {
   }
 
   /// The result type and error listeners are told about now.
-  public var listenerResultType: (ResultType, ErroredQuery?) {
+  package var listenerResultType: (ResultType, ErroredQuery?) {
     committedRoot != nil ? (heldResultType, heldError) : (resultType, error)
   }
 
-  public func releaseData() { committedRoot = nil }
+  package func releaseData() { committedRoot = nil }
 
   /// Notifies listeners if the view changed since the last flush.
-  public func flush() {
+  package func flush() {
     committedRoot = nil
     held = false
     if !dirty { return }
@@ -452,7 +452,7 @@ public final class ArrayView: Output {
     fireListeners()
   }
 
-  public func setResultType(_ type: ResultType, error: ErroredQuery? = nil) {
+  package func setResultType(_ type: ResultType, error: ErroredQuery? = nil) {
     resultType = type
     self.error = error
     if held {
@@ -463,17 +463,17 @@ public final class ArrayView: Output {
   }
 
   /// The server-confirmed result of an earlier sync is in the store.
-  public func markCached() {
+  package func markCached() {
     if resultType == .unknown { setResultType(.cached) }
   }
 
-  public func unmarkCached() {
+  package func unmarkCached() {
     if resultType == .cached { setResultType(.unknown) }
   }
 }
 
 extension Format: JSONCodable {
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let o = try JSONObjectReader(json)
     let relationships = try o.optional("relationships") { (v) throws(DecodingError) in
       try JSONDecode.record(v) { (f) throws(DecodingError) in try Format(json: f) }
@@ -482,7 +482,7 @@ extension Format: JSONCodable {
       singular: try o.optionalBool("singular") ?? false, relationships: relationships ?? [:])
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     var rels: [String: JSONValue] = [:]
     for (k, v) in relationships { rels[k] = v.json }
     return ["singular": .bool(singular), "relationships": .object(rels)]

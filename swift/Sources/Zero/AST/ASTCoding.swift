@@ -1,6 +1,6 @@
 /// JSON encoding of the AST, following `astSchema`.
 extension AST: JSONCodable {
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let r = try JSONObjectReader(json, "AST")
     schema = try r.optionalString("schema")
     table = try r.string("table")
@@ -25,7 +25,7 @@ extension AST: JSONCodable {
     }
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     var o = JSONObjectBuilder()
     o.set("schema", schema)
     o.set("table", .string(table))
@@ -46,7 +46,7 @@ extension AST: JSONCodable {
 }
 
 extension AST.CorrelatedSubquery: JSONCodable {
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let r = try JSONObjectReader(json, "correlated subquery")
     correlation = try r.required("correlation") { (v) throws(DecodingError) in
       let c = try JSONObjectReader(v, "correlation")
@@ -65,7 +65,7 @@ extension AST.CorrelatedSubquery: JSONCodable {
     hidden = try r.optionalBool("hidden")
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     var o = JSONObjectBuilder()
     o.set(
       "correlation",
@@ -80,7 +80,7 @@ extension AST.CorrelatedSubquery: JSONCodable {
 }
 
 extension AST.ValuePosition: JSONCodable {
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let r = try JSONObjectReader(json, "value position")
     let type = try r.string("type")
     switch type {
@@ -120,7 +120,7 @@ extension AST.ValuePosition: JSONCodable {
     }
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     switch self {
     case .literal(let v): ["type": "literal", "value": v]
     case .column(let name): ["type": "column", "name": .string(name)]
@@ -131,7 +131,7 @@ extension AST.ValuePosition: JSONCodable {
 }
 
 extension AST.Condition: JSONCodable {
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let r = try JSONObjectReader(json, "condition")
     let type = try r.string("type")
     switch type {
@@ -166,7 +166,7 @@ extension AST.Condition: JSONCodable {
     }
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     switch self {
     case .simple(let op, let left, let right):
       return ["type": "simple", "op": .string(op.rawValue), "left": left.json, "right": right.json]

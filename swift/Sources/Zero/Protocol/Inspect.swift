@@ -3,17 +3,17 @@
 ///
 /// It is kept as JSON, checked and stripped like valita does: the Swift
 /// client has no inspector yet.
-public struct InspectUpBody: Sendable, Hashable, JSONCodable {
-  public let json: JSONValue
+package struct InspectUpBody: Sendable, Hashable, JSONCodable {
+  package let json: JSONValue
 
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     self.json = try InspectSchemas.up.parse(json)
   }
 
   /// The request ID the response echoes.
-  public var id: String { json["id"]?.stringValue ?? "" }
+  package var id: String { json["id"]?.stringValue ?? "" }
   /// `queries`, `metrics`, `version`, `authenticate`, or `analyze-query`.
-  public var op: String { json["op"]?.stringValue ?? "" }
+  package var op: String { json["op"]?.stringValue ?? "" }
 }
 
 /// The body of an `inspect` response from zero-cache
@@ -21,20 +21,20 @@ public struct InspectUpBody: Sendable, Hashable, JSONCodable {
 ///
 /// It is kept as JSON, checked and stripped like valita does: the Swift
 /// client has no inspector yet.
-public struct InspectDownBody: Sendable, Hashable, JSONCodable {
-  public let json: JSONValue
+package struct InspectDownBody: Sendable, Hashable, JSONCodable {
+  package let json: JSONValue
 
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     self.json = try InspectSchemas.down.parse(json)
   }
 
   /// The ID of the request this answers.
-  public var id: String { json["id"]?.stringValue ?? "" }
+  package var id: String { json["id"]?.stringValue ?? "" }
   /// `queries`, `metrics`, `version`, `authenticated`, `analyze-query`, or
   /// `error`.
-  public var op: String { json["op"]?.stringValue ?? "" }
+  package var op: String { json["op"]?.stringValue ?? "" }
   /// The response, whose shape depends on ``op``.
-  public var value: JSONValue { json["value"] ?? .null }
+  package var value: JSONValue { json["value"] ?? .null }
 }
 
 /// The inspect schemas of `packages/zero-protocol/src/inspect-up.ts`,

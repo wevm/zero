@@ -2,17 +2,17 @@
 ///
 /// Differences from JS are limited to what a Swift `String` can represent: an
 /// escaped lone surrogate (`"\ud800"`) becomes U+FFFD.
-public struct JSONParser {
-  public struct Error: Swift.Error, CustomStringConvertible, Equatable {
-    public let message: String
-    public let offset: Int
-    public var description: String { "\(message) at offset \(offset)" }
+package struct JSONParser {
+  package struct Error: Swift.Error, CustomStringConvertible, Equatable {
+    package let message: String
+    package let offset: Int
+    package var description: String { "\(message) at offset \(offset)" }
   }
 
   /// Nesting deeper than this is rejected instead of overflowing the stack.
-  public static let maxDepth = 5_000
+  package static let maxDepth = 5_000
 
-  public static func parse(_ text: String) throws(Error) -> JSONValue {
+  package static func parse(_ text: String) throws(Error) -> JSONValue {
     var text = text
     let result = text.withUTF8 { buffer in
       Result { () throws(Error) in try parse(buffer) }
@@ -20,14 +20,14 @@ public struct JSONParser {
     return try result.get()
   }
 
-  public static func parse(_ bytes: [UInt8]) throws(Error) -> JSONValue {
+  package static func parse(_ bytes: [UInt8]) throws(Error) -> JSONValue {
     let result = bytes.withUnsafeBufferPointer { buffer in
       Result { () throws(Error) in try parse(buffer) }
     }
     return try result.get()
   }
 
-  public static func parse(_ buffer: UnsafeBufferPointer<UInt8>) throws(Error) -> JSONValue {
+  package static func parse(_ buffer: UnsafeBufferPointer<UInt8>) throws(Error) -> JSONValue {
     var p = JSONParser(buffer)
     p.skipWhitespace()
     let value = try p.parseValue(depth: 0)

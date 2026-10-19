@@ -1,11 +1,11 @@
 /// An unknown table or column met while mapping names.
-public struct NameMappingError: Error, Sendable, Hashable, CustomStringConvertible {
-  public var description: String
+package struct NameMappingError: Error, Sendable, Hashable, CustomStringConvertible {
+  package var description: String
 }
 
 /// Maps table and column names between the client and the server
 /// (`NameMapper` in `packages/zero-types/src/name-mapper.ts`).
-public struct NameMapper: Sendable {
+package struct NameMapper: Sendable {
   struct Destination: Sendable {
     var tableName: String
     var columns: [String: String]
@@ -15,12 +15,12 @@ public struct NameMapper: Sendable {
   let tables: [String: Destination]
 
   /// `clientToServer`.
-  public static func clientToServer(_ schema: ZeroSchema) -> NameMapper {
+  package static func clientToServer(_ schema: ZeroSchema) -> NameMapper {
     NameMapper(schema, fromClient: true)
   }
 
   /// `serverToClient`.
-  public static func serverToClient(_ schema: ZeroSchema) -> NameMapper {
+  package static func serverToClient(_ schema: ZeroSchema) -> NameMapper {
     NameMapper(schema, fromClient: false)
   }
 
@@ -52,13 +52,13 @@ public struct NameMapper: Sendable {
     return table
   }
 
-  public func tableName(_ src: String) throws(NameMappingError) -> String {
+  package func tableName(_ src: String) throws(NameMappingError) -> String {
     try table(src).tableName
   }
 
-  public func tableNameIfKnown(_ src: String) -> String? { tables[src]?.tableName }
+  package func tableNameIfKnown(_ src: String) -> String? { tables[src]?.tableName }
 
-  public func columnName(_ table: String, _ src: String) throws(NameMappingError) -> String {
+  package func columnName(_ table: String, _ src: String) throws(NameMappingError) -> String {
     guard let dst = try self.table(table).columns[src] else {
       throw NameMappingError(description: "unknown column \"\(src)\" of \"\(table)\" table")
     }
@@ -66,7 +66,7 @@ public struct NameMapper: Sendable {
   }
 
   /// Renames the known columns of `row`; others keep their names.
-  public func row(_ table: String, _ row: Row) throws(NameMappingError) -> Row {
+  package func row(_ table: String, _ row: Row) throws(NameMappingError) -> Row {
     let dest = try self.table(table)
     if dest.allColumnsSame { return row }
     var out: Row = [:]
@@ -74,14 +74,14 @@ public struct NameMapper: Sendable {
     return out
   }
 
-  public func columns(_ table: String, _ columns: [String]) throws(NameMappingError) -> [String] {
+  package func columns(_ table: String, _ columns: [String]) throws(NameMappingError) -> [String] {
     let dest = try self.table(table)
     if dest.allColumnsSame { return columns }
     return columns.map { dest.columns[$0] ?? $0 }
   }
 
   /// `mapAST`: the AST with its table and column names mapped.
-  public func map(_ ast: AST) throws(NameMappingError) -> AST {
+  package func map(_ ast: AST) throws(NameMappingError) -> AST {
     var out = ast
     out.table = try tableName(ast.table)
     out.where = try ast.where.map { (w) throws(NameMappingError) in try map(w, table: ast.table) }
@@ -111,7 +111,7 @@ public struct NameMapper: Sendable {
   }
 
   /// `mapCondition`. Only the left side of a comparison names a column.
-  public func map(
+  package func map(
     _ condition: AST.Condition, table: String
   ) throws(NameMappingError)
     -> AST.Condition
@@ -154,7 +154,7 @@ public struct NameMapper: Sendable {
 extension ZeroSchema {
   /// The schema zero-cache checks the replica against, under server names
   /// (`clientSchemaFrom` in `packages/zero-schema/src/builder/schema-builder.ts`).
-  public var clientSchema: ClientSchema {
+  package var clientSchema: ClientSchema {
     var tables: [String: ClientSchema.Table] = [:]
     for (name, table) in self.tables {
       var columns: [String: ClientSchema.ValueType] = [:]

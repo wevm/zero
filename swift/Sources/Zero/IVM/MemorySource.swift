@@ -1,6 +1,6 @@
 /// A source of rows held in memory, kept in sorted order
 /// (`packages/zql/src/ivm/memory-source.ts`).
-public final class MemorySource: Source {
+package final class MemorySource: Source {
   struct Overlay {
     var epoch: Int
     var change: SourceChange
@@ -48,7 +48,7 @@ public final class MemorySource: Source {
   var pushEpoch = 0
   private let schema: TableSchema
 
-  public convenience init(_ table: TableSchema) {
+  package convenience init(_ table: TableSchema) {
     self.init(table: table, primaryIndexData: nil)
   }
 
@@ -65,16 +65,16 @@ public final class MemorySource: Source {
     indexOrder.append(primaryIndexKey)
   }
 
-  public var tableSchema: TableSchema { schema }
+  package var tableSchema: TableSchema { schema }
 
   /// A copy whose primary index shares nodes with this one until either
   /// changes.
-  public func fork() -> MemorySource {
+  package func fork() -> MemorySource {
     MemorySource(table: schema, primaryIndexData: primaryIndex.data)
   }
 
   /// The rows, in primary key order.
-  public var data: BTreeSet<Row> { primaryIndex.data }
+  package var data: BTreeSet<Row> { primaryIndex.data }
 
   static func indexKey(_ sort: AST.Ordering) -> String {
     JSONSerializer.stringify(
@@ -83,7 +83,7 @@ public final class MemorySource: Source {
 
   var primaryIndex: Index { indexes[primaryIndexKey]! }
 
-  public func connect(
+  package func connect(
     sort: AST.Ordering?, filters: AST.Condition?, splitEditKeys: Set<String>?
   ) throws(PipelineError) -> any SourceInput {
     let transformed = transformFilters(filters)
@@ -131,7 +131,7 @@ public final class MemorySource: Source {
   }
 
   /// For tests: the keys of the indexes built so far.
-  public var indexKeys: [String] { indexOrder }
+  package var indexKeys: [String] { indexOrder }
 
   func fetch(_ req: FetchRequest, _ conn: Connection) -> NodeStream {
     NodeStream { [self] in AnyIterator(self.fetchIterator(req, conn)) }
@@ -280,7 +280,7 @@ public final class MemorySource: Source {
 
   /// Pushes an add for each of `rows`. When nothing is connected and the
   /// source is empty, builds the primary index in one pass instead.
-  public func pushAdds(_ rows: [Row]) {
+  package func pushAdds(_ rows: [Row]) {
     let index = primaryIndex
     let canBulkLoad = connections.isEmpty && indexes.count == 1 && index.data.isEmpty
     if !canBulkLoad {
@@ -295,7 +295,7 @@ public final class MemorySource: Source {
     indexes[primaryIndexKey]!.data = BTreeSet(sorted: sorted, compare)
   }
 
-  public func push(_ change: SourceChange) {
+  package func push(_ change: SourceChange) {
     genPushAndWriteWithSplitEdit(change)
   }
 

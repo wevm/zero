@@ -7,14 +7,14 @@
 /// it if strictly descending) and binary-insertion-sorts the rest; that is
 /// reproduced here exactly. Longer arrays use the same insertion sort, which
 /// matches V8 for consistent comparators (it is stable).
-public enum JSSort {
-  public static func sorted<T>(_ array: [T], by cmp: (T, T) -> Int) -> [T] {
+package enum JSSort {
+  package static func sorted<T>(_ array: [T], by cmp: (T, T) -> Int) -> [T] {
     var a = array
     sort(&a, by: cmp)
     return a
   }
 
-  public static func sort<T>(_ a: inout [T], by cmp: (T, T) -> Int) {
+  package static func sort<T>(_ a: inout [T], by cmp: (T, T) -> Int) {
     let n = a.count
     if n < 2 { return }
     // CountAndMakeRun

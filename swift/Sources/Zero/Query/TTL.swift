@@ -98,7 +98,7 @@ extension TTL: ExpressibleByIntegerLiteral {
 
 extension TTL {
   /// The JSON form JS would hold: a string or a number.
-  public var json: JSONValue {
+  package var json: JSONValue {
     switch self {
     case .none: "none"
     case .forever: "forever"
@@ -107,7 +107,7 @@ extension TTL {
     }
   }
 
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     switch json {
     case .number(let n): self = .milliseconds(n)
     case .string(let s): self = TTL(stringLiteral: s)

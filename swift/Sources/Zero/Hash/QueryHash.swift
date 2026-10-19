@@ -3,7 +3,7 @@
 /// The JS implementation folds an AST (or a name and args) into two xxHash32
 /// lanes word by word. These digests are the query IDs the client registers,
 /// so the Swift client reproduces them exactly.
-public enum QueryHash {
+package enum QueryHash {
   struct State {
     var h1: UInt32 = XXHash32.prime5
     var h2: UInt32 = XXHash32.prime1
@@ -77,19 +77,19 @@ public enum QueryHash {
   static let strMark: UInt32 = 0x4000_0000
 
   /// `hashOfAST`: the hash of `ast` after normalizing it.
-  public static func hashOfAST(_ ast: AST) -> String {
+  package static func hashOfAST(_ ast: AST) -> String {
     hashOfNormalizedAST(ast.normalized())
   }
 
   /// The hash of an AST that is already normalized.
-  public static func hashOfNormalizedAST(_ ast: AST) -> String {
+  package static func hashOfNormalizedAST(_ ast: AST) -> String {
     var s = State()
     s.visitAST(ast)
     return s.finalize()
   }
 
   /// `hashOfNameAndArgs`: the identity of a named (custom) query.
-  public static func hashOfNameAndArgs(_ name: String, _ args: [JSONValue]) -> String {
+  package static func hashOfNameAndArgs(_ name: String, _ args: [JSONValue]) -> String {
     var s = State()
     s.mix(tagNameArgs)
     s.mixString(name)
@@ -98,7 +98,7 @@ public enum QueryHash {
   }
 
   /// `hashOfQueryInternals`: the identity of a query as the client sees it.
-  public static func hashOfQueryInternals(
+  package static func hashOfQueryInternals(
     ast: AST,
     format: JSONValue,
     system: AST.System,

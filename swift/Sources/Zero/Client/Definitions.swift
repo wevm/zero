@@ -271,7 +271,7 @@ public enum MutationOutcome: Sendable, Hashable {
   case zeroError(message: String)
 
   /// The JS result object.
-  public var json: JSONValue {
+  package var json: JSONValue {
     switch self {
     case .success(let data):
       var o: [String: JSONValue] = ["type": "success"]

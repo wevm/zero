@@ -1,9 +1,9 @@
 /// The range of schema versions the server supports.
-public struct SchemaVersions: Sendable, Hashable {
-  public var minSupportedVersion: Double
-  public var maxSupportedVersion: Double
+package struct SchemaVersions: Sendable, Hashable {
+  package var minSupportedVersion: Double
+  package var maxSupportedVersion: Double
 
-  public init(minSupportedVersion: Double, maxSupportedVersion: Double) {
+  package init(minSupportedVersion: Double, maxSupportedVersion: Double) {
     self.minSupportedVersion = minSupportedVersion
     self.maxSupportedVersion = maxSupportedVersion
   }
@@ -11,16 +11,16 @@ public struct SchemaVersions: Sendable, Hashable {
 
 /// Starts a poke (`pokeStartBodySchema` in
 /// `packages/zero-protocol/src/poke.ts`).
-public struct PokeStartBody: Sendable, Hashable, JSONCodable {
-  public var pokeID: String
+package struct PokeStartBody: Sendable, Hashable, JSONCodable {
+  package var pokeID: String
   /// The cookie the poke applies to; `nil` for a client that has never
   /// pulled, as Replicache starts clients with a `null` cookie.
-  public var baseCookie: Version?
+  package var baseCookie: Version?
   /// Always set when the poke has a `rowsPatch`.
-  public var schemaVersions: SchemaVersions?
-  public var timestamp: Double?
+  package var schemaVersions: SchemaVersions?
+  package var timestamp: Double?
 
-  public init(
+  package init(
     pokeID: String, baseCookie: Version?, schemaVersions: SchemaVersions? = nil,
     timestamp: Double? = nil
   ) {
@@ -30,7 +30,7 @@ public struct PokeStartBody: Sendable, Hashable, JSONCodable {
     self.timestamp = timestamp
   }
 
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let r = try JSONObjectReader(json, "pokeStart body")
     pokeID = try r.string("pokeID")
     baseCookie = try r.required("baseCookie", NullableVersion.decode)
@@ -43,7 +43,7 @@ public struct PokeStartBody: Sendable, Hashable, JSONCodable {
     timestamp = try r.optionalNumber("timestamp")
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     var o = JSONObjectBuilder()
     o.set("pokeID", pokeID)
     o.set("baseCookie", NullableVersion.json(baseCookie))
@@ -62,18 +62,18 @@ public struct PokeStartBody: Sendable, Hashable, JSONCodable {
 
 /// One part of a poke (`pokePartBodySchema` in
 /// `packages/zero-protocol/src/poke.ts`).
-public struct PokePartBody: Sendable, Hashable, JSONCodable {
-  public var pokeID: String
+package struct PokePartBody: Sendable, Hashable, JSONCodable {
+  package var pokeID: String
   /// The new last mutation ID of each client that changed.
-  public var lastMutationIDChanges: [String: Double]?
+  package var lastMutationIDChanges: [String: Double]?
   /// Changes to each client's desired queries, by client ID.
-  public var desiredQueriesPatches: [String: QueriesPatch]?
+  package var desiredQueriesPatches: [String: QueriesPatch]?
   /// Changes to the queries whose rows `rowsPatch` syncs.
-  public var gotQueriesPatch: QueriesPatch?
-  public var rowsPatch: RowsPatch?
-  public var mutationsPatch: MutationsPatch?
+  package var gotQueriesPatch: QueriesPatch?
+  package var rowsPatch: RowsPatch?
+  package var mutationsPatch: MutationsPatch?
 
-  public init(
+  package init(
     pokeID: String, lastMutationIDChanges: [String: Double]? = nil,
     desiredQueriesPatches: [String: QueriesPatch]? = nil, gotQueriesPatch: QueriesPatch? = nil,
     rowsPatch: RowsPatch? = nil, mutationsPatch: MutationsPatch? = nil
@@ -86,7 +86,7 @@ public struct PokePartBody: Sendable, Hashable, JSONCodable {
     self.mutationsPatch = mutationsPatch
   }
 
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let r = try JSONObjectReader(json, "pokePart body")
     lastMutationIDChanges = try r.optional("lastMutationIDChanges", JSONDecode.numberRecord)
     desiredQueriesPatches = try r.optional("desiredQueriesPatches") { (v) throws(DecodingError) in
@@ -102,7 +102,7 @@ public struct PokePartBody: Sendable, Hashable, JSONCodable {
     pokeID = try r.string("pokeID")
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     var o = JSONObjectBuilder()
     o.set("lastMutationIDChanges", lastMutationIDChanges.map(JSONValue.numberRecord))
     o.set(
@@ -117,28 +117,28 @@ public struct PokePartBody: Sendable, Hashable, JSONCodable {
 }
 
 /// Ends a poke (`pokeEndBodySchema` in `packages/zero-protocol/src/poke.ts`).
-public struct PokeEndBody: Sendable, Hashable, JSONCodable {
-  public var pokeID: String
+package struct PokeEndBody: Sendable, Hashable, JSONCodable {
+  package var pokeID: String
   /// The cookie after the poke. Ignore it, and it may be empty, if
   /// `cancel` is set.
-  public var cookie: Version
+  package var cookie: Version
   /// Discard the poke without applying it.
-  public var cancel: Bool?
+  package var cancel: Bool?
 
-  public init(pokeID: String, cookie: Version, cancel: Bool? = nil) {
+  package init(pokeID: String, cookie: Version, cancel: Bool? = nil) {
     self.pokeID = pokeID
     self.cookie = cookie
     self.cancel = cancel
   }
 
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let r = try JSONObjectReader(json, "pokeEnd body")
     pokeID = try r.string("pokeID")
     cookie = try r.string("cookie")
     cancel = try r.optionalBool("cancel")
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     var o = JSONObjectBuilder()
     o.set("pokeID", pokeID)
     o.set("cookie", cookie)
@@ -153,16 +153,16 @@ public struct PokeEndBody: Sendable, Hashable, JSONCodable {
 /// `pokePart` messages: each is a ``messageType`` byte and then the next
 /// bytes of the UTF-8 JSON of a `PokePartBody[]`. A chunk can end inside a
 /// UTF-8 sequence.
-public enum PokeChunk {
+package enum PokeChunk {
   /// `POKE_CHUNK_MESSAGE_TYPE`.
-  public static let messageType: UInt8 = 0x00
+  package static let messageType: UInt8 = 0x00
   /// `POKE_CHUNK_PROTOCOL_VERSION`.
-  public static let protocolVersion = 52
+  package static let protocolVersion = 52
 
   /// The payload of a binary message. Throws for a message of another type,
   /// which the client treats as an invalid message
   /// (`#onMessage` in `packages/zero-client/src/client/zero.ts`).
-  public static func payload(
+  package static func payload(
     ofBinaryMessage message: [UInt8]
   ) throws(DecodingError)
     -> ArraySlice<UInt8>
@@ -180,7 +180,7 @@ public enum PokeChunk {
   /// (`decodePokeChunks` in `packages/zero-client/src/client/zero-poke-handler.ts`):
   /// strict UTF-8, a leading BOM dropped as `TextDecoder` does, then
   /// `pokePartsSchema`.
-  public static func decode(
+  package static func decode(
     _ chunks: some Sequence<some Collection<UInt8>>
   ) throws(DecodingError)
     -> [PokePartBody]

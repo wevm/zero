@@ -1,12 +1,12 @@
 /// JS number semantics the client has to reproduce exactly: `Number#toString`
 /// (also what `JSON.stringify` writes) and `Number(string)`.
-public enum JSNumber {
+package enum JSNumber {
   /// `String(n)` in JS, i.e. ECMAScript `Number::toString(n, 10)`.
   ///
   /// Uses the shortest round-tripping digits (which Swift's `description`
   /// also produces) laid out with the JS rules: plain notation for decimal
   /// exponents in `-6...21`, exponential otherwise.
-  public static func format(_ value: Double) -> String {
+  package static func format(_ value: Double) -> String {
     if value.isNaN { return "NaN" }
     if value == 0 { return "0" }
     if value.isInfinite { return value < 0 ? "-Infinity" : "Infinity" }
@@ -73,7 +73,7 @@ public enum JSNumber {
   /// `Number(string)` in JS (ECMAScript `StringToNumber`): trims JS
   /// whitespace, maps the empty string to 0, and accepts decimal, `Infinity`,
   /// and `0x`/`0o`/`0b` literals. Anything else is `NaN`.
-  public static func parse(_ string: String) -> Double {
+  package static func parse(_ string: String) -> Double {
     let scalars = Array(string.unicodeScalars)
     var start = 0
     var end = scalars.count
@@ -152,13 +152,13 @@ public enum JSNumber {
   /// `(n | 0) === n` in JS: whether `n` is exactly an int32. `-0` counts,
   /// because `-0 === 0`.
   @inlinable
-  public static func isInt32(_ n: Double) -> Bool {
+  package static func isInt32(_ n: Double) -> Bool {
     n >= -2_147_483_648 && n <= 2_147_483_647 && n == n.rounded(.towardZero)
   }
 
   /// `ToInt32(n)` in JS, for an `n` that `isInt32` accepted.
   @inlinable
-  public static func int32Bits(_ n: Double) -> UInt32 {
+  package static func int32Bits(_ n: Double) -> UInt32 {
     UInt32(bitPattern: Int32(n))
   }
 }

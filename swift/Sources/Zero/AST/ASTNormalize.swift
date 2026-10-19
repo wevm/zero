@@ -2,7 +2,7 @@
 /// `related` sorted by alias, `where` flattened and sorted. Two ASTs that
 /// describe the same query hash the same once normalized.
 extension AST {
-  public func normalized() -> AST {
+  package func normalized() -> AST {
     var ast = self
     ast.where = `where`.map { Self.normalizeSubqueries($0) }.map(Self.normalizeCondition)
     if let related {
@@ -37,7 +37,7 @@ extension AST {
     return related
   }
 
-  public static func normalizeCondition(_ cond: Condition) -> Condition {
+  package static func normalizeCondition(_ cond: Condition) -> Condition {
     switch cond {
     case .simple, .correlatedSubquery:
       return cond

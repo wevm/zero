@@ -1,12 +1,12 @@
 /// A change to a set of queries as zero-cache sends it: a client's desired
 /// queries or the queries whose rows are synced
 /// (`patchOpSchema` in `packages/zero-protocol/src/queries-patch.ts`).
-public enum QueriesPatchOp: Sendable, Hashable, JSONCodable {
+package enum QueriesPatchOp: Sendable, Hashable, JSONCodable {
   case put(hash: String, ttl: Double?)
   case del(hash: String)
   case clear
 
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let r = try JSONObjectReader(json, "queries patch op")
     switch try r.string("op") {
     case "put": self = .put(hash: try r.string("hash"), ttl: try r.optionalNumber("ttl"))
@@ -16,7 +16,7 @@ public enum QueriesPatchOp: Sendable, Hashable, JSONCodable {
     }
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     switch self {
     case .put(let hash, let ttl):
       var o = JSONObjectBuilder()
@@ -31,18 +31,18 @@ public enum QueriesPatchOp: Sendable, Hashable, JSONCodable {
 }
 
 /// `queriesPatchSchema`.
-public typealias QueriesPatch = [QueriesPatchOp]
+package typealias QueriesPatch = [QueriesPatchOp]
 
 /// A query a client wants synced (`upPutOpSchema`). A client query carries its
 /// `ast`; a custom query its `name` and `args`.
-public struct UpQueriesPut: Sendable, Hashable {
-  public var hash: String
-  public var ttl: Double?
-  public var ast: AST?
-  public var name: String?
-  public var args: [JSONValue]?
+package struct UpQueriesPut: Sendable, Hashable {
+  package var hash: String
+  package var ttl: Double?
+  package var ast: AST?
+  package var name: String?
+  package var args: [JSONValue]?
 
-  public init(
+  package init(
     hash: String, ttl: Double? = nil, ast: AST? = nil, name: String? = nil,
     args: [JSONValue]? = nil
   ) {
@@ -56,12 +56,12 @@ public struct UpQueriesPut: Sendable, Hashable {
 
 /// A change to a client's desired queries, as the client sends it
 /// (`upPatchOpSchema` in `packages/zero-protocol/src/queries-patch.ts`).
-public enum UpQueriesPatchOp: Sendable, Hashable, JSONCodable {
+package enum UpQueriesPatchOp: Sendable, Hashable, JSONCodable {
   case put(UpQueriesPut)
   case del(hash: String)
   case clear
 
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let r = try JSONObjectReader(json, "queries patch op")
     switch try r.string("op") {
     case "put":
@@ -78,7 +78,7 @@ public enum UpQueriesPatchOp: Sendable, Hashable, JSONCodable {
     }
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     switch self {
     case .put(let put):
       var o = JSONObjectBuilder()
@@ -96,7 +96,7 @@ public enum UpQueriesPatchOp: Sendable, Hashable, JSONCodable {
 }
 
 /// `upQueriesPatchSchema`.
-public typealias UpQueriesPatch = [UpQueriesPatchOp]
+package typealias UpQueriesPatch = [UpQueriesPatchOp]
 
 extension JSONDecode {
   static func queriesPatch(_ v: JSONValue) throws(DecodingError) -> QueriesPatch {

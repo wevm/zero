@@ -1,30 +1,30 @@
 /// The schema a client was built with, sent so zero-cache can check it
 /// against the replica (`clientSchemaSchema` in
 /// `packages/zero-protocol/src/client-schema.ts`).
-public struct ClientSchema: Sendable, Hashable, JSONCodable {
+package struct ClientSchema: Sendable, Hashable, JSONCodable {
   /// `valueTypeSchema`.
-  public enum ValueType: String, Sendable, Hashable, CaseIterable {
+  package enum ValueType: String, Sendable, Hashable, CaseIterable {
     case string, number, boolean, null, json
   }
 
   /// `tableSchemaSchema`. Each column maps to its `{type}`.
-  public struct Table: Sendable, Hashable {
-    public var columns: [String: ValueType]
-    public var primaryKey: [String]
+  package struct Table: Sendable, Hashable {
+    package var columns: [String: ValueType]
+    package var primaryKey: [String]
 
-    public init(columns: [String: ValueType], primaryKey: [String]) {
+    package init(columns: [String: ValueType], primaryKey: [String]) {
       self.columns = columns
       self.primaryKey = primaryKey
     }
   }
 
-  public var tables: [String: Table]
+  package var tables: [String: Table]
 
-  public init(tables: [String: Table]) {
+  package init(tables: [String: Table]) {
     self.tables = tables
   }
 
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let r = try JSONObjectReader(json, "client schema")
     tables = try r.required("tables") { (v) throws(DecodingError) in
       try JSONDecode.record(v) { (t) throws(DecodingError) -> Table in
@@ -40,7 +40,7 @@ public struct ClientSchema: Sendable, Hashable, JSONCodable {
     }
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     .object([
       "tables": .object(
         tables.mapValues { t in
@@ -54,7 +54,7 @@ public struct ClientSchema: Sendable, Hashable, JSONCodable {
 
   /// The hash of the normalized schema that names a client's local
   /// database (`clientSchemaFrom`): a schema change starts a new one.
-  public var hash: String {
+  package var hash: String {
     String(XXHash32.h64(JSONSerializer.stringify(normalized().json)), radix: 36)
   }
 
@@ -62,7 +62,7 @@ public struct ClientSchema: Sendable, Hashable, JSONCodable {
   /// by UTF-16 code units. JS also orders the table and column entries by
   /// `<`; ``json`` has no order of its own and ``JSONSerializer`` writes keys
   /// in that same order.
-  public func normalized() -> ClientSchema {
+  package func normalized() -> ClientSchema {
     ClientSchema(
       tables: tables.mapValues { t in
         Table(columns: t.columns, primaryKey: t.primaryKey.sorted(by: StringCompare.utf16Less))

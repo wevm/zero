@@ -2,28 +2,28 @@
 ///
 /// Keys keep insertion order, like the JS object: a `MemorySource` builds
 /// its index sort from it. A value is `nil` where JS has `undefined`.
-public struct Constraint {
-  public var entries: [(key: String, value: Value?)]
+package struct Constraint {
+  package var entries: [(key: String, value: Value?)]
 
   @inlinable
-  public init(_ entries: [(key: String, value: Value?)] = []) {
+  package init(_ entries: [(key: String, value: Value?)] = []) {
     self.entries = entries
   }
 
   @inlinable
-  public var keys: [String] { entries.map(\.key) }
+  package var keys: [String] { entries.map(\.key) }
 
   @inlinable
-  public var count: Int { entries.count }
+  package var count: Int { entries.count }
 
   @inlinable
-  public func has(_ key: String) -> Bool {
+  package func has(_ key: String) -> Bool {
     entries.contains { $0.key == key }
   }
 
   /// The value for `key`; `nil` when absent or `undefined`.
   @inlinable
-  public subscript(key: String) -> Value? {
+  package subscript(key: String) -> Value? {
     get {
       for e in entries where e.key == key { return e.value }
       return nil
@@ -31,7 +31,7 @@ public struct Constraint {
   }
 
   @inlinable
-  public mutating func set(_ key: String, _ value: Value?) {
+  package mutating func set(_ key: String, _ value: Value?) {
     if let i = entries.firstIndex(where: { $0.key == key }) {
       entries[i].value = value
     } else {
@@ -41,7 +41,7 @@ public struct Constraint {
 
   /// `{...self, ...other}`.
   @inlinable
-  public func merging(_ other: Constraint) -> Constraint {
+  package func merging(_ other: Constraint) -> Constraint {
     var result = self
     for e in other.entries { result.set(e.key, e.value) }
     return result
@@ -49,7 +49,7 @@ public struct Constraint {
 
   /// `constraintMatchesRow`.
   @inlinable
-  public func matches(_ row: Row) -> Bool {
+  package func matches(_ row: Row) -> Bool {
     for e in entries where !ValueCompare.equal(row[e.key], e.value) {
       return false
     }
@@ -57,7 +57,7 @@ public struct Constraint {
   }
 
   /// `constraintsAreCompatible`: no shared key has different values.
-  public func isCompatible(with other: Constraint) -> Bool {
+  package func isCompatible(with other: Constraint) -> Bool {
     for e in entries where other.has(e.key) && !ValueCompare.equal(e.value, other[e.key]) {
       return false
     }
@@ -65,7 +65,7 @@ public struct Constraint {
   }
 
   /// `constraintMatchesPrimaryKey`.
-  public func matchesPrimaryKey(_ primaryKey: [String]) -> Bool {
+  package func matchesPrimaryKey(_ primaryKey: [String]) -> Bool {
     keyMatchesPrimaryKey(keys, primaryKey)
   }
 

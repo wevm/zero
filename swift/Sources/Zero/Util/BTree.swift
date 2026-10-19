@@ -3,8 +3,9 @@
 /// Nodes are shared between copies and copied on write, so copying a tree
 /// is O(1) (`MemorySource.fork`) and an iterator keeps reading the tree as
 /// it was when the iterator was created.
-public struct BTreeSet<Element> {
-  public typealias Compare = (Element, Element) -> Int
+@usableFromInline
+package struct BTreeSet<Element> {
+  @usableFromInline package typealias Compare = (Element, Element) -> Int
 
   @usableFromInline final class Node {
     // Unchecked: the tree is a value type that copies shared nodes before
@@ -29,12 +30,12 @@ public struct BTreeSet<Element> {
 
   @usableFromInline var root: Node
   @usableFromInline var _count: Int
-  public let compare: Compare
+  @usableFromInline package let compare: Compare
 
-  public var count: Int { _count }
+  @usableFromInline package var count: Int { _count }
 
   @inlinable
-  public init(_ compare: @escaping Compare) {
+  package init(_ compare: @escaping Compare) {
     self.compare = compare
     root = Node(keys: [])
     _count = 0
@@ -42,7 +43,7 @@ public struct BTreeSet<Element> {
 
   /// Builds a tree from elements already sorted by `compare`, in O(n).
   @inlinable
-  public init<S: Sequence>(sorted elements: S, _ compare: @escaping Compare)
+  package init<S: Sequence>(sorted elements: S, _ compare: @escaping Compare)
   where S.Element == Element {
     self.compare = compare
     let max = Self.maxNodeSize
@@ -73,11 +74,11 @@ public struct BTreeSet<Element> {
     _count = n
   }
 
-  public var isEmpty: Bool { _count == 0 }
+  @usableFromInline package var isEmpty: Bool { _count == 0 }
 
   /// The stored element equal to `element`.
   @inlinable
-  public func get(_ element: Element) -> Element? {
+  package func get(_ element: Element) -> Element? {
     var node = root
     while !node.isLeaf {
       let i = lowerBound(node.keys) { compare($0, element) }
@@ -90,11 +91,11 @@ public struct BTreeSet<Element> {
   }
 
   @inlinable
-  public func contains(_ element: Element) -> Bool { get(element) != nil }
+  package func contains(_ element: Element) -> Bool { get(element) != nil }
 
   /// Adds `element`, replacing an equal one. Returns whether it was new.
   @inlinable @discardableResult
-  public mutating func add(_ element: Element) -> Bool {
+  package mutating func add(_ element: Element) -> Bool {
     if !isKnownUniquelyReferenced(&root) { root = root.copy() }
     let (inserted, split) = Self.insert(element, into: root, compare)
     if let split {
@@ -108,7 +109,7 @@ public struct BTreeSet<Element> {
 
   /// Removes the element equal to `element`. Returns whether there was one.
   @inlinable @discardableResult
-  public mutating func delete(_ element: Element) -> Bool {
+  package mutating func delete(_ element: Element) -> Bool {
     if !isKnownUniquelyReferenced(&root) { root = root.copy() }
     let removed = Self.remove(element, from: root, compare)
     while !root.isLeaf && root.children.count == 1 { root = root.children[0] }
@@ -119,18 +120,18 @@ public struct BTreeSet<Element> {
 
   /// The elements, ascending.
   @inlinable
-  public func values() -> ForwardIterator { values(from: nil) }
+  package func values() -> ForwardIterator { values(from: nil) }
 
   /// The elements not less than `probe`, ascending. `probe(e)` compares `e`
   /// to the bound: negative when `e` is before it.
   @inlinable
-  public func values(from probe: ((Element) -> Int)?) -> ForwardIterator {
+  package func values(from probe: ((Element) -> Int)?) -> ForwardIterator {
     ForwardIterator(root: root, probe: probe)
   }
 
   /// The elements not greater than `probe`, descending.
   @inlinable
-  public func valuesReversed(from probe: ((Element) -> Int)?) -> ReverseIterator {
+  package func valuesReversed(from probe: ((Element) -> Int)?) -> ReverseIterator {
     ReverseIterator(root: root, probe: probe)
   }
 
@@ -214,7 +215,7 @@ public struct BTreeSet<Element> {
 
   // MARK: Iteration
 
-  public struct ForwardIterator: IteratorProtocol, Sequence {
+  @usableFromInline package struct ForwardIterator: IteratorProtocol, Sequence {
     @usableFromInline var path: [(Node, Int)] = []
     @usableFromInline var leaf: Node?
     /// The leaf's keys, read once per leaf.
@@ -236,7 +237,7 @@ public struct BTreeSet<Element> {
     }
 
     @inlinable
-    public mutating func next() -> Element? {
+    package mutating func next() -> Element? {
       if index < keys.count {
         index += 1
         return keys[index - 1]
@@ -267,7 +268,7 @@ public struct BTreeSet<Element> {
     }
   }
 
-  public struct ReverseIterator: IteratorProtocol, Sequence {
+  @usableFromInline package struct ReverseIterator: IteratorProtocol, Sequence {
     @usableFromInline var path: [(Node, Int)] = []
     @usableFromInline var leaf: Node?
     @usableFromInline var index = 0
@@ -293,7 +294,7 @@ public struct BTreeSet<Element> {
     }
 
     @inlinable
-    public mutating func next() -> Element? {
+    package mutating func next() -> Element? {
       while let l = leaf {
         if index >= 0 {
           index -= 1

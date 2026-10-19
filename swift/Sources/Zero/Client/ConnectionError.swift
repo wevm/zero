@@ -1,6 +1,6 @@
 /// The kinds of error the client raises itself
 /// (`packages/zero-client/src/client/client-error-kind-enum.ts`).
-public enum ClientErrorKind: String, Sendable, Hashable, CaseIterable {
+package enum ClientErrorKind: String, Sendable, Hashable, CaseIterable {
   case abruptClose = "AbruptClose"
   case cleanClose = "CleanClose"
   case clientClosed = "ClientClosed"
@@ -19,11 +19,11 @@ public enum ClientErrorKind: String, Sendable, Hashable, CaseIterable {
 /// Why a connection ended or could not be made: an error the client raised
 /// (`ClientError`) or one the server sent (`ProtocolError`), together
 /// `ZeroError` in `packages/zero-client/src/client/error.ts`.
-public enum ConnectionError: Error, Sendable, Hashable, CustomStringConvertible {
+package enum ConnectionError: Error, Sendable, Hashable, CustomStringConvertible {
   case client(ClientErrorKind, message: String)
   case server(ErrorBody)
 
-  public var message: String {
+  package var message: String {
     switch self {
     case .client(_, let message): message
     case .server(let body): body.message
@@ -31,14 +31,14 @@ public enum ConnectionError: Error, Sendable, Hashable, CustomStringConvertible 
   }
 
   /// The kind's name, a `ClientErrorKind` or an `ErrorKind`.
-  public var kindName: String {
+  package var kindName: String {
     switch self {
     case .client(let kind, _): kind.rawValue
     case .server(let body): body.kind.rawValue
     }
   }
 
-  public var description: String { "\(kindName): \(message)" }
+  package var description: String { "\(kindName): \(message)" }
 
   var clientKind: ClientErrorKind? {
     if case .client(let kind, _) = self { return kind }

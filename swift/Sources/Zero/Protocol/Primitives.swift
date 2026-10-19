@@ -1,30 +1,30 @@
 /// A cookie: the version of the client view a client has
 /// (`packages/zero-protocol/src/version.ts`). Where the protocol allows a
 /// `NullableVersion`, `nil` is the state before the first pull.
-public typealias Version = String
+package typealias Version = String
 
 /// The values of a row's primary key columns, by column
 /// (`primaryKeyValueRecordSchema` in `packages/zero-protocol/src/primary-key.ts`).
 /// Each value is a string, number, or boolean.
-public typealias PrimaryKeyValueRecord = [String: JSONValue]
+package typealias PrimaryKeyValueRecord = [String: JSONValue]
 
 /// `packages/zero-protocol/src/mutation-id.ts`.
-public struct MutationID: Sendable, Hashable, JSONCodable {
-  public var id: Double
-  public var clientID: String
+package struct MutationID: Sendable, Hashable, JSONCodable {
+  package var id: Double
+  package var clientID: String
 
-  public init(id: Double, clientID: String) {
+  package init(id: Double, clientID: String) {
     self.id = id
     self.clientID = clientID
   }
 
-  public init(json: JSONValue) throws(DecodingError) {
+  package init(json: JSONValue) throws(DecodingError) {
     let r = try JSONObjectReader(json, "mutation ID")
     id = try r.number("id")
     clientID = try r.string("clientID")
   }
 
-  public var json: JSONValue {
+  package var json: JSONValue {
     ["id": .number(id), "clientID": .string(clientID)]
   }
 }

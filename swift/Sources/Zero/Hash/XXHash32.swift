@@ -1,21 +1,21 @@
 /// xxHash32 over UTF-8 bytes, and the wider `h64`/`h128` built from it
 /// (`packages/shared/src/hash.ts`).
-public enum XXHash32 {
-  public static let prime1: UInt32 = 2_654_435_761
-  public static let prime2: UInt32 = 2_246_822_519
-  public static let prime3: UInt32 = 3_266_489_917
-  public static let prime4: UInt32 = 668_265_263
-  public static let prime5: UInt32 = 374_761_393
+package enum XXHash32 {
+  package static let prime1: UInt32 = 2_654_435_761
+  package static let prime2: UInt32 = 2_246_822_519
+  package static let prime3: UInt32 = 3_266_489_917
+  package static let prime4: UInt32 = 668_265_263
+  package static let prime5: UInt32 = 374_761_393
 
   @inlinable
-  public static func round(_ acc: UInt32, _ word: UInt32) -> UInt32 {
+  package static func round(_ acc: UInt32, _ word: UInt32) -> UInt32 {
     var acc = acc &+ word &* prime2
     acc = (acc << 13) | (acc >> 19)
     return acc &* prime1
   }
 
   @inlinable
-  public static func avalanche(_ acc: UInt32) -> UInt32 {
+  package static func avalanche(_ acc: UInt32) -> UInt32 {
     var acc = acc
     acc ^= acc >> 15
     acc = acc &* prime2
@@ -26,7 +26,7 @@ public enum XXHash32 {
   }
 
   /// Reference xxHash32 of `bytes` with `seed`.
-  public static func hash<C: Collection>(_ bytes: C, seed: UInt32 = 0) -> UInt32
+  package static func hash<C: Collection>(_ bytes: C, seed: UInt32 = 0) -> UInt32
   where C.Element == UInt8, C.Index == Int {
     let len = bytes.count
     var offset = bytes.startIndex
@@ -74,13 +74,13 @@ public enum XXHash32 {
   }
 
   /// `h32(s)`: xxHash32 of the UTF-8 bytes of `s`, seed 0.
-  public static func h32(_ s: String) -> UInt32 {
+  package static func h32(_ s: String) -> UInt32 {
     var s = s
     return s.withUTF8 { hash($0, seed: 0) }
   }
 
   /// `h64(s)`: seed-0 digest in the high word, seed-1 in the low word.
-  public static func h64(_ s: String) -> UInt64 {
+  package static func h64(_ s: String) -> UInt64 {
     var s = s
     return s.withUTF8 { buf in
       UInt64(hash(buf, seed: 0)) << 32 | UInt64(hash(buf, seed: 1))
@@ -88,7 +88,7 @@ public enum XXHash32 {
   }
 
   /// `h128(s)`: digests for seeds 0...3, highest-order word first.
-  public static func h128(_ s: String) -> UInt128 {
+  package static func h128(_ s: String) -> UInt128 {
     var s = s
     return s.withUTF8 { buf in
       var r: UInt128 = 0
