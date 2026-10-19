@@ -57,6 +57,7 @@ swift/                      Swift package (source of truth)
   Sources/ZeroUI/           SwiftUI, UIKit, AppKit helpers; URLSession transport
   Sources/ZeroTesting/      drift-harness replay API and test helpers
   Sources/ZeroNIOTesting/   SwiftNIO WebSocket transport for Linux end-to-end tests
+  Sources/ZeroBenchmarks/   benchmarks (BENCHMARKS.md)
   Tests/...
   VERSION
 packages/zero-conformance/  private JS package: fixtures, vector generators, JS runners
@@ -485,7 +486,9 @@ the Zero convention of passing IDs and timestamps as arguments.
   (`zero-client/src/client/zero.bench.ts`, the shared B-tree and hash
   benchmarks) plus Swift benchmarks for query hydration over N rows, poke
   apply, mutation round trip, and memory per 100k rows. Tracked next to the JS
-  numbers, non-blocking in v1, with a goal of no slower than JS.
+  numbers, non-blocking in v1, with a goal of no slower than JS. CI builds
+  them; [BENCHMARKS.md](BENCHMARKS.md) has how to run them and the latest
+  numbers.
 
 ## Dogfood app: `apps/zbugs-swift`
 

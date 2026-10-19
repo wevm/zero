@@ -31,6 +31,8 @@ let package = Package(
         .product(name: "NIOHTTP1", package: "swift-nio"),
         .product(name: "NIOWebSocket", package: "swift-nio"),
       ]),
+    // `swift run -c release ZeroBenchmarks`.
+    .executableTarget(name: "ZeroBenchmarks", dependencies: ["Zero", "ZeroTesting"]),
     .testTarget(name: "ZeroTests", dependencies: ["Zero", "ZeroTesting"]),
     .testTarget(name: "ConformanceTests", dependencies: ["Zero", "ZeroTesting"]),
     // The Apple layer: the URLSession transport, SwiftUI, UIKit, and AppKit.
