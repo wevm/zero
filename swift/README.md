@@ -15,7 +15,8 @@ end-to-end tests against `zero-cache` and the zbugs app.
 ## Requirements
 
 - Swift 6.2
-- iOS 26 or macOS 26. The `Zero` module also builds on Linux.
+- iOS 26 or macOS 26. The `Zero` module also builds on Linux, without a
+  socket: pass your own `SocketFactory` to sync there.
 - A `zero-cache` that speaks sync protocol 53 (Zero 1.11 or later)
 
 ## Install
