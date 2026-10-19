@@ -71,3 +71,56 @@ jobs:
         run: swift build --build-tests
       - name: Test
         run: swift test --skip-build
+
+  e2e:
+    name: Swift end-to-end (Linux)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.11.0
+      # zero-cache runs from source, which needs Node 24 (`using`).
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+          package-manager-cache: false
+      - run: pnpm install --frozen-lockfile
+      - name: Start Postgres
+        run: |
+          sudo systemctl start postgresql.service
+          sudo -u postgres psql -q -c "ALTER SYSTEM SET wal_level = logical" \
+            -c "ALTER USER postgres PASSWORD 'postgres'"
+          sudo systemctl restart postgresql.service
+          until pg_isready -q -h 127.0.0.1; do sleep 1; done
+      - name: Install Swift
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/swift.tar.gz" \
+            https://download.swift.org/swift-6.2.4-release/ubuntu2404/swift-6.2.4-RELEASE/swift-6.2.4-RELEASE-ubuntu24.04.tar.gz
+          mkdir -p "$RUNNER_TEMP/swift"
+          tar -xzf "$RUNNER_TEMP/swift.tar.gz" -C "$RUNNER_TEMP/swift" --strip-components=1
+          echo "$RUNNER_TEMP/swift/usr/bin" >> "$GITHUB_PATH"
+      - name: Build
+        working-directory: swift
+        run: swift build --build-tests
+      - name: Start zero-cache
+        env:
+          ZERO_E2E_PG: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+        run: |
+          node packages/zero-conformance/src/e2e/server.ts > "$RUNNER_TEMP/server.log" 2>&1 &
+          for _ in $(seq 1 120); do
+            grep -q '^ready ' "$RUNNER_TEMP/server.log" && exit 0
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/server.log"
+          exit 1
+      - name: Test
+        working-directory: swift
+        env:
+          ZERO_E2E_URL: ws://127.0.0.1:4848
+        run: swift test --skip-build --filter E2ETests
+      - name: Server log
+        if: failure()
+        run: cat "$RUNNER_TEMP/server.log"

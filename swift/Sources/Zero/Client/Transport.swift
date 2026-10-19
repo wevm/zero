@@ -1,0 +1,102 @@
+/// A WebSocket message.
+public enum SocketMessage: Sendable, Hashable {
+  case text(String)
+  case binary([UInt8])
+}
+
+/// Opens the sync socket. The engine never touches a socket itself: the Apple
+/// layer implements this with `URLSessionWebSocketTask`, and tests replay
+/// scenarios through an in-memory transport.
+public protocol Transport: Sendable {
+  /// Opens a WebSocket to `url`, sending `secProtocol` (when non-nil) as
+  /// the `Sec-WebSocket-Protocol` header.
+  func connect(url: String, secProtocol: String?) async throws -> any Socket
+}
+
+/// An open WebSocket.
+public protocol Socket: AnyObject, Sendable {
+  func send(_ message: SocketMessage) async throws
+  /// The next message, or nil once the socket has closed.
+  func receive() async throws -> SocketMessage?
+  func close(code: Int, reason: String) async
+}
+
+/// The query parameters of the sync connect URL, in the order JS sets them
+/// (`createConnectionURL` in `packages/zero-client/src/client/zero.ts`).
+public struct ConnectionURL: Sendable, Hashable {
+  public var socketOrigin: String
+  public var clientID: String
+  public var clientGroupID: String
+  public var userID: String?
+  /// The cookie of the client's last server snapshot, nil for none.
+  public var baseCookie: String?
+  /// The `ts` parameter, `performance.now()` in JS.
+  public var timestamp: Double
+  public var lastMutationID: Double
+  public var wsid: String
+  public var profileID: String
+  public var debugPerf: Bool
+  public var additionalParams: [(String, String)]
+
+  public init(
+    socketOrigin: String, clientID: String, clientGroupID: String, userID: String? = nil,
+    baseCookie: String? = nil, timestamp: Double, lastMutationID: Double, wsid: String,
+    profileID: String, debugPerf: Bool = false, additionalParams: [(String, String)] = []
+  ) {
+    self.socketOrigin = socketOrigin
+    self.clientID = clientID
+    self.clientGroupID = clientGroupID
+    self.userID = userID
+    self.baseCookie = baseCookie
+    self.timestamp = timestamp
+    self.lastMutationID = lastMutationID
+    self.wsid = wsid
+    self.profileID = profileID
+    self.debugPerf = debugPerf
+    self.additionalParams = additionalParams
+  }
+
+  public static func == (a: ConnectionURL, b: ConnectionURL) -> Bool { a.string == b.string }
+  public func hash(into hasher: inout Hasher) { hasher.combine(string) }
+
+  public var string: String {
+    var params: [(String, String)] = [
+      ("clientID", clientID), ("clientGroupID", clientGroupID),
+    ]
+    if let userID { params.append(("userID", userID)) }
+    params += [
+      ("baseCookie", baseCookie ?? ""), ("ts", JSNumber.format(timestamp)),
+      ("lmid", JSNumber.format(lastMutationID)), ("wsid", wsid), ("profileID", profileID),
+    ]
+    if debugPerf { params.append(("debugPerf", "true")) }
+    // A parameter the client sets wins; JS warns and skips the duplicate.
+    for (k, v) in additionalParams where !params.contains(where: { $0.0 == k }) {
+      params.append((k, v))
+    }
+    let path = "/sync/v\(protocolVersion)/connect"
+    let base = socketOrigin.hasSuffix("/") ? socketOrigin + path.dropFirst() : socketOrigin + path
+    return base + "?"
+      + params.map { formEncode($0.0) + "=" + formEncode($0.1) }.joined(separator: "&")
+  }
+}
+
+/// `application/x-www-form-urlencoded`, as `URLSearchParams` writes it.
+func formEncode(_ s: String) -> String {
+  var out = ""
+  for byte in s.utf8 {
+    switch byte {
+    case UInt8(ascii: "a")...UInt8(ascii: "z"), UInt8(ascii: "A")...UInt8(ascii: "Z"),
+      UInt8(ascii: "0")...UInt8(ascii: "9"), UInt8(ascii: "*"), UInt8(ascii: "-"),
+      UInt8(ascii: "."), UInt8(ascii: "_"):
+      out.unicodeScalars.append(Unicode.Scalar(byte))
+    case UInt8(ascii: " "):
+      out += "+"
+    default:
+      let hex = Array("0123456789ABCDEF".unicodeScalars)
+      out += "%"
+      out.unicodeScalars.append(hex[Int(byte >> 4)])
+      out.unicodeScalars.append(hex[Int(byte & 0xF)])
+    }
+  }
+  return out
+}
