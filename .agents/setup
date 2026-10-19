@@ -17,6 +17,26 @@ if ((${#missing[@]})); then
   time sudo apt-get install -y "${missing[@]}"
 fi
 
+echo '==> Installing the Swift toolchain for swift/'
+swift_version='6.2.4'
+if [[ "$(/opt/swift/usr/bin/swift --version 2>/dev/null || true)" != *"swift-${swift_version}-RELEASE"* ]]; then
+  time sudo apt-get update
+  time sudo apt-get install -y binutils-gold libicu-dev libcurl4-openssl-dev \
+    libedit-dev libsqlite3-dev libncurses-dev libpython3-dev libxml2-dev \
+    tzdata uuid-dev gnupg2 libstdc++-12-dev zlib1g-dev
+  swift_tmp="$(mktemp -d)"
+  time curl -sSfL -o "$swift_tmp/swift.tar.gz" \
+    "https://download.swift.org/swift-${swift_version}-release/debian12/swift-${swift_version}-RELEASE/swift-${swift_version}-RELEASE-debian12.tar.gz"
+  sudo rm -rf /opt/swift
+  sudo mkdir -p /opt/swift
+  sudo tar -xzf "$swift_tmp/swift.tar.gz" -C /opt/swift --strip-components=1
+  rm -rf "$swift_tmp"
+fi
+for tool in swift swiftc sourcekit-lsp docc; do
+  sudo ln -sf "/opt/swift/usr/bin/$tool" "/usr/local/bin/$tool"
+done
+swift --version
+
 echo '==> Selecting the repository Node and pnpm versions'
 node_version="$(tr -d '[:space:]' < .nvmrc)"
 if [[ "$(node -p 'process.versions.node')" != "$node_version" && "$(node -p 'process.versions.node')" != "$node_version".* ]]; then

@@ -1296,6 +1296,42 @@ importers:
         specifier: workspace:*
         version: link:../zql
 
+  packages/zero-conformance:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.5
+        version: 22.19.19
+      oxfmt:
+        specifier: ^0.65.0
+        version: 0.65.0
+      replicache:
+        specifier: workspace:*
+        version: link:../replicache
+      shared:
+        specifier: workspace:*
+        version: link:../shared
+      typescript:
+        specifier: ~7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: ^5.0.0
+        version: 5.0.0(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/browser-playwright@5.0.0)(@vitest/coverage-v8@5.0.0)(@vitest/ui@5.0.0)(vite@8.0.13(@types/node@22.19.19)(esbuild@0.27.7)(jiti@2.7.0)(terser@5.47.1)(tsx@4.22.0)(yaml@2.9.0))
+      zero-client:
+        specifier: workspace:*
+        version: link:../zero-client
+      zero-protocol:
+        specifier: workspace:*
+        version: link:../zero-protocol
+      zero-schema:
+        specifier: workspace:*
+        version: link:../zero-schema
+      zero-types:
+        specifier: workspace:*
+        version: link:../zero-types
+      zql:
+        specifier: workspace:*
+        version: link:../zql
+
   packages/zero-events:
     devDependencies:
       esbuild:

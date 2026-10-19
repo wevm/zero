@@ -33,15 +33,15 @@ Non-goals:
 
 ## Platforms and toolchain
 
-| Item | Decision |
-| --- | --- |
-| OS floor | iOS 26, macOS 26 |
-| Toolchain | Swift 6.2 or newer (`swift-tools-version: 6.2`), Swift 6 language mode, strict concurrency |
-| Linux | `Zero` (core) and `ZeroTesting` build and test on Linux; `ZeroUI` is Apple-only |
-| Other Apple OSes | Not promised; nothing in the core should block them |
-| Dependencies | No third-party runtime dependencies. Test-only dependencies are allowed (for example SwiftNIO for the Linux end-to-end transport) |
-| Tests | Swift Testing; XCTest only where Apple requires it (UI tests) |
-| Formatting | `swift-format` (ships with the toolchain), enforced in CI. No SwiftLint |
+| Item             | Decision                                                                                                                          |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| OS floor         | iOS 26, macOS 26                                                                                                                  |
+| Toolchain        | Swift 6.2 or newer (`swift-tools-version: 6.2`), Swift 6 language mode, strict concurrency                                        |
+| Linux            | `Zero` (core) and `ZeroTesting` build and test on Linux; `ZeroUI` is Apple-only                                                   |
+| Other Apple OSes | Not promised; nothing in the core should block them                                                                               |
+| Dependencies     | No third-party runtime dependencies. Test-only dependencies are allowed (for example SwiftNIO for the Linux end-to-end transport) |
+| Tests            | Swift Testing; XCTest only where Apple requires it (UI tests)                                                                     |
+| Formatting       | `swift-format` (ships with the toolchain), enforced in CI. No SwiftLint                                                           |
 
 iOS 26 and macOS 26 give `Observations` and default UIKit/AppKit observation
 tracking (`updateProperties()`), so one `@Observable` type drives SwiftUI,
@@ -105,11 +105,11 @@ apps/zbugs-swift/           dogfood app (iOS + macOS)
 
 The JS client has three layers, and the Swift client ports them as follows.
 
-| JS subsystem | Size (non-test LOC) | Swift approach |
-| --- | --- | --- |
-| `zql` IVM operators and pipeline builder (`zql/src/ivm`, `zql/src/builder`) | ~10.7k | 1:1 operator port |
-| `zero-client` logic: connection state machine, query manager, poke handler, mutation tracker, mutator proxy | ~11k total | Faithful behavioral port |
-| Replicache (dag, B-tree, memdag, persist, refresh, GC) | ~18.6k | Keep the semantics, replace the storage machinery |
+| JS subsystem                                                                                                | Size (non-test LOC) | Swift approach                                    |
+| ----------------------------------------------------------------------------------------------------------- | ------------------- | ------------------------------------------------- |
+| `zql` IVM operators and pipeline builder (`zql/src/ivm`, `zql/src/builder`)                                 | ~10.7k              | 1:1 operator port                                 |
+| `zero-client` logic: connection state machine, query manager, poke handler, mutation tracker, mutator proxy | ~11k total          | Faithful behavioral port                          |
+| Replicache (dag, B-tree, memdag, persist, refresh, GC)                                                      | ~18.6k              | Keep the semantics, replace the storage machinery |
 
 Rationale:
 
@@ -219,14 +219,14 @@ it and emits plain Swift: table descriptors (client and server names, column
 types, optional, primary and unique keys, relationships, enums), `Codable` row
 structs, and typed column references for the builder.
 
-| TS | Swift |
-| --- | --- |
-| `string()` | `String` |
-| `boolean()` | `Bool` |
-| `number()` | `Double`; per-column override to `Int` in the codegen config (checked, exact up to 2^53) |
-| `enumeration<…>()` | `enum: String, Codable` |
-| `json<T>()` | A generated `Codable` type when `T` is a plain object or literal union, otherwise `JSONValue` |
-| `.optional()` | Swift optional |
+| TS                 | Swift                                                                                         |
+| ------------------ | --------------------------------------------------------------------------------------------- |
+| `string()`         | `String`                                                                                      |
+| `boolean()`        | `Bool`                                                                                        |
+| `number()`         | `Double`; per-column override to `Int` in the codegen config (checked, exact up to 2^53)      |
+| `enumeration<…>()` | `enum: String, Codable`                                                                       |
+| `json<T>()`        | A generated `Codable` type when `T` is a plain object or literal union, otherwise `JSONValue` |
+| `.optional()`      | Swift optional                                                                                |
 
 Row struct names are the table names in PascalCase. The generated code stays
 readable enough to hand-write.
@@ -421,18 +421,18 @@ passing IDs and timestamps as arguments.
 
 Each milestone is done when its conformance layer passes.
 
-| # | Milestone | Done when |
-| --- | --- | --- |
-| M0 | Scaffolding: `swift/` with the three targets, Linux and macOS CI, `swift-format`, the `packages/zero-conformance` skeleton, the mirror job | CI green on an empty package |
-| M1 | Primitives: JSON value model, hashes, key encoding, UTF-16 value comparison, LIKE, TTL, AST and normalization, protocol codecs including binary poke chunks | Primitive vectors pass |
-| M1.5 | Protocol-only walking skeleton: connect to a real `zero-cache`, handshake, receive pokes, log rows | Talks to a real server |
-| M2 | IVM: `MemorySource`, all client operators, pipeline builder, change application, the builder API | Curated and seeded-fuzz IVM vectors pass |
-| M3 | Schema codegen CLI; generate the zbugs and fixture schemas | Generated code compiles and drives M2 |
-| M4 | Client engine on memory storage: connection state machine, query manager (named queries, TTL, cached/complete), poke handler, mutators, `tx`, pending queue, rebase, mutation tracker, auth, recovery | Client scenario vectors pass |
-| M5 | SQLite persistence, client and client-group lifecycle and GC, storage version, memory fallback | Scenarios pass on SQLite |
-| M6 | Apple layer: URLSession transport, lifecycle, `NWPathMonitor`, `os.Logger`, `@Observable` queries, SwiftUI wrapper and environment, UIKit and AppKit diffable adapters | macOS CI green |
-| M7 | Linux end-to-end against real `zero-cache` and Postgres; drift harness; zbugs queries and mutators ported to Swift | End-to-end and drift checks pass |
-| M8 | `apps/zbugs-swift` (iOS and macOS, UIKit and AppKit screens, auth), benchmarks, DocC, parity matrix | `0.1.0` ready to tag on the mirror |
+| #    | Milestone                                                                                                                                                                                             | Done when                                |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| M0   | Scaffolding: `swift/` with the three targets, Linux and macOS CI, `swift-format`, the `packages/zero-conformance` skeleton, the mirror job                                                            | CI green on an empty package             |
+| M1   | Primitives: JSON value model, hashes, key encoding, UTF-16 value comparison, LIKE, TTL, AST and normalization, protocol codecs including binary poke chunks                                           | Primitive vectors pass                   |
+| M1.5 | Protocol-only walking skeleton: connect to a real `zero-cache`, handshake, receive pokes, log rows                                                                                                    | Talks to a real server                   |
+| M2   | IVM: `MemorySource`, all client operators, pipeline builder, change application, the builder API                                                                                                      | Curated and seeded-fuzz IVM vectors pass |
+| M3   | Schema codegen CLI; generate the zbugs and fixture schemas                                                                                                                                            | Generated code compiles and drives M2    |
+| M4   | Client engine on memory storage: connection state machine, query manager (named queries, TTL, cached/complete), poke handler, mutators, `tx`, pending queue, rebase, mutation tracker, auth, recovery | Client scenario vectors pass             |
+| M5   | SQLite persistence, client and client-group lifecycle and GC, storage version, memory fallback                                                                                                        | Scenarios pass on SQLite                 |
+| M6   | Apple layer: URLSession transport, lifecycle, `NWPathMonitor`, `os.Logger`, `@Observable` queries, SwiftUI wrapper and environment, UIKit and AppKit diffable adapters                                | macOS CI green                           |
+| M7   | Linux end-to-end against real `zero-cache` and Postgres; drift harness; zbugs queries and mutators ported to Swift                                                                                    | End-to-end and drift checks pass         |
+| M8   | `apps/zbugs-swift` (iOS and macOS, UIKit and AppKit screens, auth), benchmarks, DocC, parity matrix                                                                                                   | `0.1.0` ready to tag on the mirror       |
 
 Deferred to v1.x: the inspector, the live differential fuzzer, an async auth
 provider, cross-process access through App Groups, validator-derived drift

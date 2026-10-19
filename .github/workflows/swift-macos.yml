@@ -1,0 +1,47 @@
+name: Swift (macOS)
+
+# The Apple-only layer (ZeroUI, the URLSession transport) and iOS simulator
+# tests. Path-filtered because macOS runners are slow to start.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'swift/**'
+      - 'packages/zero-conformance/**'
+      - 'apps/zbugs-swift/**'
+      - '.github/workflows/swift-macos.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'swift/**'
+      - 'packages/zero-conformance/**'
+      - 'apps/zbugs-swift/**'
+      - '.github/workflows/swift-macos.yml'
+
+concurrency:
+  group: '${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}'
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: Swift (macOS)
+    runs-on: macos-26
+    defaults:
+      run:
+        working-directory: swift
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - run: swift --version
+      - name: Build and test (macOS)
+        run: swift test
+      - name: Test (iOS Simulator)
+        run: |
+          device="$(xcrun simctl list devices available -j |
+            python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for k,v in d.items() if "iOS" in k for x in v if x["name"].startswith("iPhone")))')"
+          xcodebuild test -scheme Zero-Package -destination "id=$device" -skipPackagePluginValidation
