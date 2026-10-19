@@ -5,6 +5,8 @@
   import ZeroTesting
   import ZeroUI
 
+  @testable import Zero
+
   #if canImport(UIKit)
     import UIKit
   #else

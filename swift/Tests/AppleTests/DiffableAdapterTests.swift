@@ -3,6 +3,8 @@
   import ZeroTesting
   import ZeroUI
 
+  @testable import Zero
+
   @Suite @MainActor struct DiffableAdapterTests {
     func makeZero() throws -> Zero<Void> {
       var options = ZeroOptions(userID: "u", storageKey: randomID(), storage: .memory)

@@ -99,7 +99,7 @@
       return try await withCheckedThrowingContinuation {
         (c: CheckedContinuation<UInt16, any Error>) in
         let resumed = Locked(false)
-        let first = {
+        let first: @Sendable () -> Bool = {
           resumed.withLock { r in
             defer { r = true }
             return !r
