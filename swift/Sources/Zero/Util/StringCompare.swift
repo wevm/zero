@@ -54,3 +54,23 @@ public enum StringCompare {
     a.utf8.elementsEqual(b.utf8)
   }
 }
+
+/// A string key compared by code units, like a JS `Map` key. Swift's own
+/// `String` equality treats canonically equivalent strings as equal.
+public struct JSKey: Hashable, Sendable, CustomStringConvertible {
+  public let string: String
+
+  @inlinable
+  public init(_ string: String) { self.string = string }
+
+  @inlinable
+  public static func == (a: JSKey, b: JSKey) -> Bool { StringCompare.equal(a.string, b.string) }
+
+  @inlinable
+  public func hash(into hasher: inout Hasher) {
+    var s = string
+    s.withUTF8 { hasher.combine(bytes: UnsafeRawBufferPointer($0)) }
+  }
+
+  public var description: String { string }
+}

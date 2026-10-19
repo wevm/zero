@@ -17,6 +17,8 @@ export type VectorFile<T> = {
   formatVersion: number;
   kind: string;
   description: string;
+  /** Fixtures the cases share, such as schemas and datasets. */
+  shared?: Record<string, unknown> | undefined;
   cases: T[];
 };
 
@@ -31,14 +33,20 @@ export function emitVectors<T>(
   kind: string,
   description: string,
   cases: T[],
+  shared?: Record<string, unknown>,
+  {compact = false}: {compact?: boolean} = {},
 ): void {
   const file: VectorFile<T> = {
     formatVersion: VECTOR_FORMAT_VERSION,
     kind,
     description,
+    ...(shared ? {shared} : {}),
     cases,
   };
-  const text = JSON.stringify(file, null, 2) + '\n';
+  // Large files go one case per line, to keep diffs readable.
+  const text = compact
+    ? compactText(file)
+    : JSON.stringify(file, null, 2) + '\n';
   const path = vectorsDir + name + '.json';
   if (updateVectors) {
     writeFileSync(path, text);
@@ -68,13 +76,22 @@ export function emitGeneratedVectors<T>(
   kind: string,
   description: string,
   cases: T[],
+  shared?: Record<string, unknown>,
 ): void {
   const file: VectorFile<T> = {
     formatVersion: VECTOR_FORMAT_VERSION,
     kind,
     description,
+    ...(shared ? {shared} : {}),
     cases,
   };
   mkdirSync(generatedDir, {recursive: true});
   writeFileSync(generatedDir + name + '.json', JSON.stringify(file) + '\n');
+}
+
+function compactText<T>(file: VectorFile<T>): string {
+  const {cases, ...rest} = file;
+  const head = JSON.stringify(rest);
+  const lines = cases.map(c => JSON.stringify(c));
+  return `${head.slice(0, -1)},"cases":[\n${lines.join(',\n')}\n]}\n`;
 }

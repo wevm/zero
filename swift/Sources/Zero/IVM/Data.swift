@@ -77,9 +77,37 @@ public enum ValueCompare {
   public static func equal(_ a: Value, _ b: Value) -> Bool {
     switch (a, b) {
     case (.null, _), (_, .null): return false
-    case (.string(let x), .string(let y)): return x == y
+    case (.string(let x), .string(let y)): return StringCompare.equal(x, y)
     case (.number(let x), .number(let y)): return x == y
     case (.bool(let x), .bool(let y)): return x == y
+    default: return false
+    }
+  }
+
+  /// `compareValues` on possibly missing values: `undefined` reads as `null`.
+  @inlinable
+  public static func compare(_ a: Value?, _ b: Value?) -> Int {
+    compare(a ?? .null, b ?? .null)
+  }
+
+  /// `valuesEqual` on possibly missing values: `undefined` equals nothing.
+  @inlinable
+  public static func equal(_ a: Value?, _ b: Value?) -> Bool {
+    guard let a, let b else { return false }
+    return equal(a, b)
+  }
+
+  /// JS `===` on possibly missing values. Strings compare by code unit;
+  /// arrays and objects are never identical, since rows are decoded fresh.
+  @inlinable
+  public static func identical(_ a: Value?, _ b: Value?) -> Bool {
+    switch (a, b) {
+    case (nil, nil): return true
+    case (nil, _), (_, nil): return false
+    case (.null?, .null?): return true
+    case (.string(let x)?, .string(let y)?): return StringCompare.equal(x, y)
+    case (.number(let x)?, .number(let y)?): return x == y
+    case (.bool(let x)?, .bool(let y)?): return x == y
     default: return false
     }
   }
@@ -88,5 +116,27 @@ public enum ValueCompare {
   @inlinable
   public static func value(_ row: Row, _ column: String) -> Value {
     row[column] ?? .null
+  }
+}
+
+/// Orders rows (`Comparator` in `data.ts`).
+public typealias Comparator = (Row, Row) -> Int
+
+/// `makeComparator(order, reverse)`.
+public func makeComparator(_ order: AST.Ordering, reverse: Bool = false) -> Comparator {
+  if order.count == 1 && order[0].direction == .asc && !reverse {
+    let field = order[0].field
+    return { a, b in ValueCompare.compare(a[field], b[field]) }
+  }
+  let parts = order.map { ($0.field, $0.direction == .asc) }
+  return { a, b in
+    for (field, asc) in parts {
+      let comp = ValueCompare.compare(a[field], b[field])
+      if comp != 0 {
+        let result = asc ? comp : -comp
+        return reverse ? -result : result
+      }
+    }
+    return 0
   }
 }

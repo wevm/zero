@@ -40,6 +40,22 @@ enum Vectors {
     return file["cases"]?.arrayValue ?? []
   }
 
+  /// A whole vector file, including its `shared` fixtures.
+  static func file(_ name: String) throws -> JSONValue {
+    let file = try JSONParser.parse(Array(try data(name)))
+    guard file["formatVersion"] == .number(Double(supportedFormatVersion)) else {
+      throw VectorError.unsupportedFormat(
+        name: name, version: Int(file["formatVersion"]?.numberValue ?? -1))
+    }
+    return file
+  }
+
+  static func generatedFile(_ name: String) throws -> JSONValue {
+    guard let generatedDirectory else { throw VectorError.missingDirectory }
+    let data = try Data(contentsOf: generatedDirectory.appendingPathComponent("\(name).json"))
+    return try JSONParser.parse(Array(data))
+  }
+
   struct File<Case: Decodable>: Decodable {
     let formatVersion: Int
     let kind: String

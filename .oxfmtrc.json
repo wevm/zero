@@ -12,6 +12,7 @@
   "sortPackageJson": true,
   "ignorePatterns": [
     "node_modules",
+    "packages/zero-conformance/vectors",
     "dist",
     "lib",
     "*.log",
