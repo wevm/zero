@@ -59,6 +59,7 @@ export type DriftSamples = {
 };
 
 const seedName = '__drift.seed';
+const dayMs = 24 * 60 * 60 * 1000;
 const offlineWarning =
   'Zero starting up with no server URL. No data will be synced.';
 
@@ -101,12 +102,22 @@ export async function recordDrift(samples: DriftSamples): Promise<string> {
     if (args[0] !== offlineWarning) warn(...args);
   };
   try {
-    for (const sample of samples.mutatorSamples) {
+    for (const [i, sample] of samples.mutatorSamples.entries()) {
+      const result = await runMutator(schema, mutators, sample, 0);
+      // A mutator that reads the clock or makes up IDs does something else
+      // in Swift, so it can't be compared.
+      const again = await runMutator(schema, mutators, sample, dayMs);
+      if (JSON.stringify(again) !== JSON.stringify(result)) {
+        throw new Error(
+          `mutator ${sample.name} sample ${i} does something else when run ` +
+            `again a day later. Pass IDs and timestamps as arguments.`,
+        );
+      }
       mutatorSamples.push({
         ...sample,
         context: sample.context ?? null,
         seed: sample.seed ?? {},
-        ...(await runMutator(schema, mutators, sample)),
+        ...result,
       });
     }
   } finally {
@@ -138,11 +149,15 @@ async function seed({
   }
 }
 
-/** Runs one mutator in a client of its own, offline. */
+/**
+ * Runs one mutator in a client of its own, offline, with `Date.now` moved
+ * `shiftMs` ahead while the mutator runs.
+ */
 async function runMutator(
   schema: Schema,
   mutators: object,
   sample: MutatorSample,
+  shiftMs: number,
 ) {
   const registry = defineMutators(mutators as never, {
     __drift: {seed: defineMutator(seed as never)},
@@ -168,7 +183,14 @@ async function runMutator(
       );
     await call(seedName, sample.seed ?? {}).client;
     const before = await rows(zero, schema);
-    const outcome = await call(sample.name, sample.args).client;
+    const {now} = Date;
+    Date.now = () => now() + shiftMs;
+    let outcome;
+    try {
+      outcome = await call(sample.name, sample.args).client;
+    } finally {
+      Date.now = now;
+    }
     const after = await rows(zero, schema);
     return {outcome: json(outcome), changes: diff(schema, before, after)};
   } finally {

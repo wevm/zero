@@ -193,7 +193,11 @@ Rationale:
 ### Transport
 
 - The core defines a transport protocol and never touches a socket directly.
-- The Apple layer implements it with `URLSessionWebSocketTask`.
+- `URLSessionTransport` implements it with `URLSessionWebSocketTask` and is the
+  default socket on Apple platforms. It accepts frames up to 64 MB (a poke can
+  exceed URLSession's 1 MB default) and reports the server's close code and
+  reason, which the client's error handling reads.
+- One writer task per connection sends frames in order.
 - Tests use an in-memory transport that replays scenario vectors, and, on Linux
   end-to-end runs, a test-only SwiftNIO WebSocket transport.
 - Wire details follow `zero-protocol`: connect to `/sync/v53/connect`, put
@@ -202,17 +206,26 @@ Rationale:
 
 ### App lifecycle and recovery
 
-- iOS: on background, flush pending pushes inside a short background task, then
-  disconnect. Reconnect on foreground. No background sync in v1.
-- macOS: stay connected while the app runs. Reconnect after wake.
-- Both: reconnect immediately when `NWPathMonitor` reports the network is back.
-  This is a platform adaptation in the Apple layer; JS relies on ping/pong only.
-- New client group and client-state-not-found: the SDK transparently recreates
-  its internal client. Active queries re-materialize and the `@Observable`
-  objects keep their identity.
+The app's lifecycle maps onto JS's tab visibility: a hidden client
+disconnects, and rejects mutations, as a hidden tab does.
+
+- iOS: on background, a background task waits up to 10 seconds for the server
+  to confirm the pending mutations, then the client disconnects and flushes
+  its storage. It reconnects on foreground. No background sync in v1.
+- macOS: disconnect and flush when the Mac sleeps; reconnect when it wakes.
+- Both: reconnect without waiting out the backoff when `NWPathMonitor`
+  reports the network is back, and ping an open connection when the
+  interfaces change. JS relies on ping/pong only.
+- The lifecycle is installed for the system scheduler only, so tests drive
+  it by hand.
+- Client-state-not-found (the server lost the client group): unless the app
+  sets `onClientStateNotFound`, the SDK replaces its internal client with a
+  new one in a new group. Views, live queries, and preloads move to the new
+  client and keep their identity. JS reloads the page instead. With the
+  callback set, the JS behavior applies.
 - Version-not-supported and schema-not-supported can't be fixed by reloading a
-  native app. They surface as a callback plus an `.updateRequired` connection
-  state so the app can prompt for an update.
+  native app. They surface as the `onUpdateNeeded` callback and the observable
+  `connection.updateNeeded`, so the app can prompt for an update.
 - Documentation must say that schema changes stay additive while old app
   binaries are in the wild. The server rejects a client whose schema references
   a dropped or retyped column
@@ -347,17 +360,22 @@ zql.issue
 
 ### UI integration
 
-1. **Core view.** `materialize(query)` returns a view with listener callbacks
-   and an `AsyncSequence` of immutable snapshots plus per-row diffs.
-   Framework-agnostic; builds on Linux. Dropping the last reference to a view
-   destroys it, where a JS view lives until `destroy()`; a view may outlive
-   its `Zero`.
-2. **`@Observable` query object** with `data`, `resultType`, and `error`.
-   Works in SwiftUI and is tracked automatically by UIKit and AppKit.
-3. **SwiftUI.** Environment injection, a `@Query`-style property wrapper (≈
-   `useQuery`), and connection state.
-4. **UIKit and AppKit.** A diffable-data-source snapshot adapter keyed by
-   primary key.
+1. **Core view.** `materialize(query)` returns a `MaterializedView` with
+   listener callbacks and `snapshots`, an `AsyncSequence` of `ViewSnapshot`s:
+   the data plus the row diff from the previous snapshot (a
+   `CollectionDifference` of `RowID`s, the rows' primary keys, and the rows
+   that changed in place). Framework-agnostic; builds on Linux. Dropping the
+   last reference to a view destroys it, where a JS view lives until
+   `destroy()`; a view may outlive its `Zero`.
+2. **`LiveQuery`**, an `@Observable` query object with `data`, `resultType`,
+   and `error` (`zero.liveQuery(request)`). Works in SwiftUI and is tracked
+   automatically by UIKit and AppKit. `zero.connection` is `@Observable` too.
+3. **SwiftUI** (`ZeroUI`). `.zero(_:)` puts a client in the environment, and
+   `@ZeroQuery(request)` (≈ `useQuery`) reads it; `$query` gives the result
+   type and error.
+4. **UIKit and AppKit** (`ZeroUI`). `DiffableAdapter` applies a view's
+   snapshots to a diffable data source, keyed by primary key, and decodes
+   rows as they change.
 
 No Combine publishers.
 
@@ -414,16 +432,21 @@ Vector storage and fuzzing:
 Hand-written Swift queries and mutators can drift from their TS counterparts.
 The drift harness catches it in the app's own tests.
 
-- **TS side.** The app author writes a samples file: argument sets per query,
-  and argument sets plus seed rows per mutator. `zero-swift drift record` runs
-  the TS definitions and writes `drift-vectors.json`.
+- **TS side.** The app author writes a samples module: arguments and context
+  per query sample, and arguments, context, and seed rows per mutator sample.
+  `zero-swift drift record` runs the TS definitions, each mutator sample in an
+  offline client of its own, and writes `drift-vectors.json`. In this repo,
+  the zero-swift tests record the apps' vectors and fail when they are stale.
 - **Swift side.** `ZeroTesting` exposes
-  `assertNoDrift(vectors:queries:mutators:)` for Swift Testing or XCTest.
+  `Drift.failures(vectors:schema:queries:mutators:)` and
+  `Drift.expectNoDrift`, which records a Swift Testing issue per difference.
+  Queries are `NamedQuery`s, the query definitions with decodable arguments.
 
 Checks:
 
-- Each query sample's normalized AST hash matches.
-- Each mutator sample produces the same row operations.
+- Each query sample's normalized AST hash matches; a failure prints both ASTs.
+- Each mutator sample has the same outcome (success, or the same application
+  error and details) and changes the same rows.
 - Every name in the TS registries has a Swift definition, and the other way
   round.
 - Each sample's args JSON decodes into the Swift args type and re-encodes to
@@ -431,14 +454,15 @@ Checks:
   mismatches (zod's `.optional()` rejects `null`).
 
 A mutator that calls `Date.now()` or generates IDs internally can't be
-compared, so the harness flags it. The docs recommend the Zero convention of
-passing IDs and timestamps as arguments.
+compared. The recorder runs each mutator sample twice, the second time with
+the clock a day later, and fails when the two runs differ. The docs recommend
+the Zero convention of passing IDs and timestamps as arguments.
 
 ### CI
 
 - **Linux, every PR.** Swift build, unit tests, and conformance vectors; the
-  vector staleness check; an end-to-end run against a real `zero-cache` and
-  Postgres with the zbugs schema, including the drift harness.
+  vector and drift-vector staleness checks; `apps/zbugs-swift`'s drift test;
+  an end-to-end run against a real `zero-cache` and Postgres.
 - **macOS, path-filtered to `swift/` and `packages/zero-conformance/`.** The
   Apple layer (URLSession transport against a local mock WebSocket server,
   SwiftUI, UIKit, and AppKit helpers), iOS simulator tests, and the
