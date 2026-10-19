@@ -16,6 +16,8 @@
 
       override func viewDidLoad() {
         super.viewDidLoad()
+        // It would clear the highlight `select` sets before the list appears.
+        clearsSelectionOnViewWillAppear = false
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "issue")
         dataSource = UITableViewDiffableDataSource(tableView: tableView) {
           [unowned self] tableView, indexPath, id in
