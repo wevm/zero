@@ -134,6 +134,21 @@ Rationale:
   there is no empty first frame, and the vectors' ordering semantics carry over
   directly.
 - SQLite I/O, the socket, and poke JSON decoding run off the main actor.
+- The engine is synchronous and event-driven, not `async`. Every entry point
+  (an API call, a timer, a socket event) runs inside `EventLoop.dispatch`,
+  which drains a microtask queue when the outermost call returns. Where JS
+  awaits a promise, the engine queues the continuation as a microtask, so
+  notifications, promise settlement, and run-loop steps happen in the same
+  order as in JS. Time comes from an injected `Scheduler` (`now`,
+  `monotonicNow`, one-shot and repeating timers); tests pass
+  `ManualScheduler`, which plays the role of JS fake timers.
+- Sockets are callback-based (`SocketFactory`, `SocketConnection`,
+  `SocketEvents`). Transports hop to the main actor before calling back.
+- Mutator bodies and `tx.run` are plain `throws`. A JS mutator awaits only
+  its own transaction, which is synchronous here, so `async` would add
+  suspension points that let other work interleave with a rebase. The
+  results the app waits for (`run`, the `client` and `server` outcomes of a
+  mutation, `preload`) are `Deferred` values with an `async throws` `value`.
 
 ### Storage
 
@@ -244,18 +259,18 @@ enum IssueQueries {
 }
 
 enum IssueMutators {
-  static let create = defineMutator("issue.create") { (tx, args: CreateIssue, ctx: AuthData?) async throws in
-    try await tx.mutate.issue.insert(.init(id: args.id, title: args.title))
+  static let create = defineMutator("issue.create") { (tx, args: CreateIssue, ctx: AuthData?) throws in
+    try tx.mutate.issue.insert(.init(id: args.id, title: args.title))
   }
   static let notify = defineMutator.serverOnly("issue.notify", args: Notify.self)
 }
 
-let zero = Zero(schema: .app, context: auth, mutators: [IssueMutators.create, IssueMutators.notify])
+let zero = try Zero(schema: .app, context: auth, mutators: [IssueMutators.create, IssueMutators.notify], options: options)
 let view = zero.materialize(IssueQueries.byStatus(.init(status: .open)))
 zero.mutate(IssueMutators.create(.init(id: newID(), title: "…")))
 ```
 
-- `Zero` is generic over the schema and the context type.
+- `Zero` is generic over the context type; the schema is a value.
 - Mutators need a registry: pending mutations are stored as name plus args and
   replayed by name on rebase, including after a restart. Registering two
   mutators under one name throws at init. A pending mutation with an unknown
@@ -294,8 +309,9 @@ zql.issue
 ### Mutate, errors, auth, logging
 
 - `zero.mutate(request)` is `@discardableResult` and returns a handle with
-  `client` and `server` async throwing properties, the same split as JS
-  `{client, server}`.
+  `client` and `server` outcomes (`Deferred<MutationOutcome>`), the same
+  split as JS `{client, server}`. An outcome is success with optional data,
+  an application error, or a Zero error, as in JS, rather than a throw.
 - One `ZeroError` enum mirrors the JS kinds: application (with message), input
   validation, storage failure, transaction closed, rejected while disconnected
   or closed, and Zero/server errors. The public API uses plain `throws` because
@@ -311,7 +327,9 @@ zql.issue
 
 1. **Core view.** `materialize(query)` returns a view with listener callbacks
    and an `AsyncSequence` of immutable snapshots plus per-row diffs.
-   Framework-agnostic; builds on Linux.
+   Framework-agnostic; builds on Linux. Dropping the last reference to a view
+   destroys it, where a JS view lives until `destroy()`; a view may outlive
+   its `Zero`.
 2. **`@Observable` query object** with `data`, `resultType`, and `error`.
    Works in SwiftUI and is tracked automatically by UIKit and AppKit.
 3. **SwiftUI.** Environment injection, a `@Query`-style property wrapper (≈

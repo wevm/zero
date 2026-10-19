@@ -394,7 +394,8 @@ public final class MemorySource: Source {
 
 /// A pipeline's connection to a `MemorySource`.
 final class MemorySourceInput: SourceInput {
-  unowned let source: MemorySource
+  /// Weak: a view can outlive the client and its sources.
+  weak var source: MemorySource?
   let connection: MemorySource.Connection
   let schema: SourceSchema
   let fullyAppliedFilters: Bool
@@ -410,9 +411,9 @@ final class MemorySourceInput: SourceInput {
   }
 
   func getSchema() -> SourceSchema { schema }
-  func fetch(_ req: FetchRequest) -> NodeStream { source.fetch(req, connection) }
+  func fetch(_ req: FetchRequest) -> NodeStream { source?.fetch(req, connection) ?? .empty }
   func setOutput(_ output: any Output) { connection.output = output }
-  func destroy() { source.disconnect(self) }
+  func destroy() { source?.disconnect(self) }
 }
 
 /// A bound in an index scan: a value, or below or above every value.

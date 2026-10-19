@@ -319,17 +319,30 @@ public final class ArrayView: Output {
   private var committedRoot: ViewEntry?
   private var held = false
   private var heldResultType: ResultType = .unknown
+  private var heldError: ErroredQuery?
   public private(set) var resultType: ResultType = .unknown
+  /// Why the query failed, when `resultType` is `.error`.
+  public private(set) var error: ErroredQuery?
   public var onDestroy: (() -> Void)?
 
   /// Hydrates from `input`. `complete` marks the result complete from the
   /// start.
-  public init(_ input: any Input, format: Format, complete: Bool = false) {
+  public convenience init(_ input: any Input, format: Format, complete: Bool = false) {
+    self.init(input, format: format, error: nil, complete: complete)
+  }
+
+  /// Hydrates from `input`, starting as failed when `error` is set.
+  public init(_ input: any Input, format: Format, error: ErroredQuery?, complete: Bool) {
     self.input = input
     self.format = format
     root = ViewEntry(row: [:])
     root.relationships[""] = format.singular ? .one(nil) : .many([])
-    if complete { resultType = .complete }
+    if complete {
+      resultType = .complete
+    } else if let error {
+      resultType = .error
+      self.error = error
+    }
     input.setOutput(self)
     hydrate()
   }
@@ -391,6 +404,12 @@ public final class ArrayView: Output {
     committedRoot = root
     held = true
     heldResultType = resultType
+    heldError = error
+  }
+
+  /// The result type and error listeners are told about now.
+  public var listenerResultType: (ResultType, ErroredQuery?) {
+    committedRoot != nil ? (heldResultType, heldError) : (resultType, error)
   }
 
   public func releaseData() { committedRoot = nil }
@@ -404,8 +423,9 @@ public final class ArrayView: Output {
     fireListeners()
   }
 
-  public func setResultType(_ type: ResultType) {
+  public func setResultType(_ type: ResultType, error: ErroredQuery? = nil) {
     resultType = type
+    self.error = error
     if held {
       dirty = true
     } else if !dirty {

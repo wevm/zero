@@ -15,6 +15,16 @@ public enum ErrorBody: Sendable, Hashable, JSONCodable {
     }
   }
 
+  /// Where the error came from; nil from servers too old to say.
+  public var origin: ErrorOrigin? {
+    switch self {
+    case .basic(let b): b.origin
+    case .backoff(let b): b.origin
+    case .pushFailed(let b): b.cause.origin
+    case .transformFailed(let b): b.cause.origin
+    }
+  }
+
   public var message: String {
     switch self {
     case .basic(let b): b.message
