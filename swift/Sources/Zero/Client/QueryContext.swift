@@ -355,16 +355,27 @@ public struct QueryError: Error, Sendable, CustomStringConvertible {
 
 /// A view of a query that stays current as data changes (`TypedView`).
 ///
-/// Unlike in JS, dropping the last reference to a view destroys it.
+/// Unlike in JS, dropping the last reference to a view destroys it. When
+/// `Zero` replaces its client (see `ZeroOptions.onClientStateNotFound`),
+/// the view moves to the new client and keeps its identity and listeners.
 @MainActor
 public final class MaterializedView {
-  let view: ArrayView
-  private let updateTTLImpl: (TTL) -> Void
+  public typealias Listener = (ViewValue, ResultType, ErroredQuery?) -> Void
+
+  private(set) var view: ArrayView
+  private var updateTTLImpl: (TTL) -> Void
+  private var removeForward: () -> Void = {}
   private var destroyed = false
+  private var listeners: [(id: Int, listener: Listener)] = []
+  private var nextListenerID = 0
+  /// What a new client materializes again: set by `Zero`.
+  var query: AnyQuery?
+  var ttl: TTL = .defaultTTL
 
   init(_ view: ArrayView, updateTTL: @escaping (TTL) -> Void) {
     self.view = view
     self.updateTTLImpl = updateTTL
+    forward()
   }
 
   isolated deinit {
@@ -374,17 +385,61 @@ public final class MaterializedView {
   public var data: ViewValue { view.data }
   public var resultType: ResultType { view.listenerResultType.0 }
   public var error: ErroredQuery? { view.listenerResultType.1 }
+  public var isDestroyed: Bool { destroyed }
+
+  /// The primary key columns of the rows, which make their `RowID`s.
+  public var primaryKey: [String] { view.input.getSchema().primaryKey }
 
   /// Calls `listener` now and whenever the data or result type change.
   @discardableResult
-  public func addListener(
-    _ listener: @escaping (ViewValue, ResultType, ErroredQuery?) -> Void
-  )
-    -> () -> Void
-  {
-    view.addListener { [weak view] data, type in
-      listener(data, type, view?.listenerResultType.1)
+  public func addListener(_ listener: @escaping Listener) -> () -> Void {
+    let id = nextListenerID
+    nextListenerID += 1
+    listeners.append((id, listener))
+    let (type, error) = view.listenerResultType
+    listener(view.data, type, error)
+    return { [weak self] in self?.listeners.removeAll { $0.id == id } }
+  }
+
+  /// Calls `listener` now and whenever the data or result type change,
+  /// with how the rows changed since its previous call.
+  @discardableResult
+  public func addSnapshotListener(_ listener: @escaping (ViewSnapshot) -> Void) -> () -> Void {
+    var differ = RowDiffer(primaryKey: primaryKey)
+    return addListener { data, type, error in listener(differ.next(data, type, error)) }
+  }
+
+  /// The view's snapshots: the current one, then one per change, until the
+  /// iterating task is cancelled. The stream keeps the view alive.
+  public var snapshots: AsyncStream<ViewSnapshot> {
+    let (stream, continuation) = AsyncStream<ViewSnapshot>.makeStream()
+    let subscription = SnapshotSubscription(self)
+    subscription.remove = addSnapshotListener { continuation.yield($0) }
+    continuation.onTermination = { _ in
+      Task { @MainActor in subscription.cancel() }
     }
+    return stream
+  }
+
+  private func forward() {
+    removeForward = view.addListener { [weak self] data, type in
+      guard let self else { return }
+      let error = self.view.listenerResultType.1
+      for (_, listener) in self.listeners { listener(data, type, error) }
+    }
+  }
+
+  /// Takes over the pipeline of `other`, a view of the same query on a new
+  /// client, and tells the listeners about its data.
+  func rebind(to other: MaterializedView) {
+    guard !destroyed else { return }
+    removeForward()
+    view.destroy()
+    other.removeForward()
+    other.destroyed = true
+    view = other.view
+    updateTTLImpl = other.updateTTLImpl
+    forward()
   }
 
   /// Stops updating the view and releases its query, which the server
@@ -392,9 +447,28 @@ public final class MaterializedView {
   public func destroy() {
     guard !destroyed else { return }
     destroyed = true
+    removeForward()
+    listeners = []
     view.destroy()
   }
 
   /// Raises the query's TTL; a lower one is ignored.
-  public func updateTTL(_ ttl: TTL) { updateTTLImpl(ttl) }
+  public func updateTTL(_ ttl: TTL) {
+    self.ttl = ttl
+    updateTTLImpl(ttl)
+  }
+}
+
+/// Keeps a view alive while its snapshot stream is iterated.
+@MainActor
+private final class SnapshotSubscription {
+  let view: MaterializedView
+  var remove: (() -> Void)?
+
+  init(_ view: MaterializedView) { self.view = view }
+
+  func cancel() {
+    remove?()
+    remove = nil
+  }
 }

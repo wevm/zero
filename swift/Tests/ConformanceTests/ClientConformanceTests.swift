@@ -116,6 +116,7 @@ final class ScenarioRunner {
 
   func makeZero(_ o: JSONValue, mutators registered: JSONValue? = nil) throws -> Zero<Void> {
     var options = ZeroOptions()
+    options.logSink = RecordingLogSink()
     switch o["cacheURL"] {
     case .null?: options.cacheURL = nil
     case .string(let s)?: options.cacheURL = s
@@ -131,6 +132,7 @@ final class ScenarioRunner {
     if let v = o["disconnectTimeoutMs"]?.numberValue { options.disconnectTimeoutMs = v }
     if let v = o["queryChangeThrottleMs"]?.numberValue { options.queryChangeThrottleMs = v }
     if let v = o["maxHeaderLength"]?.numberValue { options.maxHeaderLength = Int(v) }
+    options.hiddenDisconnectDelayMs = o["hiddenTabDisconnectDelay"]?.numberValue ?? 300_000
     options.mutateURL = o["mutateURL"]?.stringValue
     options.mutateHeaders = o["mutateHeaders"]?.objectValue?.compactMapValues(\.stringValue)
     options.queryURL = o["queryURL"]?.stringValue
@@ -314,6 +316,8 @@ final class ScenarioRunner {
         wasClean: step["wasClean"]?.boolValue ?? false)
     case "advance":
       scheduler.advance(by: step["ms"]?.numberValue ?? 0)
+    case "visibility":
+      zero.setVisible(step["state"] == "visible")
     case "connect":
       zero.connection.connect(auth: step["auth"]?.stringValue)
     case "close":

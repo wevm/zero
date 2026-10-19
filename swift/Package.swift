@@ -22,6 +22,9 @@ let package = Package(
     .target(name: "ZeroTesting", dependencies: ["Zero"]),
     .testTarget(name: "ZeroTests", dependencies: ["Zero", "ZeroTesting"]),
     .testTarget(name: "ConformanceTests", dependencies: ["Zero", "ZeroTesting"]),
+    // The Apple layer: the URLSession transport, SwiftUI, UIKit, and AppKit.
+    // Empty elsewhere.
+    .testTarget(name: "AppleTests", dependencies: ["Zero", "ZeroUI", "ZeroTesting"]),
     .testTarget(
       name: "E2ETests",
       dependencies: [

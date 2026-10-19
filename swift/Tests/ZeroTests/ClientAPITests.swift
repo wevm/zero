@@ -44,8 +44,10 @@ import ZeroTesting
 
   /// A store of the test's own, in memory.
   static var options: ZeroOptions {
-    ZeroOptions(
+    var options = ZeroOptions(
       cacheURL: "http://zero.test", userID: "u2", storageKey: randomID(), storage: .memory)
+    options.logSink = RecordingLogSink()
+    return options
   }
 
   let scheduler = ManualScheduler(now: 1_700_000_000_000)

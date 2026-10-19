@@ -18,6 +18,7 @@ import ZeroTesting
     var options = ZeroOptions(
       userID: "u", storageKey: storageKey, storage: storage ?? .sqlite(directory: directory))
     options.onStorageFailure = onStorageFailure
+    options.logSink = RecordingLogSink()
     let zero = try Zero(
       schema: .test, mutators: [create], options: options, scheduler: scheduler,
       socketFactory: nil)

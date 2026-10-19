@@ -41,72 +41,80 @@ public final class TransportSocketFactory: SocketFactory {
   }
 }
 
+/// One socket of a `Transport`. Frames are written in the order they are
+/// sent, and the close after them.
 @MainActor
 final class TransportConnection: SocketConnection {
+  private enum Outgoing: Sendable {
+    case text(String)
+    case close(Int)
+  }
+
   private weak var events: (any SocketEvents)?
-  private var socket: (any Socket)?
-  private var pending: [String] = []
   private var closed = false
-  private var task: Task<Void, Never>?
+  private let outgoing: AsyncStream<Outgoing>.Continuation
 
   init(transport: any Transport, url: String, secProtocol: String?, events: any SocketEvents) {
     self.events = events
-    task = Task { @MainActor [weak self] in
+    let (frames, outgoing) = AsyncStream<Outgoing>.makeStream()
+    self.outgoing = outgoing
+    Task { @MainActor [weak self] in
       let socket: any Socket
       do {
         socket = try await transport.connect(url: url, secProtocol: secProtocol)
       } catch {
-        self?.finish(code: 1006, reason: String(describing: error), wasClean: false)
+        self?.finish(SocketClosed(error))
         return
       }
       guard let self, !self.closed else {
         await socket.close(code: 1000, reason: "")
         return
       }
-      self.socket = socket
+      // One writer keeps the frames in order; each send in a task of its
+      // own could overtake the one before.
+      Task {
+        for await frame in frames {
+          switch frame {
+          case .text(let text):
+            try? await socket.send(.text(text))
+          case .close(let code):
+            await socket.close(code: code, reason: "")
+            return
+          }
+        }
+      }
       self.events?.socketDidOpen()
-      for text in self.pending { self.write(text) }
-      self.pending = []
       do {
         while let message = try await socket.receive() {
           if self.closed { return }
           self.events?.socketDidReceive(message)
         }
-        self.finish(code: 1000, reason: "", wasClean: true)
+        self.finish(SocketClosed(code: 1000, reason: "", wasClean: true))
       } catch {
-        self.finish(code: 1006, reason: String(describing: error), wasClean: false)
+        self.finish(SocketClosed(error))
       }
     }
   }
 
   func send(_ text: String) {
     guard !closed else { return }
-    if socket == nil {
-      pending.append(text)
-    } else {
-      write(text)
-    }
-  }
-
-  private func write(_ text: String) {
-    guard let socket else { return }
-    Task { try? await socket.send(.text(text)) }
+    outgoing.yield(.text(text))
   }
 
   func close(code: Int?) {
     guard !closed else { return }
     closed = true
     events = nil
-    if let socket {
-      Task { await socket.close(code: code ?? 1000, reason: "") }
-    }
+    outgoing.yield(.close(code ?? 1000))
+    outgoing.finish()
   }
 
-  private func finish(code: Int, reason: String, wasClean: Bool) {
+  private func finish(_ close: SocketClosed) {
     guard !closed else { return }
     closed = true
+    outgoing.finish()
     let events = self.events
     self.events = nil
-    events?.socketDidClose(code: code, reason: reason, wasClean: wasClean)
+    events?.socketDidClose(code: close.code, reason: close.reason, wasClean: close.wasClean)
   }
 }

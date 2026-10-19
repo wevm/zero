@@ -35,6 +35,14 @@ public struct ZeroOptions: Sendable {
   /// The storage failed, the first time it does: the client keeps running
   /// on memory and stops writing to disk. Defaults to doing nothing.
   public var onStorageFailure: (@MainActor @Sendable (StorageFailure) -> Void)?
+  /// The least severe messages logged.
+  public var logLevel: LogLevel = .warn
+  /// Where messages are logged. Defaults to `DefaultLogSink`.
+  public var logSink: (any LogSink)?
+  /// How long the app is in the background before the client disconnects
+  /// (`hiddenTabDisconnectDelay`). The Apple layer pushes the pending
+  /// mutations before it reports the app hidden, so it disconnects at once.
+  var hiddenDisconnectDelayMs: Double = 0
 
   public init(
     cacheURL: String? = nil, userID: String? = nil, auth: String? = nil,
@@ -79,6 +87,7 @@ final class Engine {
   let userID: String?
   let loop: EventLoop
   let scheduler: LoopScheduler
+  let log: Log
 
   isolated deinit {
     loop.stop()
@@ -131,8 +140,9 @@ final class Engine {
 
   init(
     schema: ZeroSchema, options: ZeroOptions, mutators: [String: MutatorFunction],
-    scheduler base: any Scheduler, socketFactory: (any SocketFactory)?
+    scheduler base: any Scheduler, socketFactory: (any SocketFactory)?, visible: Bool = true
   ) throws {
+    self.visible = visible
     if options.userID == "" {
       throw ConnectionError.client(
         .internal,
@@ -149,6 +159,8 @@ final class Engine {
     self.loop = EventLoop(scheduler: base)
     self.scheduler = LoopScheduler(base, loop)
     self.clientID = randomID()
+    self.log = Log(level: options.logLevel, sink: options.logSink ?? DefaultLogSink())
+      .with("clientID", clientID)
     self.clientSchema = schema.clientSchema
     self.clientToServer = NameMapper.clientToServer(schema)
 
@@ -207,7 +219,9 @@ final class Engine {
       clientID: clientID, schema: schema, scheduler: scheduler,
       apply: { [weak self] poke in try self?.applyPoke(poke) },
       onApplied: { [weak self] poke in
-        guard let self, let lmid = poke.lastMutationIDChanges[self.clientID] else { return }
+        guard let self else { return }
+        defer { self.settlePendingWaiters() }
+        guard let lmid = poke.lastMutationIDChanges[self.clientID] else { return }
         try self.mutationTracker.lmidAdvanced(lmid)
       },
       onPokeError: { [weak self] message in self?.onPokeError(message) })
@@ -223,7 +237,10 @@ final class Engine {
     }
     database.onWriteFailure = { [weak self] failure in self?.storageFailed(failure) }
     if let openFailure {
-      loop.microtask { [weak self] in self?.storageFailed(openFailure) }
+      log.warn(
+        "Local store storage failed (\(openFailure.kind.rawValue)) opening \(name); "
+          + "running this instance in memory: \(openFailure.message)")
+      loop.microtask { [weak self] in self?.storageFailed(openFailure, opening: true) }
     }
     startLifecycle()
 
@@ -300,6 +317,12 @@ final class Engine {
     let token = nextLoopToken()
     switch connectionManager.state.status {
     case .connecting, .disconnected:
+      guard visible else {
+        // Wait for the app to come back, or for a state change.
+        onVisibility(true, token) { [weak self] in self?.beginAttempt() }
+        onStateChange(token) { [weak self] state in self?.resumeAfterStateChange(state) }
+        return
+      }
       // The app is visible, which wins the race with a state change.
       loop.microtask { [weak self] in
         guard let self, self.loopToken == token else { return }
@@ -308,6 +331,9 @@ final class Engine {
     case .connected:
       waitWhileConnected(token)
     case .needsAuth, .error:
+      log.info(
+        "Run loop paused in \(connectionManager.state.status.rawValue) state. "
+          + "Call zero.connection.connect() to resume.")
       waitForConnectRequest(token)
     case .closed:
       return
@@ -320,6 +346,18 @@ final class Engine {
   /// (the `catch` of the JS run loop).
   private func loopFailed(_ error: ConnectionError) {
     let (transition, reason) = ConnectionTransition.of(error)
+    if !connectionManager.is(.connected), error.clientKind != .clientClosed {
+      // Only errors that stop the run loop are errors. Reconnects and auth
+      // failures are routine.
+      var level: LogLevel
+      switch transition {
+      case .error: level = .error
+      case .disconnected, .closed: level = .info
+      case .none, .needsAuth: level = .warn
+      }
+      if error.serverKind == .clientNotFound { level = .warn }
+      log(level, "Failed to connect: \(error.message)")
+    }
     var backoffMs = runLoopIntervalMs
     var sleepMs: Double?
     switch transition {
@@ -343,10 +381,12 @@ final class Engine {
     }
     let token = nextLoopToken()
     if let sleepMs, sleepMs > 0 {
-      _ = scheduler.schedule(after: sleepMs) { [weak self] in
+      let timer = scheduler.schedule(after: sleepMs) { [weak self] in
         guard let self, self.loopToken == token else { return }
+        self.backoff = nil
         self.iterate()
       }
+      backoff = (token, timer)
     } else {
       loop.microtask { [weak self] in
         guard let self, self.loopToken == token else { return }
@@ -408,6 +448,19 @@ final class Engine {
       guard let self, self.loopToken == token else { return }
       self.ping(token, end)
     }
+    pingNow = { [weak self] in
+      guard let self, self.loopToken == token else { return }
+      timer?.cancel()
+      self.ping(token, end)
+    }
+    onVisibility(false, token) { [weak self] in
+      guard let self else { return }
+      timer?.cancel()
+      self.disconnect(
+        .client(.hidden, message: "Connection closed because tab was hidden"))
+      end()
+      self.iterate()
+    }
     onStateChange(token) { [weak self] state in
       end()
       self?.resumeAfterStateChange(state)
@@ -445,6 +498,97 @@ final class Engine {
       self.iterate()
     }
     onStateChange(token) { [weak self] _ in self?.iterate() }
+  }
+
+  // MARK: - The app's lifecycle
+
+  /// The run loop's backoff before it reconnects.
+  private var backoff: (token: Int, timer: any ScheduledTimer)?
+  /// Pings the server now, when the run loop waits while connected.
+  private var pingNow: () -> Void = {}
+  /// Trails the app's visibility by `hiddenDisconnectDelayMs` when it goes
+  /// to the background (`DocumentVisibilityWatcher`).
+  private(set) var visible = true
+  private var hiddenTimer: (any ScheduledTimer)?
+  private var visibilityWaiters: [(visible: Bool, token: Int, waiter: () -> Void)] = []
+  private var pendingWaiters: [() -> Void] = []
+
+  /// The app came to the foreground, or went to the background. In the
+  /// background the client disconnects and waits to come back.
+  func setVisible(_ visible: Bool) {
+    hiddenTimer?.cancel()
+    hiddenTimer = nil
+    if visible {
+      setVisibilityState(true)
+    } else {
+      hiddenTimer = scheduler.schedule(after: options.hiddenDisconnectDelayMs) { [weak self] in
+        self?.hiddenTimer = nil
+        self?.setVisibilityState(false)
+      }
+    }
+  }
+
+  private func setVisibilityState(_ visible: Bool) {
+    guard visible != self.visible else { return }
+    self.visible = visible
+    let ready = visibilityWaiters.filter { $0.visible == visible }
+    visibilityWaiters.removeAll { $0.visible == visible }
+    for w in ready { w.waiter() }
+  }
+
+  /// Calls `body` in a microtask once the app's visibility is `visible`,
+  /// unless the run loop's wait `token` is over by then.
+  private func onVisibility(_ visible: Bool, _ token: Int, _ body: @escaping () -> Void) {
+    let waiter: () -> Void = { [weak self] in
+      self?.loop.microtask {
+        guard let self, self.loopToken == token else { return }
+        // The wait is over: a state change no longer ends it.
+        _ = self.nextLoopToken()
+        body()
+      }
+    }
+    if self.visible == visible {
+      waiter()
+    } else {
+      visibilityWaiters.removeAll { $0.token != loopToken }
+      visibilityWaiters.append((visible, token, waiter))
+    }
+  }
+
+  /// The network may be back: retry now instead of after the backoff, and
+  /// check that an open connection still works.
+  func reconnectNow() {
+    if let backoff, backoff.token == loopToken {
+      backoff.timer.cancel()
+      self.backoff = nil
+      iterate()
+    } else if connectionManager.is(.connected) {
+      pingNow()
+    }
+  }
+
+  /// Calls `done` once the server has confirmed every pending mutation, or
+  /// right away when it can't: the client isn't connected, or the group is
+  /// disabled.
+  func whenPendingSettled(_ done: @escaping () -> Void) {
+    if store.pending.isEmpty || !connectionManager.is(.connected) || clientGroupDisabled
+      || repClosed
+    {
+      done()
+      return
+    }
+    pendingWaiters.append(done)
+  }
+
+  private func settlePendingWaiters() {
+    guard !pendingWaiters.isEmpty else { return }
+    if store.pending.isEmpty || !connectionManager.is(.connected) || clientGroupDisabled
+      || repClosed
+    {
+      let waiters = pendingWaiters
+      pendingWaiters = []
+      for w in waiters { w() }
+    }
   }
 
   // MARK: - Connecting
@@ -535,6 +679,12 @@ final class Engine {
     if secProtocol.utf8.count > options.maxHeaderLength {
       secProtocol = SecProtocols.encode(initConnection: nil, authToken: authToken)
       queriesPatch = nil
+      if secProtocol.utf8.count > options.maxHeaderLength {
+        log.warn(
+          "Encoded auth token length (\(secProtocol.utf8.count)) exceeds "
+            + "ZeroOptions.maxHeaderLength (\(options.maxHeaderLength)). This may "
+            + "cause connection failures.")
+      }
     } else {
       deleted = nil
     }
@@ -630,6 +780,13 @@ final class Engine {
   ) {
     guard handle === socket else { return }
     loop.dispatch {
+      // 1005 and 1006 are how platforms report a close without a frame.
+      if code <= 1001 || code == 1005 || code == 1006 {
+        log.info("Got socket close event: code=\(code) reason=\(reason) wasClean=\(wasClean)")
+      } else {
+        log.error(
+          "Got unexpected socket close event: code=\(code) reason=\(reason) wasClean=\(wasClean)")
+      }
       if code == 1009 {
         var message =
           "A WebSocket message exceeded the server message size limit. "
@@ -643,7 +800,7 @@ final class Engine {
         }
         disconnect(.client(.invalidMessage, message: message))
         disableClientGroup()
-        loop.microtask { [weak self] in self?.options.onClientStateNotFound?() }
+        loop.microtask { [weak self] in self?.clientStateNotFound() }
       } else {
         disconnect(
           wasClean
@@ -707,6 +864,9 @@ final class Engine {
         database.confirmDeletedClients(
           clientIDs: body.clientIDs ?? [], clientGroupIDs: body.clientGroupIDs ?? [])
       case .pushResponse(let body):
+        if case .error = body {
+          log.error("Received an error response when pushing mutations: \(body.json)")
+        }
         try mutationTracker.processPushResponse(body)
       case .transformError(let errors):
         queryManager.handleTransformErrors(errors)
@@ -752,25 +912,31 @@ final class Engine {
   private func handleErrorMessage(_ body: ErrorBody) {
     if body.kind == .mutationRateLimited {
       lastMutationIDsSent.removeAll()
+      log.error("\(body.kind.rawValue) Mutation rate limited: \(body.message)")
       return
     }
-    disconnect(.server(body))
+    // Being sent elsewhere or later, a lost client group (which recovers),
+    // and auth failures are routine; every other kind ends the connection.
+    let error = ConnectionError.server(body)
+    let routine = error.backoff != nil || body.kind == .clientNotFound || error.isAuthError
+    log(routine ? .warn : .error, "\(body.kind.rawValue):\n\n\(body.message)")
+    disconnect(error)
     switch body.kind {
     case .versionNotSupported:
-      options.onUpdateNeeded?(UpdateNeededReason(type: body.kind.rawValue, message: body.message))
+      updateNeeded(UpdateNeededReason(type: body.kind.rawValue, message: body.message))
     case .schemaVersionNotSupported:
       disableClientGroup()
       loop.microtask { [weak self] in
-        self?.options.onUpdateNeeded?(
+        self?.updateNeeded(
           UpdateNeededReason(type: "SchemaVersionNotSupported", message: body.message))
       }
     case .clientNotFound:
       disableClientGroup()
-      loop.microtask { [weak self] in self?.options.onClientStateNotFound?() }
+      loop.microtask { [weak self] in self?.clientStateNotFound() }
     case .invalidConnectionRequestLastMutationID, .invalidConnectionRequestBaseCookie:
       // The server is behind the replica: drop it.
       database.drop()
-      loop.microtask { [weak self] in self?.options.onClientStateNotFound?() }
+      loop.microtask { [weak self] in self?.clientStateNotFound() }
     default:
       break
     }
@@ -779,10 +945,12 @@ final class Engine {
   private func onPokeError(_ message: String) {
     guard !connectionManager.is(.disconnected) else { return }
     if message.contains("unexpected base cookie") {
+      log.debug("clearing due to \(message)")
       disconnect(
         .client(
           .unexpectedBaseCookie, message: "Server returned unexpected base cookie during sync"))
     } else {
+      log.error("clearing due to unexpected poke error: \(message)")
       disconnect(.client(.internal, message: "Poke processing error: \(message)"))
     }
   }
@@ -801,10 +969,33 @@ final class Engine {
   func connect(auth: String??) {
     if case .some(let auth) = auth { setAuth(auth) }
     if case .disconnected(let r) = connectionManager.state, r.clientKind == .noSocketOrigin {
+      log.error(
+        "connect() called but the connection is disconnected due to a missing cacheURL. "
+          + "No reconnect will be attempted.")
       return
     }
     guard connectionManager.isInTerminalState else { return }
     connectionManager.requestConnect()
+  }
+
+  /// What `Zero` does when the client can't sync any longer: by default
+  /// `ZeroOptions.onClientStateNotFound`.
+  var onClientStateNotFound: (() -> Void)?
+  /// What `Zero` does when the app must be updated to sync, besides calling
+  /// `ZeroOptions.onUpdateNeeded`.
+  var onUpdateNeeded: ((UpdateNeededReason) -> Void)?
+
+  private func clientStateNotFound() {
+    if let onClientStateNotFound {
+      onClientStateNotFound()
+    } else {
+      options.onClientStateNotFound?()
+    }
+  }
+
+  private func updateNeeded(_ reason: UpdateNeededReason) {
+    onUpdateNeeded?(reason)
+    options.onUpdateNeeded?(reason)
   }
 
   // MARK: - Close
@@ -841,7 +1032,7 @@ final class Engine {
       scheduler.scheduleRepeating(every: Self.heartbeatIntervalMs) { [weak self] in
         guard let self else { return }
         if !self.database.heartbeat(self.clientID, now: self.scheduler.now) {
-          self.options.onClientStateNotFound?()
+          self.clientStateNotFound()
         }
       },
       scheduler.scheduleRepeating(every: Self.gcIntervalMs) { [weak self] in
@@ -895,9 +1086,15 @@ final class Engine {
 
   private var storageFailureReported = false
 
-  private func storageFailed(_ failure: StorageFailure) {
+  private func storageFailed(_ failure: StorageFailure, opening: Bool = false) {
     guard !storageFailureReported else { return }
     storageFailureReported = true
+    if !opening {
+      // A full or failing disk is the device's condition, not a defect.
+      log.warn(
+        "Local store storage failed (\(failure.kind.rawValue)); persistence is stopped for "
+          + "this instance: \(failure.message)")
+    }
     options.onStorageFailure?(failure)
   }
 
@@ -905,6 +1102,7 @@ final class Engine {
 
   /// `MutatorProxy#onConnectionStateChange`.
   private func onConnectionStateChange(_ state: ConnectionManager.State) {
+    defer { settlePendingWaiters() }
     switch state {
     case .disconnected(let r) where r.clientKind == .noSocketOrigin:
       mutationRejection = nil
@@ -921,6 +1119,9 @@ final class Engine {
     let client = Deferred<MutationOutcome>()
     let server = Deferred<MutationOutcome>()
     if let rejection = mutationRejection {
+      log.warn(
+        "Mutation \"\(name)\" rejected because Zero is \(rejection.stateDescription). "
+          + "Details: \(rejection.message).")
       client.resolve(.zeroError(message: rejection.message))
       server.resolve(.zeroError(message: rejection.message))
       return MutatorResult(client: client, server: server)
@@ -931,10 +1132,14 @@ final class Engine {
       )
     }
     let (ephemeralID, tracked) = mutationTracker.trackMutation()
+    let log = self.log
     tracked.onSettle { result in
       switch result {
       case .success(let data): server.resolve(.success(data: data))
-      case .failure(let error): server.resolve(Self.outcome(error))
+      case .failure(let error):
+        let outcome = Self.outcome(error)
+        Self.logFailure(log, name, outcome, on: "server")
+        server.resolve(outcome)
       }
     }
     let mutationID = store.nextMutationID(for: clientID)
@@ -949,7 +1154,9 @@ final class Engine {
       result = try mutator(tx, args)
     } catch {
       mutationTracker.rejectMutation(ephemeralID, error)
-      client.resolve(Self.outcome(error))
+      let outcome = Self.outcome(error)
+      Self.logFailure(log, name, outcome, on: "client")
+      client.resolve(outcome)
       return MutatorResult(client: client, server: server)
     }
     let pending = ReplicaStore.PendingMutation(
@@ -977,6 +1184,16 @@ final class Engine {
     if let e = error as? ConnectionError, e.isZeroError { return .zeroError(message: e.message) }
     let app = ApplicationError.wrapping(error)
     return .appError(message: app.message, details: app.details)
+  }
+
+  static func logFailure(_ log: Log, _ name: String, _ outcome: MutationOutcome, on origin: String)
+  {
+    switch outcome {
+    case .zeroError(let message): log.error("Mutator \"\(name)\" error on \(origin): \(message)")
+    case .appError(let message, _):
+      log.error("Mutator \"\(name)\" app error on \(origin): \(message)")
+    case .success: break
+    }
   }
 
   /// The store watches: the mutation tracker on `m/<clientID>/`, then the

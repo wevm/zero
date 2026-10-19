@@ -38,8 +38,16 @@ public struct ViewEntry: Sendable {
   }
 }
 
+extension ViewEntry: Equatable {
+  /// Equal rows with equal relationships. How many edges reach the row
+  /// doesn't matter.
+  public static func == (a: ViewEntry, b: ViewEntry) -> Bool {
+    a.row == b.row && a.relationships == b.relationships
+  }
+}
+
 /// A relationship in a view: several rows, or at most one.
-public enum ViewValue: Sendable {
+public enum ViewValue: Sendable, Equatable {
   case many([ViewEntry])
   case one(ViewEntry?)
 

@@ -76,6 +76,15 @@ public enum ConnectionError: Error, Sendable, Hashable, CustomStringConvertible 
     return false
   }
 
+  /// How a rejected mutation describes the client (`getStateDescription`).
+  var stateDescription: String {
+    switch clientKind {
+    case .offline?: "offline"
+    case .clientClosed?: "closed"
+    default: "in error state"
+    }
+  }
+
   /// `getBackoffParams`.
   var backoff: BackoffErrorBody? {
     if isZeroError, case .server(.backoff(let b)) = self { return b }

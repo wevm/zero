@@ -16,9 +16,34 @@ public protocol Transport: Sendable {
 /// An open WebSocket.
 public protocol Socket: AnyObject, Sendable {
   func send(_ message: SocketMessage) async throws
-  /// The next message, or nil once the socket has closed.
+  /// The next message, or nil once the socket has closed cleanly. Throws
+  /// `SocketClosed` to report how it closed otherwise; any other error is
+  /// an abrupt close.
   func receive() async throws -> SocketMessage?
   func close(code: Int, reason: String) async
+}
+
+/// How a socket closed: the close frame's code and reason, and whether the
+/// closing handshake completed (the browser `CloseEvent`).
+public struct SocketClosed: Error, Sendable, Hashable {
+  public var code: Int
+  public var reason: String
+  public var wasClean: Bool
+
+  public init(code: Int, reason: String, wasClean: Bool) {
+    self.code = code
+    self.reason = reason
+    self.wasClean = wasClean
+  }
+
+  /// `error` as a close: itself, or an abrupt close (1006).
+  public init(_ error: any Error) {
+    if let closed = error as? SocketClosed {
+      self = closed
+    } else {
+      self.init(code: 1006, reason: String(describing: error), wasClean: false)
+    }
+  }
 }
 
 /// The query parameters of the sync connect URL, in the order JS sets them
