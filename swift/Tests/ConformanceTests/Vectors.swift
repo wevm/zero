@@ -1,4 +1,5 @@
 import Foundation
+import Zero
 
 /// Locates and decodes the vector files in `packages/zero-conformance/vectors`.
 ///
@@ -21,6 +22,24 @@ enum Vectors {
 
   static var available: Bool { directory != nil }
 
+  /// `packages/zero-conformance/generated`: seeded fuzz corpora that are not
+  /// checked in. Run `pnpm run generate` there (CI does) to create them.
+  static let generatedDirectory: URL? = {
+    guard let directory else { return nil }
+    let url = directory.deletingLastPathComponent().appendingPathComponent(
+      "generated", isDirectory: true)
+    return FileManager.default.fileExists(atPath: url.path) ? url : nil
+  }()
+
+  static var generatedAvailable: Bool { generatedDirectory != nil }
+
+  static func generatedCases(_ name: String) throws -> [JSONValue] {
+    guard let generatedDirectory else { throw VectorError.missingDirectory }
+    let data = try Data(contentsOf: generatedDirectory.appendingPathComponent("\(name).json"))
+    let file = try JSONParser.parse(Array(data))
+    return file["cases"]?.arrayValue ?? []
+  }
+
   struct File<Case: Decodable>: Decodable {
     let formatVersion: Int
     let kind: String
@@ -38,6 +57,17 @@ enum Vectors {
       throw VectorError.unsupportedFormat(name: name, version: file.formatVersion)
     }
     return file.cases
+  }
+
+  /// The cases of a vector file parsed with the client's own JSON parser,
+  /// for vectors that carry arbitrary JSON values.
+  static func cases(_ name: String) throws -> [JSONValue] {
+    let file = try JSONParser.parse(Array(try data(name)))
+    guard file["formatVersion"] == .number(Double(supportedFormatVersion)) else {
+      throw VectorError.unsupportedFormat(
+        name: name, version: Int(file["formatVersion"]?.numberValue ?? -1))
+    }
+    return file["cases"]?.arrayValue ?? []
   }
 
   /// Raw bytes of a vector file, for suites that decode it with the client's

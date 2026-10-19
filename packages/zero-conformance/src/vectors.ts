@@ -1,4 +1,4 @@
-import {readFileSync, writeFileSync} from 'node:fs';
+import {mkdirSync, readFileSync, writeFileSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {expect} from 'vitest';
 
@@ -9,6 +9,7 @@ import {expect} from 'vitest';
 export const VECTOR_FORMAT_VERSION = 1;
 
 const vectorsDir = fileURLToPath(new URL('../vectors/', import.meta.url));
+const generatedDir = fileURLToPath(new URL('../generated/', import.meta.url));
 
 export const updateVectors = process.env['UPDATE_VECTORS'] === '1';
 
@@ -55,4 +56,25 @@ export function emitVectors<T>(
     existing,
     `vectors/${name}.json is stale. Run \`pnpm run generate\` in packages/zero-conformance.`,
   ).toBe(text);
+}
+
+/**
+ * Writes `generated/<name>.json`, which is not checked in. For large seeded
+ * fuzz corpora: CI regenerates them before running the Swift suites, so
+ * they are always current and never need a staleness check.
+ */
+export function emitGeneratedVectors<T>(
+  name: string,
+  kind: string,
+  description: string,
+  cases: T[],
+): void {
+  const file: VectorFile<T> = {
+    formatVersion: VECTOR_FORMAT_VERSION,
+    kind,
+    description,
+    cases,
+  };
+  mkdirSync(generatedDir, {recursive: true});
+  writeFileSync(generatedDir + name + '.json', JSON.stringify(file) + '\n');
 }
