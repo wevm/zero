@@ -11,7 +11,7 @@ const update = process.env['UPDATE_GENERATED'] === '1';
  * The Swift tests compile and run these generated files, so they are checked
  * in; this keeps them current with the generator and the schemas.
  */
-const fixtures: {name: string; config: Config}[] = [
+const fixtures: {name: string; dir?: string; config: Config}[] = [
   {
     name: 'zql test schema',
     config: {
@@ -53,12 +53,19 @@ const fixtures: {name: string; config: Config}[] = [
       tables: {project: {columns: {position: {type: 'int'}}}},
     },
   },
+  {
+    name: 'zbugs schema',
+    dir: 'apps/zbugs-swift/',
+    config: JSON.parse(
+      readFileSync(repo + 'apps/zbugs-swift/zero-swift.json', 'utf8'),
+    ) as Config,
+  },
 ];
 
-for (const {name, config} of fixtures) {
+for (const {name, dir = '', config} of fixtures) {
   test(`generated Swift for the ${name} is current`, async () => {
-    const swift = await codegenFile(config, repo);
-    const path = repo + config.output;
+    const swift = await codegenFile(config, repo + dir);
+    const path = repo + dir + config.output;
     if (update) {
       writeFileSync(path, swift);
     }

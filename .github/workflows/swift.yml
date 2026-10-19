@@ -41,8 +41,9 @@ jobs:
       # writes the seeded fuzz corpora (generated/), which aren't checked in.
       - name: Check vectors are current
         run: pnpm --filter zero-conformance run test
-      # The Swift tests compile the Swift that zero-swift generates.
-      - name: Check generated Swift is current
+      # The Swift tests compile the Swift that zero-swift generates, and check
+      # the Swift ports of apps against the drift vectors it records.
+      - name: Check generated Swift and drift vectors are current
         run: pnpm --filter zero-swift run test
       - name: Check types
         run: pnpm --filter zero-conformance --filter zero-swift run check-types
@@ -76,6 +77,15 @@ jobs:
         run: swift build --build-tests
       - name: Test
         run: swift test --skip-build
+      # zbugs' Swift port, checked against zbugs' TS queries and mutators on
+      # the samples in drift-samples.ts (the vectors job checks the record is
+      # current).
+      - name: zbugs
+        working-directory: apps/zbugs-swift
+        run: |
+          swift format lint --strict --recursive Sources Tests Package.swift
+          swift build --build-tests
+          swift test --skip-build
 
   e2e:
     name: Swift end-to-end (Linux)
