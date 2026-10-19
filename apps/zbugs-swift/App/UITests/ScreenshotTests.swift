@@ -58,7 +58,9 @@ final class ScreenshotTests: XCTestCase {
       back(app)
     }
     #if os(macOS)
-      let listPicker = app.popUpButtons["List"]
+      // The pop-up button has no label; its title is a text beside it.
+      let listPicker = app.popUpButtons.matching(NSPredicate(format: "value == 'SwiftUI'"))
+        .firstMatch
       let native = app.menuItems["AppKit"]
     #else
       // A menu picker's label is its title and its value.
@@ -134,6 +136,8 @@ final class ScreenshotTests: XCTestCase {
   /// The screen on iOS, the window and its sheets on macOS.
   @MainActor
   private func snapshot(_ app: XCUIApplication, _ name: String) {
+    // On an iPad in landscape, a PNG of the portrait screen's pixels with an
+    // EXIF orientation that most viewers apply.
     #if os(macOS)
       let screenshot = app.windows.firstMatch.screenshot()
     #else

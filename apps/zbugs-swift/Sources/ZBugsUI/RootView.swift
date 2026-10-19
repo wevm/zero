@@ -49,6 +49,10 @@
       NavigationSplitView(columnVisibility: $columns, preferredCompactColumn: $compactColumn) {
         Sidebar(filter: $filter, listLayer: $listLayer)
           .navigationTitle("Zero Bugs")
+          #if os(macOS)
+            // Wide enough for the pickers' values.
+            .navigationSplitViewColumnWidth(min: 220, ideal: 240)
+          #endif
           #if os(iOS)
             .toolbar {
               // The columns don't report the window's size class.
@@ -62,6 +66,9 @@
       } content: {
         list
           .navigationTitle(filter.status.title + " Issues")
+          #if os(macOS)
+            .navigationSplitViewColumnWidth(min: 280, ideal: 340)
+          #endif
           .searchable(text: $filter.text, prompt: "Search issues")
           .toolbar { toolbar }
       } detail: {
