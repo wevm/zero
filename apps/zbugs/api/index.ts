@@ -117,6 +117,13 @@ fastify.get<{
     .setExpirationTime('30days')
     .sign(privateJwk);
 
+  // The Swift app (apps/zbugs-swift) logs in through a web authentication
+  // session, which can't read the cookie, so its callback carries the token.
+  if (request.query.redirect === nativeAppRedirect) {
+    reply.redirect(`${nativeAppRedirect}?jwt=${encodeURIComponent(jwt)}`);
+    return;
+  }
+
   reply
     .cookie('jwt', jwt, {
       path: '/',
@@ -128,6 +135,8 @@ fastify.get<{
       request.query.redirect ? decodeURIComponent(request.query.redirect) : '/',
     );
 });
+
+const nativeAppRedirect = 'zbugs-swift://auth';
 
 async function withAuth<T extends {headers: IncomingHttpHeaders}>(
   request: T,
