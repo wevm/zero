@@ -5,7 +5,8 @@ name: Swift (macOS)
 
 on:
   push:
-    branches: [main]
+    # swift-client is the development branch until the client lands on main.
+    branches: [main, swift-client]
     paths:
       - 'swift/**'
       - 'packages/zero-conformance/**'
