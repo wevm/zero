@@ -283,7 +283,13 @@ zql.issue
 - Key paths map to columns through the generated table descriptors.
 - Generated row structs carry optional relationship properties (for example
   `comments: [Comment]?`) that are filled only when `related` requested them.
+  One relationships are stored through `@Indirect`, so two tables can refer to
+  each other without their structs containing each other.
 - `one()` returns `Row?`.
+- Comparing with `nil` (`where(\.assignee, nil)`, `$0.assignee == nil`) uses
+  `IS`, since `= NULL` matches nothing. An explicit `.eq` keeps `=`.
+- The typed builder wraps `AnyQuery`, the untyped port of `QueryImpl`, which
+  the IVM vectors check against JS.
 
 ### Mutate, errors, auth, logging
 
