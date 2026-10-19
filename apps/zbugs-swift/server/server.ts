@@ -17,7 +17,8 @@
  *   ZBUGS_DB         database to (re)create (default zbugs_swift)
  *   ZBUGS_SEED       seed data directory in apps/zbugs/db/seed-data
  *                    (default github)
- *   ZBUGS_HOST       interface to listen on (default 127.0.0.1)
+ *   ZBUGS_HOST       interface to listen on (default 127.0.0.1); 0.0.0.0
+ *                    serves the network too, for an app on a device
  *   ZBUGS_PORT       zero-cache port (default 4848)
  *   ZBUGS_API_PORT   API server port (default 5173)
  *   ZBUGS_DIR        working directory for the replica (default a temp dir)
@@ -25,7 +26,7 @@
 import {execFileSync, spawn} from 'node:child_process';
 import {mkdtempSync, readdirSync} from 'node:fs';
 import {registerHooks} from 'node:module';
-import {tmpdir} from 'node:os';
+import {networkInterfaces, tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import {createJwkPair} from '../../../packages/zero-cache/src/auth/jwt.ts';
@@ -35,6 +36,9 @@ const adminURL =
   env['ZBUGS_PG'] ?? 'postgresql://postgres@127.0.0.1:5432/postgres';
 const dbName = env['ZBUGS_DB'] ?? 'zbugs_swift';
 const host = env['ZBUGS_HOST'] ?? '127.0.0.1';
+const everywhere = host === '0.0.0.0';
+/** Where this script reaches the servers. */
+const localHost = everywhere ? '127.0.0.1' : host;
 const port = Number(env['ZBUGS_PORT'] ?? 4848);
 const apiPort = Number(env['ZBUGS_API_PORT'] ?? 5173);
 const workDir = env['ZBUGS_DIR'] ?? mkdtempSync(join(tmpdir(), 'zbugs-swift-'));
@@ -49,13 +53,21 @@ const upstreamURL = (() => {
 
 /**
  * The API URLs zero-cache may forward to: clients send the URL they know
- * the API server by, which on this machine can be either loopback name.
+ * the API server by. On this machine that can be either loopback name; on a
+ * device, any of this machine's network addresses.
  */
 function apiURLs(path: string) {
   const hosts =
-    host === '127.0.0.1' || host === 'localhost'
+    localHost === '127.0.0.1' || localHost === 'localhost'
       ? ['127.0.0.1', 'localhost']
-      : [host];
+      : [localHost];
+  if (everywhere) {
+    for (const address of Object.values(networkInterfaces()).flat()) {
+      if (address?.family === 'IPv4' && !address.internal) {
+        hosts.push(address.address);
+      }
+    }
+  }
   return hosts.map(h => `http://${h}:${apiPort}/api/${path}`).join(',');
 }
 
@@ -170,7 +182,7 @@ process.on('SIGTERM', () => stop(0));
 
 for (let i = 0; ; i++) {
   try {
-    const res = await fetch(`http://${host}:${port}/`);
+    const res = await fetch(`http://${localHost}:${port}/`);
     if (res.ok) {
       break;
     }
@@ -195,4 +207,6 @@ const token = execFileSync(
   },
 ).trim();
 process.stdout.write(`token ${token}\n`);
-process.stdout.write(`ready ws://${host}:${port} http://${host}:${apiPort}\n`);
+process.stdout.write(
+  `ready ws://${localHost}:${port} http://${localHost}:${apiPort}\n`,
+);

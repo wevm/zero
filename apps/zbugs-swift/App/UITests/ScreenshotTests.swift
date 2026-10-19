@@ -2,7 +2,8 @@ import XCTest
 
 /// Drives the app against zbugs' backend (`server/server.ts`) and keeps a
 /// screenshot of each screen, which CI uploads. `ZBUGS_TOKEN` is a token for
-/// the seeded crew user; xcodebuild passes `TEST_RUNNER_ZBUGS_TOKEN` as it.
+/// the seeded crew user; xcodebuild passes `TEST_RUNNER_ZBUGS_TOKEN` as it,
+/// and likewise `ZBUGS_CACHE_URL` and `ZBUGS_API_URL` when they're set.
 ///
 /// A step whose screen doesn't appear records a failure, with the app's
 /// accessibility tree, and the test goes on, so one run shows every screen
@@ -10,8 +11,8 @@ import XCTest
 final class ScreenshotTests: XCTestCase {
   @MainActor
   func testScreens() throws {
-    let token = try XCTUnwrap(
-      ProcessInfo.processInfo.environment["ZBUGS_TOKEN"], "Set TEST_RUNNER_ZBUGS_TOKEN")
+    let environment = ProcessInfo.processInfo.environment
+    let token = try XCTUnwrap(environment["ZBUGS_TOKEN"], "Set TEST_RUNNER_ZBUGS_TOKEN")
     #if os(iOS)
       if UIDevice.current.userInterfaceIdiom == .pad {
         XCUIDevice.shared.orientation = .landscapeLeft
@@ -19,6 +20,10 @@ final class ScreenshotTests: XCTestCase {
     #endif
     let app = XCUIApplication()
     app.launchEnvironment["ZBUGS_TOKEN"] = token
+    // On a device, the backend's network address.
+    for key in ["ZBUGS_CACHE_URL", "ZBUGS_API_URL"] {
+      app.launchEnvironment[key] = environment[key]
+    }
     app.launch()
 
     // The issue list, once zero-cache has synced it.

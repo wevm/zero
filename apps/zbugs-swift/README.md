@@ -60,7 +60,11 @@ TEST_RUNNER_ZBUGS_TOKEN=<token> xcodebuild test -project App/ZBugs.xcodeproj \
   -scheme ZBugsApp -destination 'platform=iOS Simulator,name=iPhone 17'
 ```
 
-On macOS the destination is `platform=macOS`.
+On macOS the destination is `platform=macOS`. On an iPhone or an iPad, start
+the backend with `ZBUGS_HOST=0.0.0.0` so the device can reach it, and pass
+its address on this Mac's network as well, for example
+`TEST_RUNNER_ZBUGS_CACHE_URL=http://192.168.1.20:4848` and
+`TEST_RUNNER_ZBUGS_API_URL=http://192.168.1.20:5173`.
 
 The app reads `ZBUGS_TOKEN`, `ZBUGS_CACHE_URL`, and `ZBUGS_API_URL` from its
 environment as well; they override the saved login and servers.
