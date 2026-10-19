@@ -41,10 +41,13 @@ final class IVMBranch {
       }
       switch op {
       case .del(_, let old):
-        source.push(.remove(old.objectValue ?? [:]))
+        source.push(.remove(Row(old.objectValue ?? [:], layout: source.layout)))
         i += 1
       case .change(_, let old, let new):
-        source.push(.edit(new.objectValue ?? [:], oldRow: old.objectValue ?? [:]))
+        source.push(
+          .edit(
+            Row(new.objectValue ?? [:], layout: source.layout),
+            oldRow: Row(old.objectValue ?? [:], layout: source.layout)))
         i += 1
       case .add:
         let tablePrefix = prefix + name + "/"
@@ -52,7 +55,7 @@ final class IVMBranch {
         while i < diff.count, case .add(let key, let value) = diff[i],
           key.utf8.starts(with: tablePrefix.utf8)
         {
-          rows.append(value.objectValue ?? [:])
+          rows.append(Row(value.objectValue ?? [:], layout: source.layout))
           i += 1
         }
         source.pushAdds(rows)

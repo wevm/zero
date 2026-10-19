@@ -138,6 +138,11 @@ public struct AnyQuery: Sendable {
   }
 
   public func start(_ row: Row, inclusive: Bool = false) -> AnyQuery {
+    start(row.dictionary, inclusive: inclusive)
+  }
+
+  /// Starts after the row with these columns, or at it when `inclusive`.
+  public func start(_ row: [String: JSONValue], inclusive: Bool = false) -> AnyQuery {
     var ast = self.ast
     ast.start = AST.Bound(row: row, exclusive: !inclusive)
     return with(ast: ast)

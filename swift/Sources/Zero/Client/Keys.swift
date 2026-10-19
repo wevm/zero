@@ -19,8 +19,20 @@ package enum Keys {
   package static func primaryKeyString(
     table: String, primaryKey: [String], row: Row
   ) throws(InvalidPrimaryKeyValue) -> String {
+    try primaryKeyString(table: table, primaryKey: primaryKey) { row[$0] }
+  }
+
+  package static func primaryKeyString(
+    table: String, primaryKey: [String], row: RowRecord
+  ) throws(InvalidPrimaryKeyValue) -> String {
+    try primaryKeyString(table: table, primaryKey: primaryKey) { row[$0] }
+  }
+
+  private static func primaryKeyString(
+    table: String, primaryKey: [String], value: (String) -> JSONValue?
+  ) throws(InvalidPrimaryKeyValue) -> String {
     func scalar(_ column: String) throws(InvalidPrimaryKeyValue) -> JSONValue {
-      let v = row[column]
+      let v = value(column)
       switch v {
       case .string?, .number?, .bool?: return v!
       default: throw InvalidPrimaryKeyValue(column: column, value: v)

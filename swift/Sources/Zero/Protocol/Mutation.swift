@@ -5,10 +5,10 @@ package let crudMutationName = "_zero_crud"
 /// One operation of a CRUD mutation (`crudOpSchema` in
 /// `packages/zero-protocol/src/mutation.ts`).
 package enum CRUDOp: Sendable, Hashable, JSONCodable {
-  case insert(tableName: String, primaryKey: [String], value: Row)
-  case upsert(tableName: String, primaryKey: [String], value: Row)
+  case insert(tableName: String, primaryKey: [String], value: RowRecord)
+  case upsert(tableName: String, primaryKey: [String], value: RowRecord)
   /// `value` is a partial row with at least the primary key columns.
-  case update(tableName: String, primaryKey: [String], value: Row)
+  case update(tableName: String, primaryKey: [String], value: RowRecord)
   /// `value` holds the primary key columns.
   case delete(tableName: String, primaryKey: [String], value: PrimaryKeyValueRecord)
 
@@ -43,7 +43,7 @@ package enum CRUDOp: Sendable, Hashable, JSONCodable {
   }
 
   package var json: JSONValue {
-    let (op, tableName, primaryKey, value): (String, String, [String], Row) =
+    let (op, tableName, primaryKey, value): (String, String, [String], RowRecord) =
       switch self {
       case .insert(let t, let pk, let v): ("insert", t, pk, v)
       case .upsert(let t, let pk, let v): ("upsert", t, pk, v)

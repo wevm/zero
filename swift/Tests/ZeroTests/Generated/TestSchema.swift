@@ -64,12 +64,12 @@ public struct Issue: ZeroRow, Codable, Hashable, Identifiable {
   ]
 
   public init(entry: ViewEntry) throws(ZeroValueError) {
-    id = try entry.column("id")
-    title = try entry.column("title")
-    description = try entry.column("description")
-    closed = try entry.column("closed")
-    ownerId = try entry.column("ownerId")
-    createdAt = try entry.column("createdAt")
+    id = try entry.column("id", 0)
+    title = try entry.column("title", 1)
+    description = try entry.column("description", 2)
+    closed = try entry.column("closed", 3)
+    ownerId = try entry.column("ownerId", 4)
+    createdAt = try entry.column("createdAt", 5)
     owner = try entry.relationship("owner")
     comments = try entry.relationship("comments")
     oneComment = try entry.relationship("oneComment")
@@ -122,9 +122,9 @@ public struct User: ZeroRow, Codable, Hashable, Identifiable {
   ]
 
   public init(entry: ViewEntry) throws(ZeroValueError) {
-    id = try entry.column("id")
-    name = try entry.column("name")
-    metadata = try entry.column("metadata")
+    id = try entry.column("id", 0)
+    name = try entry.column("name", 1)
+    metadata = try entry.column("metadata", 2)
     issues = try entry.relationship("issues")
   }
 
@@ -186,11 +186,11 @@ public struct Comment: ZeroRow, Codable, Hashable, Identifiable {
   ]
 
   public init(entry: ViewEntry) throws(ZeroValueError) {
-    id = try entry.column("id")
-    authorId = try entry.column("authorId")
-    issueId = try entry.column("issueId")
-    text = try entry.column("text")
-    createdAt = try entry.column("createdAt")
+    id = try entry.column("id", 0)
+    authorId = try entry.column("authorId", 1)
+    issueId = try entry.column("issueId", 2)
+    text = try entry.column("text", 3)
+    createdAt = try entry.column("createdAt", 4)
     issue = try entry.relationship("issue")
     revisions = try entry.relationship("revisions")
     author = try entry.relationship("author")
@@ -248,10 +248,10 @@ public struct Revision: ZeroRow, Codable, Hashable, Identifiable {
   ]
 
   public init(entry: ViewEntry) throws(ZeroValueError) {
-    id = try entry.column("id")
-    authorId = try entry.column("authorId")
-    commentId = try entry.column("commentId")
-    text = try entry.column("text")
+    id = try entry.column("id", 0)
+    authorId = try entry.column("authorId", 1)
+    commentId = try entry.column("commentId", 2)
+    text = try entry.column("text", 3)
     comment = try entry.relationship("comment")
     author = try entry.relationship("author")
   }
@@ -295,8 +295,8 @@ public struct Label: ZeroRow, Codable, Hashable, Identifiable {
   ]
 
   public init(entry: ViewEntry) throws(ZeroValueError) {
-    id = try entry.column("id")
-    name = try entry.column("name")
+    id = try entry.column("id", 0)
+    name = try entry.column("name", 1)
     issues = try entry.relationship("issues")
   }
 
@@ -330,8 +330,8 @@ public struct IssueLabel: ZeroRow, Codable, Hashable {
   public static let relationships: KeyPathNames<IssueLabel> = [:]
 
   public init(entry: ViewEntry) throws(ZeroValueError) {
-    issueId = try entry.column("issueId")
-    labelId = try entry.column("labelId")
+    issueId = try entry.column("issueId", 0)
+    labelId = try entry.column("labelId", 1)
   }
 
   public var columnValues: Row {

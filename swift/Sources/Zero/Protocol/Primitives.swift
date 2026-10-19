@@ -8,6 +8,10 @@ package typealias Version = String
 /// Each value is a string, number, or boolean.
 package typealias PrimaryKeyValueRecord = [String: JSONValue]
 
+/// A row as the protocol carries it (`rowSchema` in
+/// `packages/zero-protocol/src/data.ts`): a record of JSON values.
+package typealias RowRecord = [String: JSONValue]
+
 /// `packages/zero-protocol/src/mutation-id.ts`.
 package struct MutationID: Sendable, Hashable, JSONCodable {
   package var id: Double

@@ -71,7 +71,7 @@ package func bindStaticParameters(_ ast: AST, _ params: StaticQueryParameters?) 
     guard case .static(let anchor, let field) = v else { return v }
     guard let params else { preconditionFailure("Static query params do not exist") }
     let anchorValue: [String: JSONValue]? =
-      anchor == .authData ? params.authData : params.preMutationRow
+      anchor == .authData ? params.authData : params.preMutationRow?.dictionary
     guard let anchorValue else { return .literal(.null) }
     switch field {
     case .single(let f):

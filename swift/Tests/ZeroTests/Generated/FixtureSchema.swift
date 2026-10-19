@@ -56,13 +56,13 @@ public struct FxProject: ZeroRow, Codable, Hashable, Identifiable {
   ]
 
   public init(entry: ViewEntry) throws(ZeroValueError) {
-    id = try entry.column("id")
-    name = try entry.column("name")
-    `default` = try entry.column("default")
-    status = try entry.column("status")
-    settings = try entry.column("settings")
-    position = try entry.column("position")
-    archivedStatus = try entry.column("archivedStatus")
+    id = try entry.column("id", 0)
+    name = try entry.column("name", 1)
+    `default` = try entry.column("default", 2)
+    status = try entry.column("status", 3)
+    settings = try entry.column("settings", 4)
+    position = try entry.column("position", 5)
+    archivedStatus = try entry.column("archivedStatus", 6)
     queries = try entry.relationship("queries")
     people = try entry.relationship("people")
   }
@@ -117,10 +117,10 @@ public struct FxQuery: ZeroRow, Codable, Hashable, Identifiable {
   ]
 
   public init(entry: ViewEntry) throws(ZeroValueError) {
-    id = try entry.column("id")
-    projectID = try entry.column("projectID")
-    text = try entry.column("text")
-    `class` = try entry.column("class")
+    id = try entry.column("id", 0)
+    projectID = try entry.column("projectID", 1)
+    text = try entry.column("text", 2)
+    `class` = try entry.column("class", 3)
     project = try entry.relationship("project")
   }
 
@@ -160,9 +160,9 @@ public struct FxMember: ZeroRow, Codable, Hashable {
   public static let relationships: KeyPathNames<FxMember> = [:]
 
   public init(entry: ViewEntry) throws(ZeroValueError) {
-    projectID = try entry.column("projectID")
-    userID = try entry.column("userID")
-    role = try entry.column("role")
+    projectID = try entry.column("projectID", 0)
+    userID = try entry.column("userID", 1)
+    role = try entry.column("role", 2)
   }
 
   public var columnValues: Row {
@@ -200,9 +200,9 @@ public struct FxPerson: ZeroRow, Codable, Hashable, Identifiable {
   public static let relationships: KeyPathNames<FxPerson> = [:]
 
   public init(entry: ViewEntry) throws(ZeroValueError) {
-    id = try entry.column("id")
-    name = try entry.column("name")
-    nickname = try entry.column("nickname")
+    id = try entry.column("id", 0)
+    name = try entry.column("name", 1)
+    nickname = try entry.column("nickname", 2)
   }
 
   public var columnValues: Row {

@@ -187,9 +187,9 @@ public enum Drift {
       for key in Set(old.keys).union(new.keys).sorted(by: { StringCompare.utf8($0, $1) < 0 }) {
         switch (old[key], new[key]) {
         case (let o, let n?) where o != n:
-          changes.append(["table": .string(table), "op": "put", "row": .object(n)])
+          changes.append(["table": .string(table), "op": "put", "row": JSONValue(n)])
         case (let o?, nil):
-          var id: Row = [:]
+          var id: [String: JSONValue] = [:]
           for c in pk { id[c] = o[c] ?? .null }
           changes.append(["table": .string(table), "op": "del", "id": .object(id)])
         default:
@@ -213,7 +213,7 @@ private struct SeedMutator<Context: Sendable>: Mutator {
   func run(_ tx: Transaction, args: JSONValue?, context: Context) throws -> JSONValue? {
     for (table, rows) in args?.objectValue ?? [:] {
       for row in rows.arrayValue ?? [] {
-        try tx.mutate[dynamicMember: table].upsert(row.objectValue ?? [:])
+        try tx.mutate[dynamicMember: table].upsert(Row(row.objectValue ?? [:]))
       }
     }
     return nil

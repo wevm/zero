@@ -48,11 +48,11 @@ public struct User: ZeroRow, Codable, Hashable, Identifiable {
   ]
 
   public init(entry: ViewEntry) throws(ZeroValueError) {
-    id = try entry.column("id")
-    login = try entry.column("login")
-    name = try entry.column("name")
-    avatar = try entry.column("avatar")
-    role = try entry.column("role")
+    id = try entry.column("id", 0)
+    login = try entry.column("login", 1)
+    name = try entry.column("name", 2)
+    avatar = try entry.column("avatar", 3)
+    role = try entry.column("role", 4)
     createdIssues = try entry.relationship("createdIssues")
     assignedIssues = try entry.relationship("assignedIssues")
   }
@@ -121,13 +121,13 @@ public struct Project: ZeroRow, Codable, Hashable, Identifiable {
   ]
 
   public init(entry: ViewEntry) throws(ZeroValueError) {
-    id = try entry.column("id")
-    name = try entry.column("name")
-    lowerCaseName = try entry.column("lowerCaseName")
-    issueCountEstimate = try entry.column("issueCountEstimate")
-    supportsSearch = try entry.column("supportsSearch")
-    markURL = try entry.column("markURL")
-    logoURL = try entry.column("logoURL")
+    id = try entry.column("id", 0)
+    name = try entry.column("name", 1)
+    lowerCaseName = try entry.column("lowerCaseName", 2)
+    issueCountEstimate = try entry.column("issueCountEstimate", 3)
+    supportsSearch = try entry.column("supportsSearch", 4)
+    markURL = try entry.column("markURL", 5)
+    logoURL = try entry.column("logoURL", 6)
     issues = try entry.relationship("issues")
     labels = try entry.relationship("labels")
   }
@@ -242,17 +242,17 @@ public struct Issue: ZeroRow, Codable, Hashable, Identifiable {
   ]
 
   public init(entry: ViewEntry) throws(ZeroValueError) {
-    id = try entry.column("id")
-    shortID = try entry.column("shortID")
-    title = try entry.column("title")
-    `open` = try entry.column("open")
-    modified = try entry.column("modified")
-    created = try entry.column("created")
-    projectID = try entry.column("projectID")
-    creatorID = try entry.column("creatorID")
-    assigneeID = try entry.column("assigneeID")
-    description = try entry.column("description")
-    visibility = try entry.column("visibility")
+    id = try entry.column("id", 0)
+    shortID = try entry.column("shortID", 1)
+    title = try entry.column("title", 2)
+    `open` = try entry.column("open", 3)
+    modified = try entry.column("modified", 4)
+    created = try entry.column("created", 5)
+    projectID = try entry.column("projectID", 6)
+    creatorID = try entry.column("creatorID", 7)
+    assigneeID = try entry.column("assigneeID", 8)
+    description = try entry.column("description", 9)
+    visibility = try entry.column("visibility", 10)
     project = try entry.relationship("project")
     issueLabels = try entry.relationship("issueLabels")
     labels = try entry.relationship("labels")
@@ -330,11 +330,11 @@ public struct Comment: ZeroRow, Codable, Hashable, Identifiable {
   ]
 
   public init(entry: ViewEntry) throws(ZeroValueError) {
-    id = try entry.column("id")
-    issueID = try entry.column("issueID")
-    created = try entry.column("created")
-    body = try entry.column("body")
-    creatorID = try entry.column("creatorID")
+    id = try entry.column("id", 0)
+    issueID = try entry.column("issueID", 1)
+    created = try entry.column("created", 2)
+    body = try entry.column("body", 3)
+    creatorID = try entry.column("creatorID", 4)
     creator = try entry.relationship("creator")
     emoji = try entry.relationship("emoji")
     issue = try entry.relationship("issue")
@@ -384,9 +384,9 @@ public struct Label: ZeroRow, Codable, Hashable, Identifiable {
   ]
 
   public init(entry: ViewEntry) throws(ZeroValueError) {
-    id = try entry.column("id")
-    name = try entry.column("name")
-    projectID = try entry.column("projectID")
+    id = try entry.column("id", 0)
+    name = try entry.column("name", 1)
+    projectID = try entry.column("projectID", 2)
     project = try entry.relationship("project")
   }
 
@@ -436,9 +436,9 @@ public struct IssueLabel: ZeroRow, Codable, Hashable {
   ]
 
   public init(entry: ViewEntry) throws(ZeroValueError) {
-    issueID = try entry.column("issueID")
-    labelID = try entry.column("labelID")
-    projectID = try entry.column("projectID")
+    issueID = try entry.column("issueID", 0)
+    labelID = try entry.column("labelID", 1)
+    projectID = try entry.column("projectID", 2)
     issue = try entry.relationship("issue")
     label = try entry.relationship("label")
   }
@@ -478,9 +478,9 @@ public struct ViewState: ZeroRow, Codable, Hashable {
   public static let relationships: KeyPathNames<ViewState> = [:]
 
   public init(entry: ViewEntry) throws(ZeroValueError) {
-    issueID = try entry.column("issueID")
-    userID = try entry.column("userID")
-    viewed = try entry.column("viewed")
+    issueID = try entry.column("issueID", 0)
+    userID = try entry.column("userID", 1)
+    viewed = try entry.column("viewed", 2)
   }
 
   public var columnValues: Row {
@@ -545,12 +545,12 @@ public struct Emoji: ZeroRow, Codable, Hashable, Identifiable {
   ]
 
   public init(entry: ViewEntry) throws(ZeroValueError) {
-    id = try entry.column("id")
-    value = try entry.column("value")
-    annotation = try entry.column("annotation")
-    subjectID = try entry.column("subjectID")
-    creatorID = try entry.column("creatorID")
-    created = try entry.column("created")
+    id = try entry.column("id", 0)
+    value = try entry.column("value", 1)
+    annotation = try entry.column("annotation", 2)
+    subjectID = try entry.column("subjectID", 3)
+    creatorID = try entry.column("creatorID", 4)
+    created = try entry.column("created", 5)
     creator = try entry.relationship("creator")
     issue = try entry.relationship("issue")
     comment = try entry.relationship("comment")
@@ -594,9 +594,9 @@ public struct UserPref: ZeroRow, Codable, Hashable {
   public static let relationships: KeyPathNames<UserPref> = [:]
 
   public init(entry: ViewEntry) throws(ZeroValueError) {
-    key = try entry.column("key")
-    userID = try entry.column("userID")
-    value = try entry.column("value")
+    key = try entry.column("key", 0)
+    userID = try entry.column("userID", 1)
+    value = try entry.column("value", 2)
   }
 
   public var columnValues: Row {
@@ -638,10 +638,10 @@ public struct IssueNotifications: ZeroRow, Codable, Hashable {
   public static let relationships: KeyPathNames<IssueNotifications> = [:]
 
   public init(entry: ViewEntry) throws(ZeroValueError) {
-    userID = try entry.column("userID")
-    issueID = try entry.column("issueID")
-    subscribed = try entry.column("subscribed")
-    created = try entry.column("created")
+    userID = try entry.column("userID", 0)
+    issueID = try entry.column("issueID", 1)
+    subscribed = try entry.column("subscribed", 2)
+    created = try entry.column("created", 3)
   }
 
   public var columnValues: Row {

@@ -15,10 +15,6 @@ public enum JSONValue: Sendable {
   case object([String: JSONValue])
 }
 
-/// A row: column name to value. A missing column reads as `null`, as an
-/// `undefined` property does in JS.
-public typealias Row = [String: JSONValue]
-
 /// A value in a row or a query literal.
 package typealias Value = JSONValue
 

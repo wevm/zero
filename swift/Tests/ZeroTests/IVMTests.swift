@@ -76,4 +76,37 @@ import Testing
     #expect(titles() == ["b", "c"])
     #expect(notified > 0)
   }
+
+  /// Rows in a table's layout and rows in their own read the same.
+  @Test func rowsReadTheSameInAnyLayout() throws {
+    let comments = MemorySource(Self.schema.tables["comment"]!)
+    comments.push(.add(["body": "x", "id": "c1", "issueID": "i1"]))
+    comments.push(.add(["id": "c2", "issueID": "i1", "body": "y"]))
+    var c1 = comments.data.values().first { $0["id"] == "c1" }!
+    let c2 = comments.data.values().first { $0["id"] == "c2" }!
+
+    // A column the layout lacks is the row's own.
+    c1["extra"] = 1
+    #expect(c1["extra"] == 1)
+    #expect(c2["extra"] == nil)
+    #expect(c1.keys == ["id", "issueID", "body", "extra"])
+
+    // Equal, with equal hashes, whatever the layout or the column order.
+    let own: Row = ["extra": 1, "issueID": "i1", "body": "x", "id": "c1"]
+    #expect(own == c1)
+    #expect(own.hashValue == c1.hashValue)
+    #expect(own != c2)
+
+    // A comparator for the source's layout reads rows in others by name.
+    let compare = makeComparator([AST.OrderPart("body", .desc)], layout: comments.layout)
+    #expect(compare(c2, own) < 0)
+    #expect(compare(own, c2) > 0)
+
+    // A generated `init(entry:)` whose index is off reads the column by name.
+    let entry = ViewEntry(row: c1)
+    let body: String = try entry.column("body", 0)
+    let extra: Double = try entry.column("extra", 7)
+    #expect(body == "x")
+    #expect(extra == 1)
+  }
 }

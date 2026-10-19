@@ -120,6 +120,16 @@ package enum SourceChange: Sendable {
   case remove(Row)
   case edit(Row, oldRow: Row)
 
+  /// The change with its rows in `layout`.
+  func conformed(to layout: RowLayout) -> SourceChange {
+    switch self {
+    case .add(let row): .add(row.conformed(to: layout))
+    case .remove(let row): .remove(row.conformed(to: layout))
+    case .edit(let row, let oldRow):
+      .edit(row.conformed(to: layout), oldRow: oldRow.conformed(to: layout))
+    }
+  }
+
   @inlinable
   package var type: ChangeType {
     switch self {

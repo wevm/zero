@@ -393,6 +393,8 @@ func constraintContainsPartitionKey(_ constraint: Constraint?, _ partitionKey: [
 final class Skip: Operator {
   let input: any Input
   let bound: AST.Bound
+  /// The bound's row.
+  let boundRow: Row
   let comparator: Comparator
   weak var output: (any Output)?
 
@@ -401,6 +403,7 @@ final class Skip: Operator {
     precondition(schema.sort != nil, "Skip requires sorted input")
     self.input = input
     self.bound = bound
+    boundRow = Row(bound.row)
     comparator = schema.compareRows
     input.setOutput(self)
   }
@@ -428,7 +431,7 @@ final class Skip: Operator {
   }
 
   func shouldBePresent(_ row: Row) -> Bool {
-    let cmp = comparator(bound.row, row)
+    let cmp = comparator(boundRow, row)
     return cmp < 0 || (cmp == 0 && !bound.exclusive)
   }
 
@@ -448,17 +451,17 @@ final class Skip: Operator {
   }
 
   private func getStart(_ req: FetchRequest) -> FetchStart {
-    let boundStart = Start(row: bound.row, basis: bound.exclusive ? .after : .at)
+    let boundStart = Start(row: boundRow, basis: bound.exclusive ? .after : .at)
     guard let reqStart = req.start else {
       return req.reverse ? .start(nil) : .start(boundStart)
     }
-    let cmp = comparator(bound.row, reqStart.row)
+    let cmp = comparator(boundRow, reqStart.row)
     if !req.reverse {
       // The skip bound is after the requested start.
       if cmp > 0 { return .start(boundStart) }
       if cmp == 0 {
         if bound.exclusive || reqStart.basis == .after {
-          return .start(Start(row: bound.row, basis: .after))
+          return .start(Start(row: boundRow, basis: .after))
         }
         return .start(boundStart)
       }

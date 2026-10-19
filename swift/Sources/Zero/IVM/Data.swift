@@ -122,16 +122,19 @@ package enum ValueCompare {
 /// Orders rows (`Comparator` in `data.ts`).
 package typealias Comparator = (Row, Row) -> Int
 
-/// `makeComparator(order, reverse)`.
-package func makeComparator(_ order: AST.Ordering, reverse: Bool = false) -> Comparator {
+/// `makeComparator(order, reverse)`. Rows in `layout` read the columns by
+/// index.
+package func makeComparator(
+  _ order: AST.Ordering, reverse: Bool = false, layout: RowLayout = .empty
+) -> Comparator {
   if order.count == 1 && order[0].direction == .asc && !reverse {
-    let field = order[0].field
-    return { a, b in ValueCompare.compare(a[field], b[field]) }
+    let field = layout.column(order[0].field)
+    return { a, b in ValueCompare.compare(a[column: field], b[column: field]) }
   }
-  let parts = order.map { ($0.field, $0.direction == .asc) }
+  let parts = order.map { (layout.column($0.field), $0.direction == .asc) }
   return { a, b in
     for (field, asc) in parts {
-      let comp = ValueCompare.compare(a[field], b[field])
+      let comp = ValueCompare.compare(a[column: field], b[column: field])
       if comp != 0 {
         let result = asc ? comp : -comp
         return reverse ? -result : result

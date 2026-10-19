@@ -37,12 +37,13 @@ struct IVMConformanceTests {
 
     static func record(_ change: Change) -> JSONValue {
       switch change {
-      case .add(let n): ["type": "add", "row": .object(n.row)]
-      case .remove(let n): ["type": "remove", "row": .object(n.row)]
-      case .edit(let n, let o): ["type": "edit", "row": .object(n.row), "oldRow": .object(o.row)]
+      case .add(let n): ["type": "add", "row": JSONValue(n.row)]
+      case .remove(let n): ["type": "remove", "row": JSONValue(n.row)]
+      case .edit(let n, let o):
+        ["type": "edit", "row": JSONValue(n.row), "oldRow": JSONValue(o.row)]
       case .child(let n, let c):
         [
-          "type": "child", "row": .object(n.row),
+          "type": "child", "row": JSONValue(n.row),
           "child": ["relationshipName": .string(c.relationshipName), "change": record(c.change)],
         ]
       }
@@ -51,11 +52,11 @@ struct IVMConformanceTests {
 
   static func sourceChange(_ push: JSONValue) -> (String, SourceChange) {
     let table = push["table"]!.stringValue!
-    let row = push["row"]!.objectValue!
+    let row = Row(push["row"]!.objectValue!)
     switch push["type"]!.stringValue! {
     case "add": return (table, .add(row))
     case "remove": return (table, .remove(row))
-    default: return (table, .edit(row, oldRow: push["oldRow"]!.objectValue!))
+    default: return (table, .edit(row, oldRow: Row(push["oldRow"]!.objectValue!)))
     }
   }
 
@@ -123,7 +124,9 @@ struct IVMConformanceTests {
     var sources: [String: MemorySource] = [:]
     for name in schema.tableNames {
       let source = MemorySource(schema.tables[name]!)
-      for row in dataset["data"]?[name]?.arrayValue ?? [] { source.push(.add(row.objectValue!)) }
+      for row in dataset["data"]?[name]?.arrayValue ?? [] {
+        source.push(.add(Row(row.objectValue!)))
+      }
       sources[name] = source
     }
     let ast = try AST(json: c["ast"]!)

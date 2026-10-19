@@ -2,7 +2,7 @@
 /// `packages/zero-protocol/src/row-patch.ts`).
 package enum RowPatchOp: Sendable, Hashable, JSONCodable {
   /// Inserts or replaces the row.
-  case put(tableName: String, value: Row)
+  case put(tableName: String, value: RowRecord)
   /// Merges `merge` into the row with primary key `id`. `merge` is a
   /// `jsonObjectSchema`, which checks `typeof v === 'object'` and so admits
   /// an array as well as an object; it is kept as sent. `constrain` limits
@@ -61,7 +61,7 @@ package typealias RowsPatch = [RowPatchOp]
 extension JSONDecode {
   /// `rowSchema` (`packages/zero-protocol/src/data.ts`): a record of JSON
   /// values.
-  static func row(_ v: JSONValue) throws(DecodingError) -> Row {
+  static func row(_ v: JSONValue) throws(DecodingError) -> RowRecord {
     try object(v)
   }
 }

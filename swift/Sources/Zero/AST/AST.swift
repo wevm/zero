@@ -35,10 +35,11 @@ public struct AST: Sendable, Hashable {
   }
 
   public struct Bound: Sendable, Hashable {
-    public var row: Row
+    /// The cursor's columns: those the query orders by.
+    public var row: [String: JSONValue]
     public var exclusive: Bool
 
-    public init(row: Row, exclusive: Bool) {
+    public init(row: [String: JSONValue], exclusive: Bool) {
       self.row = row
       self.exclusive = exclusive
     }

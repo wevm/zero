@@ -48,7 +48,23 @@ extension ViewEntry {
   /// column that can't be null reads as `V.valueForNull`.
   @inlinable
   public func column<V: ZeroValue>(_ name: String) throws(ZeroValueError) -> V {
-    let value = row[name] ?? .null
+    try Self.decode(name, row[name] ?? .null)
+  }
+
+  /// A column of the row, for generated `init(entry:)`s: `index` is its
+  /// position in the table's schema, where the row has it unless it came
+  /// from elsewhere. Reading it there skips looking the name up.
+  @inlinable
+  public func column<V: ZeroValue>(_ name: String, _ index: Int) throws(ZeroValueError) -> V {
+    let names = row.layout.names
+    if index < names.count && names[index] == name {
+      return try Self.decode(name, row.slots[index] ?? .null)
+    }
+    return try Self.decode(name, row[name] ?? .null)
+  }
+
+  @inlinable
+  static func decode<V: ZeroValue>(_ name: String, _ value: JSONValue) throws(ZeroValueError) -> V {
     if case .null = value, let fallback = V.valueForNull { return fallback }
     do {
       return try V(zeroValue: value)
@@ -84,9 +100,12 @@ public protocol QueryResult: Sendable {
 extension Array: QueryResult where Element: ZeroRow {
   public typealias Row = Element
 
+  @inlinable
   public init(view: ViewValue) throws(ZeroValueError) {
+    let entries = view.entries
     var out: [Element] = []
-    for e in view.entries { out.append(try Element(entry: e)) }
+    out.reserveCapacity(entries.count)
+    for e in entries { out.append(try Element(entry: e)) }
     self = out
   }
 

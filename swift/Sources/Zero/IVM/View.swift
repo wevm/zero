@@ -26,7 +26,7 @@ public struct ViewEntry: Sendable {
 
   /// The row with its relationships, as JS views present it.
   public var json: JSONValue {
-    var o = row
+    var o = row.dictionary
     for (name, value) in relationships {
       switch value {
       case .many(let entries): o[name] = .array(entries.map(\.json))
@@ -261,7 +261,11 @@ enum ViewApply {
 
   /// `{...existing, ...row}`.
   static func applyEdit(_ entry: inout ViewEntry, _ row: Row) {
-    entry.row.merge(row) { _, new in new }
+    if entry.row.layout === row.layout {
+      for (i, value) in row.slots.enumerated() where value != nil { entry.row.slots[i] = value }
+    } else {
+      for (name, value) in row { entry.row[name] = value }
+    }
   }
 
   /// Removes and returns the list for `relationship`, so that it is mutated

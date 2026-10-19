@@ -71,10 +71,11 @@ public final class Transaction {
     let table = try tableSchema(tableName)
     let key = try key(table, value)
     guard !write.has(key) else { return }
-    var row = value
+    let source = source(tableName)
+    var row = value.conformed(to: source.layout)
     for column in table.columnNames where row[column] == nil { row[column] = .null }
-    write.set(key, .object(row))
-    source(tableName).push(.add(row))
+    write.set(key, JSONValue(row))
+    source.push(.add(row))
   }
 
   func upsert(_ tableName: String, _ value: Row) throws {
@@ -94,7 +95,8 @@ public final class Transaction {
     var next = prev
     for (k, v) in value { next[k] = v }
     write.set(key, .object(next))
-    source(tableName).push(.edit(next, oldRow: prev))
+    let source = source(tableName)
+    source.push(.edit(Row(next, layout: source.layout), oldRow: Row(prev, layout: source.layout)))
   }
 
   func delete(_ tableName: String, _ id: Row) throws {
@@ -102,7 +104,8 @@ public final class Transaction {
     let key = try key(table, id)
     guard let prev = write.get(key)?.objectValue else { return }
     write.delete(key)
-    source(tableName).push(.remove(prev))
+    let source = source(tableName)
+    source.push(.remove(Row(prev, layout: source.layout)))
   }
 }
 
@@ -146,4 +149,9 @@ public struct TableMutator {
   public func update(_ value: Row) throws { try tx.update(table, value) }
   /// Deletes the row with the primary key in `id`, if any.
   public func delete(_ id: Row) throws { try tx.delete(table, id) }
+
+  public func insert(_ value: [String: JSONValue]) throws { try insert(Row(value)) }
+  public func upsert(_ value: [String: JSONValue]) throws { try upsert(Row(value)) }
+  public func update(_ value: [String: JSONValue]) throws { try update(Row(value)) }
+  public func delete(_ id: [String: JSONValue]) throws { try delete(Row(id)) }
 }

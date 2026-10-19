@@ -124,7 +124,7 @@ final class KVWrite {
 /// A patch operation of a pull response (`PatchOperationInternal`).
 enum KVPatchOp {
   case put(key: String, value: JSONValue)
-  case update(key: String, merge: Row?, constrain: [String]?)
+  case update(key: String, merge: RowRecord?, constrain: [String]?)
   case del(key: String)
   case clear
 
@@ -225,7 +225,7 @@ final class ReplicaStore {
           entries += o.map { ($0.key, $0.value) }
         }
         if let merge { entries += merge.map { ($0.key, $0.value) } }
-        var next: Row = [:]
+        var next: RowRecord = [:]
         for (k, v) in entries
         where constrain == nil || constrain!.isEmpty || constrain!.contains(k) {
           next[k] = v

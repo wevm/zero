@@ -66,10 +66,10 @@ package struct NameMapper: Sendable {
   }
 
   /// Renames the known columns of `row`; others keep their names.
-  package func row(_ table: String, _ row: Row) throws(NameMappingError) -> Row {
+  package func row(_ table: String, _ row: RowRecord) throws(NameMappingError) -> RowRecord {
     let dest = try self.table(table)
     if dest.allColumnsSame { return row }
-    var out: Row = [:]
+    var out: RowRecord = [:]
     for (column, value) in row { out[dest.columns[column] ?? column] = value }
     return out
   }
@@ -96,7 +96,7 @@ package struct NameMapper: Sendable {
       out.related = mapped
     }
     if let start = ast.start {
-      var row: Row = [:]
+      var row: [String: JSONValue] = [:]
       for (column, value) in start.row { row[try columnName(ast.table, column)] = value }
       out.start = AST.Bound(row: row, exclusive: start.exclusive)
     }

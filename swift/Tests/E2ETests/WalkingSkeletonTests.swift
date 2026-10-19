@@ -74,7 +74,7 @@ struct WalkingSkeletonTests {
 
     var connected = false
     var chunks: [ArraySlice<UInt8>] = []
-    var rows: [String: [Row]] = [:]
+    var rows: [String: [RowRecord]] = [:]
     var gotQueries: Set<String> = []
     receiving: while let message = try await socket.receive() {
       switch message {

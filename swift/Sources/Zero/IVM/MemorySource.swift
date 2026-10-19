@@ -47,18 +47,21 @@ package final class MemorySource: Source {
   var overlay: Overlay?
   var pushEpoch = 0
   private let schema: TableSchema
+  /// The layout of the source's rows: its table's columns.
+  package let layout: RowLayout
 
   package convenience init(_ table: TableSchema) {
-    self.init(table: table, primaryIndexData: nil)
+    self.init(table: table, layout: RowLayout(table), primaryIndexData: nil)
   }
 
-  init(table: TableSchema, primaryIndexData: BTreeSet<Row>?) {
+  init(table: TableSchema, layout: RowLayout, primaryIndexData: BTreeSet<Row>?) {
     schema = table
+    self.layout = layout
     tableName = table.name
     columns = table.columns
     primaryKey = table.primaryKey
     primaryIndexSort = table.primaryKey.map { AST.OrderPart($0, .asc) }
-    let comparator = BoundComparator(primaryIndexSort)
+    let comparator = BoundComparator(primaryIndexSort, layout: layout)
     primaryIndexKey = Self.indexKey(primaryIndexSort)
     indexes[primaryIndexKey] = Index(
       comparator: comparator, data: primaryIndexData ?? BTreeSet(comparator.compareRows))
@@ -70,7 +73,7 @@ package final class MemorySource: Source {
   /// A copy whose primary index shares nodes with this one until either
   /// changes.
   package func fork() -> MemorySource {
-    MemorySource(table: schema, primaryIndexData: primaryIndex.data)
+    MemorySource(table: schema, layout: layout, primaryIndexData: primaryIndex.data)
   }
 
   /// The rows, in primary key order.
@@ -95,7 +98,7 @@ package final class MemorySource: Source {
     }
     let connection = Connection(
       sort: internalSort, splitEditKeys: splitEditKeys,
-      compareRows: makeComparator(internalSort), filters: connFilters)
+      compareRows: makeComparator(internalSort, layout: layout), filters: connFilters)
     let schema = SourceSchema(
       tableName: tableName, columns: columns, primaryKey: primaryKey,
       compareRows: connection.compareRows, sort: unordered ? nil : internalSort)
@@ -122,7 +125,7 @@ package final class MemorySource: Source {
   func getOrCreateIndex(_ sort: AST.Ordering) -> Index {
     let key = Self.indexKey(sort)
     if let index = indexes[key] { return index }
-    let comparator = BoundComparator(sort)
+    let comparator = BoundComparator(sort, layout: layout)
     let rows = Array(primaryIndex.data.values()).sorted { comparator.compareRows($0, $1) < 0 }
     let index = Index(comparator: comparator, data: BTreeSet(sorted: rows, comparator.compareRows))
     indexes[key] = index
@@ -281,6 +284,7 @@ package final class MemorySource: Source {
   /// Pushes an add for each of `rows`. When nothing is connected and the
   /// source is empty, builds the primary index in one pass instead.
   package func pushAdds(_ rows: [Row]) {
+    let rows = rows.map { $0.conformed(to: layout) }
     let index = primaryIndex
     let canBulkLoad = connections.isEmpty && indexes.count == 1 && index.data.isEmpty
     if !canBulkLoad {
@@ -296,7 +300,7 @@ package final class MemorySource: Source {
   }
 
   package func push(_ change: SourceChange) {
-    genPushAndWriteWithSplitEdit(change)
+    genPushAndWriteWithSplitEdit(change.conformed(to: layout))
   }
 
   func genPushAndWriteWithSplitEdit(_ change: SourceChange) {
@@ -384,10 +388,10 @@ package final class MemorySource: Source {
 
   static func describe(_ change: SourceChange) -> String {
     switch change {
-    case .add(let r): "[0,\(JSONSerializer.stringify(.object(r))),null]"
-    case .remove(let r): "[1,\(JSONSerializer.stringify(.object(r))),null]"
+    case .add(let r): "[0,\(JSONSerializer.stringify(JSONValue(r))),null]"
+    case .remove(let r): "[1,\(JSONSerializer.stringify(JSONValue(r))),null]"
     case .edit(let r, let o):
-      "[2,\(JSONSerializer.stringify(.object(r))),\(JSONSerializer.stringify(.object(o)))]"
+      "[2,\(JSONSerializer.stringify(JSONValue(r))),\(JSONSerializer.stringify(JSONValue(o)))]"
     }
   }
 }
@@ -424,29 +428,27 @@ enum Bound {
 }
 
 /// `makeBoundComparator(sort)`: orders rows by `sort`, and rows against
-/// partial rows whose fields may be `min` or `max`.
+/// partial rows whose fields may be `min` or `max`. Rows in `layout` read
+/// the columns by index.
 struct BoundComparator {
   let sort: AST.Ordering
+  let layout: RowLayout
   let compareRows: Comparator
 
-  init(_ sort: AST.Ordering) {
+  init(_ sort: AST.Ordering, layout: RowLayout) {
     self.sort = sort
-    let parts = sort.map { ($0.field, $0.direction == .asc) }
-    compareRows = { a, b in
-      for (field, asc) in parts {
-        let c = ValueCompare.compare(a[field], b[field])
-        if c != 0 { return asc ? c : -c }
-      }
-      return 0
-    }
+    self.layout = layout
+    compareRows = makeComparator(sort, layout: layout)
   }
 
   /// Compares rows to `bound`: negative when the row is before it.
   func probe(_ bound: [String: Bound]) -> (Row) -> Int {
-    let parts = sort.map { ($0.field, $0.direction == .asc, bound[$0.field] ?? .value(nil)) }
+    let parts = sort.map {
+      (layout.column($0.field), $0.direction == .asc, bound[$0.field] ?? .value(nil))
+    }
     return { row in
       for (field, asc, b) in parts {
-        let c = compareBounds(.value(row[field]), b)
+        let c = compareBounds(.value(row[column: field]), b)
         if c != 0 { return asc ? c : -c }
       }
       return 0

@@ -374,8 +374,10 @@ export function generate(
 
     lines.push('');
     lines.push(`  ${pub}init(entry: ViewEntry) throws(ZeroValueError) {`);
-    for (const c of columns) {
-      lines.push(`    ${c.property} = try entry.column(${str(c.name)})`);
+    // The index is the column's position in the table, where the rows have
+    // it: reading it there skips looking the name up.
+    for (const [i, c] of columns.entries()) {
+      lines.push(`    ${c.property} = try entry.column(${str(c.name)}, ${i})`);
     }
     for (const r of relationships) {
       lines.push(`    ${r.property} = try entry.relationship(${str(r.name)})`);

@@ -270,7 +270,7 @@ final class PokeHandler {
       return .del(key: try key(table, try serverToClient.row(serverTable, id)))
     case .update(let serverTable, let id, let merge, let constrain):
       guard let table = serverToClient.tableNameIfKnown(serverTable) else { return nil }
-      let mergeRow = try merge.map { m -> Row in
+      let mergeRow = try merge.map { m -> RowRecord in
         try serverToClient.row(serverTable, m.objectValue ?? [:])
       }
       return .update(
@@ -279,7 +279,7 @@ final class PokeHandler {
     }
   }
 
-  private func key(_ table: String, _ row: Row) throws -> String {
+  private func key(_ table: String, _ row: RowRecord) throws -> String {
     try Keys.primaryKeyString(table: table, primaryKey: schema.tables[table]!.primaryKey, row: row)
   }
 }

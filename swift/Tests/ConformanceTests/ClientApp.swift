@@ -75,7 +75,7 @@ enum ClientApp {
       return nil
     },
     JSONMutator(name: "issue.update") { tx, args in
-      try tx.mutate.issue.update(args?.objectValue ?? [:])
+      try tx.mutate.issue.update(Row(args?.objectValue ?? [:]))
       return nil
     },
     JSONMutator(name: "issue.delete") { tx, args in

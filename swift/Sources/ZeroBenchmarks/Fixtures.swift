@@ -25,16 +25,16 @@ struct User: ZeroRow, Hashable {
   static let relationships: KeyPathNames<User> = [:]
 
   init(entry: ViewEntry) throws(ZeroValueError) {
-    a = try entry.column("a")
-    b = try entry.column("b")
-    c = try entry.column("c")
-    d = try entry.column("d")
-    e = try entry.column("e")
-    f = try entry.column("f")
-    g = try entry.column("g")
-    h = try entry.column("h")
-    i = try entry.column("i")
-    j = try entry.column("j")
+    a = try entry.column("a", 0)
+    b = try entry.column("b", 1)
+    c = try entry.column("c", 2)
+    d = try entry.column("d", 3)
+    e = try entry.column("e", 4)
+    f = try entry.column("f", 5)
+    g = try entry.column("g", 6)
+    h = try entry.column("h", 7)
+    i = try entry.column("i", 8)
+    j = try entry.column("j", 9)
   }
 
   var columnValues: Row {
