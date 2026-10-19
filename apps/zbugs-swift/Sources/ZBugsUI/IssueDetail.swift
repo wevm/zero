@@ -45,7 +45,8 @@
         .padding()
         .frame(maxWidth: 760, alignment: .leading)
       }
-      .navigationTitle(issue.shortID.map { "Issue #\($0)" } ?? "Issue")
+      // String(_:), or the title formats the number for the locale (3,000).
+      .navigationTitle(issue.shortID.map { "Issue #" + String($0) } ?? "Issue")
       .toolbar {
         if canEdit {
           ToolbarItem {

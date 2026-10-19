@@ -199,14 +199,21 @@
         case .connected: (.green, "Connected")
         case .connecting, .initializing: (.yellow, "Connecting")
         case .needsAuth: (.orange, "Log In Again")
-        case .disconnected, .error, .closed: (.red, "Offline")
+        case .disconnected, .closed: (.red, "Offline")
+        case .error: (.red, "Error")
         }
       SwiftUI.Label {
         Text(text)
       } icon: {
         Image(systemName: "circle.fill").foregroundStyle(color)
       }
-      .labelStyle(.titleAndIcon)
+      #if os(iOS)
+        // The text doesn't fit in an iPhone's navigation bar.
+        .labelStyle(.iconOnly)
+        .accessibilityLabel(text)
+      #else
+        .labelStyle(.titleAndIcon)
+      #endif
       .font(.caption)
       .help(String(describing: connection.state))
     }

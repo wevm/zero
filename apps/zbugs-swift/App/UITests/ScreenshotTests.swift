@@ -49,7 +49,8 @@ final class ScreenshotTests: XCTestCase {
     if UIDevice.current.userInterfaceIdiom == .phone {
       back(app)
     }
-    let listPicker = app.buttons["List"]
+    // A menu picker's label is its title and its value.
+    let listPicker = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'List,'")).firstMatch
     if expect(listPicker, "the filters' List picker") {
       settle()
       snapshot("4 Filters")
