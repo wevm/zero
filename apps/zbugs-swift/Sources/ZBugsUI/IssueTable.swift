@@ -42,6 +42,19 @@
         adapter = DiffableAdapter(view, section: 0, dataSource: dataSource)
       }
 
+      /// Highlights the issue the detail shows, except on an iPhone, where
+      /// the list and the issue aren't side by side.
+      func select(_ issueID: String?) {
+        guard traitCollection.horizontalSizeClass != .compact else { return }
+        let indexPath = issueID.flatMap { issueID in
+          adapter?.rows.first { $0.value.id == issueID }
+            .flatMap { dataSource?.indexPath(for: $0.key) }
+        }
+        if indexPath != tableView.indexPathForSelectedRow {
+          tableView.selectRow(at: indexPath, animated: false, scrollPosition: .none)
+        }
+      }
+
       override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         guard let id = dataSource?.itemIdentifier(for: indexPath),
           let issue = adapter?.row(for: id)
@@ -53,15 +66,19 @@
     struct IssueTable: UIViewControllerRepresentable {
       let zero: Zero<AuthData?>
       let filter: IssueFilter
-      @Binding var selection: String?
+      /// The issue the detail shows.
+      let selection: String?
+      /// Opens an issue, even the one the detail shows.
+      let open: (String) -> Void
 
       func makeUIViewController(context: Context) -> IssueTableController {
         IssueTableController(style: .plain)
       }
 
       func updateUIViewController(_ controller: IssueTableController, context: Context) {
-        controller.onSelect = { selection = $0 }
+        controller.onSelect = open
         controller.show(zero, filter)
+        controller.select(selection)
       }
     }
   #elseif canImport(AppKit)
@@ -74,6 +91,9 @@
       private var adapter: DiffableAdapter<Issue, Int>?
       private var dataSource: NSTableViewDiffableDataSource<Int, RowID>?
       private var key: (zero: ObjectIdentifier, filter: IssueFilter)?
+      /// Whether `select` is changing the selection, which isn't the user
+      /// choosing an issue.
+      private var selecting = false
 
       override func loadView() {
         let column = NSTableColumn(identifier: .init("issue"))
@@ -86,18 +106,35 @@
         dataSource = NSTableViewDiffableDataSource(tableView: tableView) {
           [unowned self] _, _, _, id in
           let cell = NSTableCellView()
-          cell.setAccessibilityIdentifier("IssueCell")
+          let icon = NSImageView()
+          icon.symbolConfiguration = .init(textStyle: .headline)
           let title = NSTextField(labelWithString: "")
           title.font = .preferredFont(forTextStyle: .headline)
           title.lineBreakMode = .byTruncatingTail
+          // The cell view's identifier doesn't reach the accessibility tree.
+          title.setAccessibilityIdentifier("IssueCell")
           let subtitle = NSTextField(labelWithString: "")
           subtitle.font = .preferredFont(forTextStyle: .caption1)
           subtitle.textColor = .secondaryLabelColor
+          subtitle.lineBreakMode = .byTruncatingTail
+          // Truncated, not clipped, in a column narrower than the text.
+          for label in [title, subtitle] {
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+          }
           if let issue = adapter?.row(for: id) {
-            title.stringValue = (issue.open ? "○ " : "✓ ") + issue.title
+            icon.image = NSImage(
+              systemSymbolName: issue.open ? "circle" : "checkmark.circle.fill",
+              accessibilityDescription: issue.open ? "Open" : "Closed")
+            icon.contentTintColor = issue.open ? .systemGreen : .systemPurple
+            title.stringValue = issue.title
             subtitle.stringValue = issue.subtitle
           }
-          let stack = NSStackView(views: [title, subtitle])
+          // So a selected row draws them in its colors.
+          cell.imageView = icon
+          cell.textField = title
+          let heading = NSStackView(views: [icon, title])
+          heading.spacing = 6
+          let stack = NSStackView(views: [heading, subtitle])
           stack.orientation = .vertical
           stack.alignment = .leading
           stack.spacing = 2
@@ -127,8 +164,24 @@
         adapter = DiffableAdapter(view, section: 0, dataSource: dataSource)
       }
 
+      /// Highlights the issue the detail shows.
+      func select(_ issueID: String?) {
+        let row = issueID.flatMap { issueID in
+          adapter?.rows.first { $0.value.id == issueID }
+            .flatMap { dataSource?.snapshot().indexOfItem($0.key) }
+        }
+        guard (row ?? -1) != tableView.selectedRow else { return }
+        selecting = true
+        defer { selecting = false }
+        if let row {
+          tableView.selectRowIndexes([row], byExtendingSelection: false)
+        } else {
+          tableView.deselectAll(nil)
+        }
+      }
+
       func tableViewSelectionDidChange(_ notification: Notification) {
-        guard tableView.selectedRow >= 0,
+        guard !selecting, tableView.selectedRow >= 0,
           let id = dataSource?.itemIdentifier(forRow: tableView.selectedRow),
           let issue = adapter?.row(for: id)
         else { return }
@@ -139,15 +192,19 @@
     struct IssueTable: NSViewControllerRepresentable {
       let zero: Zero<AuthData?>
       let filter: IssueFilter
-      @Binding var selection: String?
+      /// The issue the detail shows.
+      let selection: String?
+      /// Opens an issue.
+      let open: (String) -> Void
 
       func makeNSViewController(context: Context) -> IssueTableController {
         IssueTableController()
       }
 
       func updateNSViewController(_ controller: IssueTableController, context: Context) {
-        controller.onSelect = { selection = $0 }
+        controller.onSelect = open
         controller.show(zero, filter)
+        controller.select(selection)
       }
     }
   #endif

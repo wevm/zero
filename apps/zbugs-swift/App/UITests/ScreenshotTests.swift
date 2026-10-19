@@ -25,6 +25,11 @@ final class ScreenshotTests: XCTestCase {
       app.launchEnvironment[key] = environment[key]
     }
     app.launch()
+    #if os(iOS) && !targetEnvironment(simulator)
+      // A device asks for local network access on the first launch.
+      let allow = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.buttons["Allow"]
+      if allow.waitForExistence(timeout: 10) { allow.tap() }
+    #endif
 
     // The issue list, once zero-cache has synced it.
     let firstIssue = app.descendants(matching: .any).matching(identifier: "IssueRow").firstMatch

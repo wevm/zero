@@ -78,8 +78,8 @@
           ContentUnavailableView("No Issue Selected", systemImage: "list.bullet.rectangle")
         }
       }
-      // The UIKit and AppKit lists set the selection outside a List, which
-      // a collapsed split view doesn't follow on its own.
+      // A new issue is selected outside a List, which a collapsed split
+      // view doesn't follow on its own.
       .onChange(of: selection) { _, selection in
         if selection != nil { compactColumn = .detail }
       }
@@ -114,7 +114,12 @@
       case .swiftUI:
         IssueList(filter: filter, selection: $selection)
       case .native:
-        IssueTable(zero: model.zero, filter: filter, selection: $selection)
+        IssueTable(zero: model.zero, filter: filter, selection: selection) { id in
+          selection = id
+          // Also when it's the issue the detail shows, which doesn't change
+          // the selection.
+          compactColumn = .detail
+        }
       }
     }
 

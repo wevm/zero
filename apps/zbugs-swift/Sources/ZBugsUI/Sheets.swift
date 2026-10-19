@@ -27,6 +27,7 @@
           TextField("Description", text: $description, axis: .vertical)
             .lineLimit(5...20)
         }
+        .formStyle(.grouped)
         .navigationTitle("New Issue")
         .toolbar {
           ToolbarItem(placement: .cancellationAction) {
@@ -49,7 +50,10 @@
           }
         }
       }
-      .frame(minWidth: 420, minHeight: 300)
+      // A sheet on iOS is the screen's width.
+      #if os(macOS)
+        .frame(minWidth: 420, minHeight: 300)
+      #endif
     }
 
     private var project: Project? {
@@ -93,7 +97,10 @@
           }
         }
       }
-      .frame(minWidth: 420, minHeight: 320)
+      // A sheet on iOS is the screen's width.
+      #if os(macOS)
+        .frame(minWidth: 420, minHeight: 320)
+      #endif
     }
 
     private func logInWithGitHub() async {
@@ -156,7 +163,10 @@
           apiURL = model.apiURL
         }
       }
-      .frame(minWidth: 420, minHeight: 220)
+      // A sheet on iOS is the screen's width.
+      #if os(macOS)
+        .frame(minWidth: 420, minHeight: 220)
+      #endif
     }
   }
 #endif

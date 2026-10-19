@@ -170,6 +170,7 @@
           TextField("Description", text: $description, axis: .vertical)
             .lineLimit(5...20)
         }
+        .formStyle(.grouped)
         .navigationTitle("Edit Issue")
         .toolbar {
           ToolbarItem(placement: .cancellationAction) {
@@ -187,7 +188,10 @@
           }
         }
       }
-      .frame(minWidth: 420, minHeight: 300)
+      // A sheet on iOS is the screen's width.
+      #if os(macOS)
+        .frame(minWidth: 420, minHeight: 300)
+      #endif
     }
   }
 

@@ -75,9 +75,11 @@
           Text(issue.title).font(.headline).lineLimit(2)
         }
         HStack(spacing: 6) {
-          Text(issue.subtitle)
+          // On one line, before the labels.
+          Text(issue.subtitle).lineLimit(1).layoutPriority(1)
           ForEach(issue.labels ?? [], id: \.id) { label in
             Text(label.name)
+              .lineLimit(1)
               .padding(.horizontal, 6)
               .background(.quaternary, in: Capsule())
           }
