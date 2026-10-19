@@ -24,6 +24,8 @@ targets:
     settings:
       base:
         PRODUCT_NAME: ZBugs
+        # Not ZBugs, the package module it imports.
+        PRODUCT_MODULE_NAME: ZBugsApp
         PRODUCT_BUNDLE_IDENTIFIER: dev.rocicorp.zbugs
         SWIFT_VERSION: "6.0"
         GENERATE_INFOPLIST_FILE: YES
