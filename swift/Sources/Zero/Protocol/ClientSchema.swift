@@ -52,6 +52,12 @@ public struct ClientSchema: Sendable, Hashable, JSONCodable {
     ])
   }
 
+  /// The hash of the normalized schema that names a client's local
+  /// database (`clientSchemaFrom`): a schema change starts a new one.
+  public var hash: String {
+    String(XXHash32.h64(JSONSerializer.stringify(normalized().json)), radix: 36)
+  }
+
   /// `normalizeClientSchema`: sorts each primary key, as JS `sort()` does,
   /// by UTF-16 code units. JS also orders the table and column entries by
   /// `<`; ``json`` has no order of its own and ``JSONSerializer`` writes keys

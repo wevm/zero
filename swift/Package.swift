@@ -14,7 +14,10 @@ let package = Package(
     .package(url: "https://github.com/apple/swift-nio.git", from: "2.104.0")
   ],
   targets: [
-    .target(name: "Zero"),
+    // The system SQLite: in the SDK on Apple platforms, libsqlite3-dev on
+    // Linux.
+    .systemLibrary(name: "CSQLite", path: "Sources/CSQLite"),
+    .target(name: "Zero", dependencies: ["CSQLite"]),
     .target(name: "ZeroUI", dependencies: ["Zero"]),
     .target(name: "ZeroTesting", dependencies: ["Zero"]),
     .testTarget(name: "ZeroTests", dependencies: ["Zero", "ZeroTesting"]),

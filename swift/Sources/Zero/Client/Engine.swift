@@ -30,15 +30,21 @@ public struct ZeroOptions: Sendable {
   public var onUpdateNeeded: (@MainActor @Sendable (UpdateNeededReason) -> Void)?
   /// The server no longer has the client's state; the local store was reset.
   public var onClientStateNotFound: (@MainActor @Sendable () -> Void)?
+  /// Where the replica is kept between launches.
+  public var storage: ZeroStorage = .sqlite()
+  /// The storage failed, the first time it does: the client keeps running
+  /// on memory and stops writing to disk. Defaults to doing nothing.
+  public var onStorageFailure: (@MainActor @Sendable (StorageFailure) -> Void)?
 
   public init(
     cacheURL: String? = nil, userID: String? = nil, auth: String? = nil,
-    storageKey: String? = nil
+    storageKey: String? = nil, storage: ZeroStorage = .sqlite()
   ) {
     self.cacheURL = cacheURL
     self.userID = userID
     self.auth = auth
     self.storageKey = storageKey
+    self.storage = storage
   }
 }
 
@@ -76,6 +82,8 @@ final class Engine {
 
   isolated deinit {
     loop.stop()
+    for t in lifecycleTimers { t.cancel() }
+    if !repClosed { database.release() }
   }
   private let socketFactory: (any SocketFactory)?
   private let socketOrigin: String?
@@ -84,6 +92,8 @@ final class Engine {
   private let clientToServer: NameMapper
 
   let store: ReplicaStore
+  let database: ReplicaDatabase
+  private var lifecycleTimers: [any ScheduledTimer] = []
   let ivmMain: IVMBranch
   private(set) var context: QueryContext!
   let connectionManager: ConnectionManager
@@ -96,6 +106,8 @@ final class Engine {
   private var socket: SocketHandle?
   private var connectCookie: JSONValue = .null
   private var initConnectionQueries: OrderedMap<JSKey, UpQueriesPatchOp>?
+  /// Deleted clients still to tell the server about on this connection.
+  private var deletedClients: DeleteClientsBody?
   private var lastMutationIDReceived: Double = 0
   private var lastMutationIDsSent: [String: Double] = [:]
   private var additionalConnectParams: [(String, String)]?
@@ -137,11 +149,29 @@ final class Engine {
     self.loop = EventLoop(scheduler: base)
     self.scheduler = LoopScheduler(base, loop)
     self.clientID = randomID()
-    self.clientGroupID = randomID()
-    self.profileID = "p" + randomID()
     self.clientSchema = schema.clientSchema
     self.clientToServer = NameMapper.clientToServer(schema)
-    self.store = ReplicaStore(clientID: clientID)
+
+    // Open the database and join a client group (`initClientV6`).
+    let name = ReplicaDatabase.name(
+      userID: options.userID, storageKey: options.storageKey ?? "",
+      mutateURL: options.mutateURL, queryURL: options.queryURL,
+      schemaHash: clientSchema.hash)
+    let (database, openFailure) = ReplicaDatabase.open(options.storage, name: name)
+    self.database = database
+    let (clientGroupID, group) = database.initClient(
+      clientID, mutatorNames: mutators.keys.sorted(), now: base.now)
+    self.clientGroupID = clientGroupID
+    self.profileID = database.profileID
+    self.store = ReplicaStore(
+      clientID: clientID,
+      snapshot: ReplicaStore.Snapshot(
+        map: group.entries, cookie: group.cookie, lastMutationIDs: group.lastMutationIDs),
+      pending: group.mutations.map {
+        ReplicaStore.PendingMutation(
+          id: $0.id, clientID: $0.clientID, name: $0.name, args: $0.args,
+          timestamp: $0.timestamp, writes: [])
+      })
     self.ivmMain = IVMBranch(schema: schema)
     let loop = self.loop
     self.connectionManager = ConnectionManager(
@@ -181,6 +211,21 @@ final class Engine {
         try self.mutationTracker.lmidAdvanced(lmid)
       },
       onPokeError: { [weak self] message in self?.onPokeError(message) })
+
+    // Load the snapshot into the sources and replay the pending mutations
+    // on it.
+    ivmMain.apply(KVDiff.between(KVMap(), store.snapshot.map))
+    if !store.pending.isEmpty {
+      let (main, replayed, touched, _) = replay(
+        store.pending, over: store.snapshot.map, branch: ivmMain.fork())
+      ivmMain.apply(
+        store.advance(to: store.snapshot, main: main, pending: replayed, touched: touched))
+    }
+    database.onWriteFailure = { [weak self] failure in self?.storageFailed(failure) }
+    if let openFailure {
+      loop.microtask { [weak self] in self?.storageFailed(openFailure) }
+    }
+    startLifecycle()
 
     // The replica is loaded: report its got queries and mutation results,
     // as the first runs of the store watches do, then build the pipelines.
@@ -476,11 +521,12 @@ final class Engine {
       timestamp: scheduler.monotonicNow, lastMutationID: lastMutationIDReceived, wsid: wsid,
       profileID: profileID, additionalParams: additionalConnectParams ?? [])
     addConnectEvent(attempt, "reading deleted clients")
+    var deleted = deletedClientsBody()
     addConnectEvent(attempt, "reading desired queries")
     var queriesPatch: OrderedMap<JSKey, UpQueriesPatchOp>? = queryManager.queriesPatch(store: store)
     let initConnection = InitConnectionBody(
       desiredQueriesPatch: queriesPatch!.entries.map(\.value),
-      clientSchema: connectCookie.isNull ? clientSchema : nil,
+      clientSchema: connectCookie.isNull ? clientSchema : nil, deleted: deleted,
       userPushURL: options.mutateURL, userPushHeaders: options.mutateHeaders,
       userQueryURL: options.queryURL, userQueryHeaders: options.queryHeaders,
       activeClients: [clientID])
@@ -489,6 +535,8 @@ final class Engine {
     if secProtocol.utf8.count > options.maxHeaderLength {
       secProtocol = SecProtocols.encode(initConnection: nil, authToken: authToken)
       queriesPatch = nil
+    } else {
+      deleted = nil
     }
     addConnectEvent(attempt, "creating the WebSocket")
     let handle = SocketHandle(engine: self)
@@ -507,6 +555,7 @@ final class Engine {
     }
     self.connectCookie = connectCookie
     self.initConnectionQueries = queriesPatch
+    self.deletedClients = deleted
     socket = handle
     addConnectEvent(attempt, "waiting for the server acknowledgement")
     armConnectTimeout(attempt, ack: true)
@@ -593,7 +642,7 @@ final class Engine {
             + Self.prettyRecentMessages(recentSentMessages)
         }
         disconnect(.client(.invalidMessage, message: message))
-        clientGroupDisabled = true
+        disableClientGroup()
         loop.microtask { [weak self] in self?.options.onClientStateNotFound?() }
       } else {
         disconnect(
@@ -654,8 +703,9 @@ final class Engine {
         }
       case .pull:
         abortPingTimeout()
-      case .deleteClients:
-        break
+      case .deleteClients(let body):
+        database.confirmDeletedClients(
+          clientIDs: body.clientIDs ?? [], clientGroupIDs: body.clientGroupIDs ?? [])
       case .pushResponse(let body):
         try mutationTracker.processPushResponse(body)
       case .transformError(let errors):
@@ -682,11 +732,16 @@ final class Engine {
         .initConnection(
           InitConnectionBody(
             desiredQueriesPatch: patch.entries.map(\.value),
-            clientSchema: connectCookie.isNull ? clientSchema : nil,
+            clientSchema: connectCookie.isNull ? clientSchema : nil, deleted: deletedClients,
             userPushURL: options.mutateURL, userPushHeaders: options.mutateHeaders,
             userQueryURL: options.queryURL, userQueryHeaders: options.queryHeaders)))
+      deletedClients = nil
     }
     initConnectionQueries = nil
+    if let deleted = deletedClients {
+      send(.deleteClients(deleted))
+      deletedClients = nil
+    }
     connectionManager.connected()
     if let onConnected = attempt.onConnected {
       attempt.onConnected = nil
@@ -704,15 +759,17 @@ final class Engine {
     case .versionNotSupported:
       options.onUpdateNeeded?(UpdateNeededReason(type: body.kind.rawValue, message: body.message))
     case .schemaVersionNotSupported:
-      clientGroupDisabled = true
+      disableClientGroup()
       loop.microtask { [weak self] in
         self?.options.onUpdateNeeded?(
           UpdateNeededReason(type: "SchemaVersionNotSupported", message: body.message))
       }
     case .clientNotFound:
-      clientGroupDisabled = true
+      disableClientGroup()
       loop.microtask { [weak self] in self?.options.onClientStateNotFound?() }
     case .invalidConnectionRequestLastMutationID, .invalidConnectionRequestBaseCookie:
+      // The server is behind the replica: drop it.
+      database.drop()
       loop.microtask { [weak self] in self?.options.onClientStateNotFound?() }
     default:
       break
@@ -762,7 +819,86 @@ final class Engine {
     repClosed = true
     pushTimer?.cancel()
     pushTimer = nil
+    for t in lifecycleTimers { t.cancel() }
+    lifecycleTimers = []
+    database.release()
     connectionManager.closed()
+  }
+
+  // MARK: - Storage and the client lifecycle
+
+  /// `HEARTBEAT_INTERVAL`.
+  static let heartbeatIntervalMs: Double = 60_000
+  /// `GC_INTERVAL`, of clients and of client groups.
+  static let gcIntervalMs: Double = 5 * 60_000
+  /// `CLIENT_MAX_INACTIVE_TIME`.
+  static let clientMaxInactiveMs: Double = 24 * 60 * 60_000
+
+  /// Starts the heartbeat and the garbage collection of clients and client
+  /// groups.
+  private func startLifecycle() {
+    lifecycleTimers = [
+      scheduler.scheduleRepeating(every: Self.heartbeatIntervalMs) { [weak self] in
+        guard let self else { return }
+        if !self.database.heartbeat(self.clientID, now: self.scheduler.now) {
+          self.options.onClientStateNotFound?()
+        }
+      },
+      scheduler.scheduleRepeating(every: Self.gcIntervalMs) { [weak self] in
+        guard let self else { return }
+        if let deleted = self.database.collectClients(
+          keeping: self.clientID, now: self.scheduler.now, maxInactive: Self.clientMaxInactiveMs)
+        {
+          // `DeleteClientsManager.onClientsDeleted`.
+          let ids = deleted.filter { $0.clientGroupID == self.clientGroupID }.map(\.clientID)
+          self.sendIfConnected(.deleteClients(DeleteClientsBody(clientIDs: ids)))
+        }
+      },
+      scheduler.scheduleRepeating(every: Self.gcIntervalMs) { [weak self] in
+        self?.database.collectClientGroups()
+      },
+      scheduler.schedule(after: Self.initialCollectDatabasesDelayMs) { [weak self] in
+        guard let self else { return }
+        self.collectDatabases()
+        self.lifecycleTimers.append(
+          self.scheduler.scheduleRepeating(every: Self.collectDatabasesIntervalMs) {
+            [weak self] in self?.collectDatabases()
+          })
+      },
+    ]
+  }
+
+  /// `INITIAL_COLLECT_IDB_DELAY` and `COLLECT_IDB_INTERVAL`.
+  static let initialCollectDatabasesDelayMs: Double = 5 * 60_000
+  static let collectDatabasesIntervalMs: Double = 12 * 60 * 60_000
+
+  /// Deletes the other databases of the directory that no client has used
+  /// for twice the time a client may be inactive (`collectIDBDatabases`),
+  /// such as those of an older schema.
+  private func collectDatabases() {
+    database.collectDatabases(now: scheduler.now, maxAge: 2 * Self.clientMaxInactiveMs)
+  }
+
+  /// The deleted clients of this client group, for `initConnection`
+  /// (`convertDeletedClientsToBody`).
+  private func deletedClientsBody() -> DeleteClientsBody? {
+    let ids = database.deletedClients.filter { $0.clientGroupID == clientGroupID }.map(\.clientID)
+    return ids.isEmpty ? nil : DeleteClientsBody(clientIDs: ids)
+  }
+
+  /// The server lost the client group: stop pushing, and keep later clients
+  /// out of it.
+  private func disableClientGroup() {
+    clientGroupDisabled = true
+    database.disableClientGroup(clientGroupID)
+  }
+
+  private var storageFailureReported = false
+
+  private func storageFailed(_ failure: StorageFailure) {
+    guard !storageFailureReported else { return }
+    storageFailureReported = true
+    options.onStorageFailure?(failure)
   }
 
   // MARK: - Mutations
@@ -816,11 +952,17 @@ final class Engine {
       client.resolve(Self.outcome(error))
       return MutatorResult(client: client, server: server)
     }
-    let diff = store.commitMutation(
-      ReplicaStore.PendingMutation(
-        id: mutationID, clientID: clientID, name: name, args: args ?? .null,
-        timestamp: scheduler.monotonicNow, writes: write.writes),
-      write)
+    let pending = ReplicaStore.PendingMutation(
+      id: mutationID, clientID: clientID, name: name, args: args ?? .null,
+      timestamp: scheduler.monotonicNow, writes: write.writes)
+    let diff = store.commitMutation(pending, write)
+    database.apply([
+      .addMutation(
+        group: clientGroupID,
+        StoredMutation(
+          clientID: clientID, id: mutationID, name: name, args: pending.args,
+          timestamp: pending.timestamp))
+    ])
     context.processChanges(diff)
     requestPush(now: false)
     fireWatchers(diff)
@@ -870,7 +1012,7 @@ final class Engine {
   private func invokePush() {
     guard !pushInFlight, pushRequested, !repClosed, !clientGroupDisabled else { return }
     pushRequested = false
-    let pending = store.pending.filter { $0.clientID == clientID }
+    let pending = store.pending
     guard !pending.isEmpty else { return }
     pushInFlight = true
     connectionReady.onSettle(loop) { [weak self] connected in
@@ -947,36 +1089,65 @@ final class Engine {
     if !pending.isEmpty {
       // The rebase runs over a fork of the views' branch moved to the new
       // snapshot.
-      var branch = ivmMain.fork()
+      let branch = ivmMain.fork()
       branch.apply(KVDiff.between(store.main, snapshot.map, keys: touched))
-      for var m in pending {
-        let write = KVWrite(main)
-        let fork = branch.fork()
-        let tx = Transaction(
-          clientID: m.clientID, mutationID: Int(m.id), reason: .rebase, token: token,
-          write: write, branch: fork, schema: schema)
-        do {
-          guard let mutator = mutators[m.name] else {
-            throw ApplicationError("Unknown mutator: \(m.name)")
-          }
-          _ = try mutator(tx, m.args)
-          main = write.map
-          branch = fork
-          m.writes = write.writes
-          touched.formUnion(write.writes)
-        } catch {
-          // The mutation stays pending; its writes are dropped.
-          m.writes = []
-        }
-        replayed.append(m)
-      }
+      let rebased = replay(pending, over: main, branch: branch)
+      main = rebased.main
+      replayed = rebased.replayed
+      touched.formUnion(rebased.touched)
     }
     let diff = store.advance(to: snapshot, main: main, pending: replayed, touched: touched)
+    database.apply([
+      .updateSnapshot(
+        group: clientGroupID,
+        changes: patchWrite.writes.compactMap { key in
+          let value = snapshot.map.get(key.string)
+          // After a clear, only what the poke put back.
+          return patchWrite.cleared && value == nil ? nil : (key.string, value)
+        },
+        cleared: patchWrite.cleared, cookie: snapshot.cookie,
+        lastMutationIDs: snapshot.lastMutationIDs)
+    ])
     context.processChanges(diff)
     fireWatchers(diff)
     if socketAtStart != nil, socket === socketAtStart {
       queryManager.markGotQueriesAuthoritative()
     }
+  }
+
+  /// Runs `pending` again, in order, over `map` and on forks of `branch`
+  /// (the rebase of `maybeEndPull`). A mutation that throws stays pending
+  /// without writes. Returns the new main map, the mutations with what they
+  /// wrote, every key they wrote, and the branch they ran on.
+  private func replay(
+    _ pending: [ReplicaStore.PendingMutation], over map: KVMap, branch: IVMBranch
+  ) -> (main: KVMap, replayed: [ReplicaStore.PendingMutation], touched: Set<JSKey>, IVMBranch) {
+    var main = map
+    var branch = branch
+    var touched = Set<JSKey>()
+    var replayed: [ReplicaStore.PendingMutation] = []
+    for var m in pending {
+      let write = KVWrite(main)
+      let fork = branch.fork()
+      let tx = Transaction(
+        clientID: m.clientID, mutationID: Int(m.id), reason: .rebase, token: token,
+        write: write, branch: fork, schema: schema)
+      do {
+        guard let mutator = mutators[m.name] else {
+          throw ApplicationError("Unknown mutator: \(m.name)")
+        }
+        _ = try mutator(tx, m.args)
+        main = write.map
+        branch = fork
+        m.writes = write.writes
+        touched.formUnion(write.writes)
+      } catch {
+        // The mutation stays pending; its writes are dropped.
+        m.writes = []
+      }
+      replayed.append(m)
+    }
+    return (main, replayed, touched, branch)
   }
 
   /// `JSON.stringify(recentSentMessages, null, 2)`.

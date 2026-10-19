@@ -164,7 +164,12 @@ final class ReplicaStore {
   private(set) var main = KVMap()
   private(set) var pending: [PendingMutation] = []
 
-  init(clientID: String) { self.clientID = clientID }
+  init(clientID: String, snapshot: Snapshot = Snapshot(), pending: [PendingMutation] = []) {
+    self.clientID = clientID
+    self.snapshot = snapshot
+    self.main = snapshot.map
+    self.pending = pending
+  }
 
   var cookie: JSONValue { snapshot.cookie }
 

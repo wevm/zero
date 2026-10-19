@@ -107,6 +107,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/swift"
           tar -xzf "$RUNNER_TEMP/swift.tar.gz" -C "$RUNNER_TEMP/swift" --strip-components=1
           echo "$RUNNER_TEMP/swift/usr/bin" >> "$GITHUB_PATH"
+      - name: Install system libraries
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsqlite3-dev
       - name: Build
         working-directory: swift
         run: swift build --build-tests

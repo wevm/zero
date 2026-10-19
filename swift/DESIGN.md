@@ -152,21 +152,43 @@ Rationale:
 
 ### Storage
 
-- SQLite (system `libsqlite3`), WAL mode.
-- Pending mutations are written durably before they are pushed. Synced-row
-  writes are coalesced.
-- Default location `Application Support/Zero/<name>.sqlite`, configurable (for
-  example an App Group container).
-- iOS Data Protection default `completeUntilFirstUserAuthentication`,
-  configurable. `complete` would make the database unreadable while the device
-  is locked and break the background flush.
+- SQLite (system `libsqlite3`), WAL mode, `synchronous = NORMAL`.
+- One database file per JS database name. The name covers the user, the
+  storage key, the mutate and query URLs, the client schema's hash, and the
+  storage version, so a schema change starts a new database as in JS. The file
+  name is a hash of it plus a Swift layout version.
+- The file holds the client groups, the clients with their heartbeats, the
+  deleted clients the server hasn't confirmed, and per client group the last
+  server snapshot and the pending mutations. At launch the client joins the
+  group with its set of mutator names (client group forking is off in Zero)
+  and replays the pending mutations over the snapshot, as a rebase does.
+- Changes are written through. The clients and groups are mirrored in memory,
+  so every decision is made on the main actor in the JS order. The writes run
+  in order on a background queue, one transaction per mutation or poke. JS
+  persists about a second after a change; the Swift client writes right away.
+- The client lifecycle follows Replicache: a heartbeat every minute; every five
+  minutes, clients inactive for a day are deleted (and the server told with
+  `deleteClients`, and in `initConnection` until it confirms) and client
+  groups without clients are dropped; five minutes after launch and then every
+  12 hours, databases no client used for two days are deleted. A group is
+  disabled after `ClientNotFound`, `SchemaVersionNotSupported`, or a 1009
+  close, and the database dropped after `InvalidConnectionRequestBaseCookie`
+  or `InvalidConnectionRequestLastMutationID`.
+- `ZeroStorage.memory` keeps databases for the life of the process, keyed by
+  name, like JS `kvStore: 'mem'`. The client scenarios run on both storages.
+- Default location `Library/Application Support/Zero` on Apple platforms and
+  `$XDG_DATA_HOME/zero` elsewhere, configurable (for example an App Group
+  container).
+- iOS Data Protection: files get the app's default class,
+  `completeUntilFirstUserAuthentication`. `complete` would make the database
+  unreadable while the device is locked and break the background flush.
 - No database-level encryption.
-- A Swift-side storage version. On a mismatch, drop the store and resync, as JS
-  does.
-- If the store can't be opened, fall back to memory and call
-  `onStorageFailure`, as JS does.
+- If the store can't be opened, the client runs on memory and calls
+  `onStorageFailure`, as JS does. A failed write stops writing and calls it
+  too.
 - One process per store in v1: one `Zero` instance per user and storage key per
-  process. Concurrent cross-process access (app extensions) is deferred.
+  process. Concurrent cross-process access (app extensions) is deferred, and so
+  is refreshing one instance from another's writes.
 
 ### Transport
 

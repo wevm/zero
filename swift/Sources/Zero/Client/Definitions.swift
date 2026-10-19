@@ -58,10 +58,32 @@ public func defineQuery<
   QueryDefinition(name: name, body: body)
 }
 
+/// A query of an app without a context.
+public func defineQuery<Args: Encodable & Sendable, Row: ZeroRow, Result: QueryResult>(
+  _ name: String, _ body: @escaping @Sendable (Args) -> Query<Row, Result>
+) -> QueryDefinition<Args, Void, Row, Result> {
+  QueryDefinition(name: name) { args, _ in body(args) }
+}
+
+/// A query without arguments that reads the context:
+/// `defineQuery("issues.mine") { (_: NoArgs, ctx: Auth) in … }`.
 public func defineQuery<Context: Sendable, Row: ZeroRow, Result: QueryResult>(
-  _ name: String, _ body: @escaping @Sendable (Context) -> Query<Row, Result>
+  _ name: String, _ body: @escaping @Sendable (NoArgs, Context) -> Query<Row, Result>
 ) -> NoArgsQueryDefinition<Context, Row, Result> {
-  NoArgsQueryDefinition(name: name, body: body)
+  NoArgsQueryDefinition(name: name) { body(NoArgs(), $0) }
+}
+
+/// A query without arguments of an app without a context.
+public func defineQuery<Row: ZeroRow, Result: QueryResult>(
+  _ name: String, _ body: @escaping @Sendable () -> Query<Row, Result>
+) -> NoArgsQueryDefinition<Void, Row, Result> {
+  NoArgsQueryDefinition(name: name) { _ in body() }
+}
+
+/// Stands for the arguments of a query or mutator that takes none, where
+/// the definition also takes the context.
+public struct NoArgs: Sendable, Hashable {
+  public init() {}
 }
 
 func encodeArgs<Args: Encodable>(_ args: Args) -> JSONValue {
@@ -145,11 +167,44 @@ public func defineMutator<Args: Codable & Sendable, Context: Sendable, R: Encoda
   }
 }
 
+/// A mutator of an app without a context.
+public func defineMutator<Args: Codable & Sendable>(
+  _ name: String, _ body: @escaping @MainActor @Sendable (Transaction, Args) throws -> Void
+) -> MutatorDefinition<Args, Void> {
+  MutatorDefinition(name: name) { tx, args, _ in
+    try body(tx, args)
+    return nil
+  }
+}
+
+/// A mutator of an app without a context that returns a value to the
+/// caller of its optimistic run.
+public func defineMutator<Args: Codable & Sendable, R: Encodable>(
+  _ name: String, _ body: @escaping @MainActor @Sendable (Transaction, Args) throws -> R
+) -> MutatorDefinition<Args, Void> {
+  MutatorDefinition(name: name) { tx, args, _ in
+    try JSONValueEncoder.encode(body(tx, args))
+  }
+}
+
+/// A mutator without arguments that reads the context:
+/// `defineMutator("issue.closeAll") { (tx, _: NoArgs, ctx: Auth) in … }`.
 public func defineMutator<Context: Sendable>(
-  _ name: String, _ body: @escaping @MainActor @Sendable (Transaction, Context) throws -> Void
+  _ name: String,
+  _ body: @escaping @MainActor @Sendable (Transaction, NoArgs, Context) throws -> Void
 ) -> NoArgsMutatorDefinition<Context> {
   NoArgsMutatorDefinition(name: name) { tx, context in
-    try body(tx, context)
+    try body(tx, NoArgs(), context)
+    return nil
+  }
+}
+
+/// A mutator without arguments of an app without a context.
+public func defineMutator(
+  _ name: String, _ body: @escaping @MainActor @Sendable (Transaction) throws -> Void
+) -> NoArgsMutatorDefinition<Void> {
+  NoArgsMutatorDefinition(name: name) { tx, _ in
+    try body(tx)
     return nil
   }
 }

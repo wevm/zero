@@ -18,7 +18,7 @@ import ZeroTesting
   static let byOwner = defineQuery("issues.byOwner") { (args: ByOwner, _: Auth) in
     zql.issue.where(\.ownerId, args.ownerId).orderBy(\.id, .asc)
   }
-  static let mine = defineQuery("issues.mine") { (auth: Auth) in
+  static let mine = defineQuery("issues.mine") { (_: NoArgs, auth: Auth) in
     zql.issue.where(\.ownerId, auth.userID).orderBy(\.id, .asc)
   }
   static let create = defineMutator("issue.create") { (tx, args: CreateIssue, auth: Auth) in
@@ -26,6 +26,11 @@ import ZeroTesting
       Issue(
         id: args.id, title: args.title, description: "", closed: false,
         ownerId: args.ownerId ?? auth.userID, createdAt: 1))
+  }
+  static let closeMine = defineMutator("issue.closeMine") { (tx, _: NoArgs, auth: Auth) in
+    for issue in try tx.run(zql.issue.where(\.ownerId, auth.userID)) {
+      try tx.mutate.issue.update(["id": .string(issue.id), "closed": true])
+    }
   }
   struct Created: Encodable { var created: String }
   static let createReturning = defineMutator("issue.createReturning") {
@@ -37,13 +42,20 @@ import ZeroTesting
     return Created(created: args.id)
   }
 
+  /// A store of the test's own, in memory.
+  static var options: ZeroOptions {
+    ZeroOptions(
+      cacheURL: "http://zero.test", userID: "u2", storageKey: randomID(), storage: .memory)
+  }
+
   let scheduler = ManualScheduler(now: 1_700_000_000_000)
   let sockets = MockSocketFactory()
 
   func makeZero() throws -> Zero<Auth> {
     try Zero(
-      schema: .test, context: Auth(userID: "u2"), mutators: [Self.create, Self.createReturning],
-      options: ZeroOptions(cacheURL: "http://zero.test", userID: "u2"), scheduler: scheduler,
+      schema: .test, context: Auth(userID: "u2"),
+      mutators: [Self.create, Self.createReturning, Self.closeMine],
+      options: Self.options, scheduler: scheduler,
       socketFactory: sockets)
   }
 
@@ -84,17 +96,20 @@ import ZeroTesting
 
     let a = zero.mutate(Self.create(CreateIssue(id: "i1", title: "mine")))
     zero.mutate(Self.create(CreateIssue(id: "i2", title: "theirs", ownerId: "u1")))
+    zero.mutate(Self.closeMine())
     scheduler.runDueTimers()
 
     #expect(try await a.client.value == .success(data: nil))
     // The context fills the owner of the first; the second names its own.
-    #expect(try await zero.run(Self.mine()).map(\.id) == ["i1"])
+    #expect(try await zero.run(Self.mine()).map { [$0.id: $0.closed] } == [["i1": true]])
+    #expect(try await zero.run(zql.issue.where(\.closed, false)).map(\.id) == ["i2"])
     #expect(try await zero.run(Self.byOwner(ByOwner(ownerId: "u1"))).map(\.id) == ["i2"])
     #expect(
       sent("push").flatMap { $0["mutations"]?.arrayValue ?? [] }.map { [$0["name"], $0["args"]] }
         == [
           ["issue.create", [["id": "i1", "title": "mine"]]],
           ["issue.create", [["id": "i2", "title": "theirs", "ownerId": "u1"]]],
+          ["issue.closeMine", [nil]],
         ])
   }
 
@@ -135,7 +150,7 @@ import ZeroTesting
     #expect(throws: (any Error).self) {
       try Zero(
         schema: .test, context: Auth(userID: "u2"), mutators: [Self.create, Self.create],
-        options: ZeroOptions(cacheURL: "http://zero.test", userID: "u2"), scheduler: scheduler,
+        options: Self.options, scheduler: scheduler,
         socketFactory: sockets)
     }
   }

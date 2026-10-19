@@ -10,7 +10,17 @@ import ZeroTesting
 @Suite(.enabled(if: Vectors.available))
 @MainActor
 struct ClientConformanceTests {
-  @Test func scenarios() throws {
+  @Test func scenariosOnMemory() throws {
+    try Self.run(storage: .memory)
+  }
+
+  @Test func scenariosOnSQLite() throws {
+    let directory = NSTemporaryDirectory() + "zero-client-scenarios-" + UUID().uuidString
+    defer { try? FileManager.default.removeItem(atPath: directory) }
+    try Self.run(storage: .sqlite(directory: directory))
+  }
+
+  static func run(storage: ZeroStorage) throws {
     let file = try Vectors.file("client")
     let startTime = file["shared"]?["startTime"]?.numberValue ?? 0
     let only = ProcessInfo.processInfo.environment["ZERO_CLIENT_SCENARIO"]
@@ -20,7 +30,7 @@ struct ClientConformanceTests {
       let name = scenario["name"]?.stringValue ?? "?"
       if let only, !name.contains(only) { continue }
       let expected = scenario["expect"]?.arrayValue ?? []
-      let runner = try ScenarioRunner(scenario, startTime: startTime)
+      let runner = try ScenarioRunner(scenario, startTime: startTime, storage: storage)
       let actual = runner.run()
       if let mismatch = Self.firstMismatch(scenario, expected, actual) {
         failed += 1
@@ -29,7 +39,7 @@ struct ClientConformanceTests {
         passed += 1
       }
     }
-    print("[client scenarios] \(passed) passed, \(failed) failed")
+    print("[client scenarios on \(storage)] \(passed) passed, \(failed) failed")
   }
 
   static func firstMismatch(
@@ -85,10 +95,26 @@ final class ScenarioRunner {
   var runs: [(String, Settled)] = []
   var preloads: [(String, Settled, Settled, () -> Void)] = []
 
-  init(_ scenario: JSONValue, startTime: Double) throws {
+  let storage: ZeroStorage
+  /// The scenario's own storage, as `#scenario-<n>` in `harness.ts`.
+  let scenarioKey: Int
+  static var scenarioCount = 0
+  var restarts = 0
+  /// The IDs placeholders in downstream messages stand for.
+  var ids: [String: String] = [:]
+
+  init(_ scenario: JSONValue, startTime: Double, storage: ZeroStorage) throws {
     self.scenario = scenario
+    self.storage = storage
+    Self.scenarioCount += 1
+    scenarioKey = Self.scenarioCount
     scheduler = ManualScheduler(now: startTime)
-    let o = scenario["options"] ?? [:]
+    zero = try makeZero(scenario["options"] ?? [:])
+    placeholders = [zero.clientID: "$clientID", zero.clientGroupID: "$clientGroupID"]
+    ids = ["$clientID": zero.clientID]
+  }
+
+  func makeZero(_ o: JSONValue, mutators registered: JSONValue? = nil) throws -> Zero<Void> {
     var options = ZeroOptions()
     switch o["cacheURL"] {
     case .null?: options.cacheURL = nil
@@ -109,17 +135,45 @@ final class ScenarioRunner {
     options.mutateHeaders = o["mutateHeaders"]?.objectValue?.compactMapValues(\.stringValue)
     options.queryURL = o["queryURL"]?.stringValue
     options.queryHeaders = o["queryHeaders"]?.objectValue?.compactMapValues(\.stringValue)
-    options.storageKey = o["storageKey"]?.stringValue
+    options.storageKey = "\(o["storageKey"]?.stringValue ?? "")#scenario-\(scenarioKey)"
+    options.storage = storage
     options.onUpdateNeeded = { [weak self] reason in
       self?.events.append(["onUpdateNeeded": reason.json])
     }
     options.onClientStateNotFound = { [weak self] in
       self?.events.append("onClientStateNotFound")
     }
-    zero = try Zero(
-      schema: ClientApp.schema, mutators: ClientApp.mutators, options: options,
-      scheduler: scheduler, socketFactory: factory)
-    placeholders = [zero.clientID: "$clientID", zero.clientGroupID: "$clientGroupID"]
+    let mutators =
+      registered?.stringValue == "issues"
+      ? ClientApp.mutators.filter { $0.name.hasPrefix("issue.") } : ClientApp.mutators
+    return try Zero(
+      schema: ClientApp.schema, mutators: mutators, options: options, scheduler: scheduler,
+      socketFactory: factory)
+  }
+
+  /// Closes the client and starts a new one on the same storage
+  /// (`restart` in `harness.ts`).
+  func restart(_ step: JSONValue) throws {
+    zero.close()
+    settle()
+    if let ms = step["advance"]?.numberValue { scheduler.advance(by: ms) }
+    let n = restarts
+    restarts += 1
+    let old = (clientID: zero.clientID, clientGroupID: zero.clientGroupID)
+    zero = try makeZero(step["options"] ?? scenario["options"] ?? [:], mutators: step["mutators"])
+    placeholders[old.clientID] = "$clientID.\(n)"
+    ids["$clientID.\(n)"] = old.clientID
+    if old.clientGroupID != zero.clientGroupID {
+      placeholders[old.clientGroupID] = "$clientGroupID.\(n)"
+    }
+    placeholders[zero.clientID] = "$clientID"
+    placeholders[zero.clientGroupID] = "$clientGroupID"
+    ids["$clientID"] = zero.clientID
+    views = []
+    retired = []
+    mutations = []
+    runs = []
+    preloads = []
   }
 
   func normalize(_ v: JSONValue, key: String? = nil) -> JSONValue {
@@ -140,13 +194,13 @@ final class ScenarioRunner {
 
   func substitute(_ v: JSONValue) -> JSONValue {
     switch v {
-    case .string("$clientID"):
-      return .string(zero.clientID)
+    case .string(let s):
+      return .string(ids[s] ?? s)
     case .array(let a):
       return .array(a.map(substitute))
     case .object(let o):
       var out: [String: JSONValue] = [:]
-      for (k, e) in o { out[k == "$clientID" ? zero.clientID : k] = substitute(e) }
+      for (k, e) in o { out[ids[k] ?? k] = substitute(e) }
       return .object(out)
     default:
       return v
@@ -264,6 +318,8 @@ final class ScenarioRunner {
       zero.connection.connect(auth: step["auth"]?.stringValue)
     case "close":
       zero.close()
+    case "restart":
+      try restart(step)
     default:
       throw ClientApp.Failure("Unknown op \(op)")
     }
