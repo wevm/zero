@@ -86,6 +86,8 @@
         .foregroundStyle(.secondary)
       }
       .padding(.vertical, 2)
+      .accessibilityElement(children: .combine)
+      .accessibilityIdentifier("IssueRow")
     }
   }
 

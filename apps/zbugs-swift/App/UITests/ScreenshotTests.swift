@@ -4,86 +4,121 @@ import XCTest
 /// screenshot of each screen, which CI uploads. `ZBUGS_TOKEN` is a token for
 /// the seeded crew user; xcodebuild passes `TEST_RUNNER_ZBUGS_TOKEN` as it.
 ///
-/// A step whose screen doesn't appear records a failure and the test goes
-/// on, so one run shows every screen it can reach.
+/// A step whose screen doesn't appear records a failure, with the app's
+/// accessibility tree, and the test goes on, so one run shows every screen
+/// it can reach.
 final class ScreenshotTests: XCTestCase {
   @MainActor
   func testScreens() throws {
     let token = try XCTUnwrap(
       ProcessInfo.processInfo.environment["ZBUGS_TOKEN"], "Set TEST_RUNNER_ZBUGS_TOKEN")
+    #if os(iOS)
+      if UIDevice.current.userInterfaceIdiom == .pad {
+        XCUIDevice.shared.orientation = .landscapeLeft
+      }
+    #endif
     let app = XCUIApplication()
     app.launchEnvironment["ZBUGS_TOKEN"] = token
     app.launch()
 
     // The issue list, once zero-cache has synced it.
-    let firstIssue = app.cells.firstMatch
-    guard expect(firstIssue, "an issue in the list", timeout: 120) else {
-      snapshot("1 Issues (empty)")
-      return
-    }
+    let firstIssue = app.descendants(matching: .any).matching(identifier: "IssueRow").firstMatch
+    guard expect(app, firstIssue, "an issue in the list", timeout: 120) else { return }
     settle()
-    snapshot("1 Issues")
+    snapshot(app, "1 Issues")
 
     // An issue with its comments.
-    firstIssue.tap()
-    if expect(app.buttons["Comment"], "the issue's comment button") {
+    press(firstIssue)
+    if expect(app, app.buttons["Comment"], "the issue's comment button") {
       settle()
-      snapshot("2 Issue")
+      snapshot(app, "2 Issue")
     }
 
     // A new issue.
-    if UIDevice.current.userInterfaceIdiom == .phone {
+    if isPhone {
       back(app)
     }
     let newIssue = app.buttons["New Issue"]
-    if expect(newIssue, "the New Issue button") {
-      newIssue.tap()
-      if expect(app.navigationBars["New Issue"], "the new issue sheet") {
+    if expect(app, newIssue, "the New Issue button") {
+      press(newIssue)
+      if expect(app, app.buttons["Create"], "the new issue sheet") {
         settle()
-        snapshot("3 New Issue")
-        app.buttons["Cancel"].tap()
+        snapshot(app, "3 New Issue")
+        press(app.buttons["Cancel"])
       }
     }
 
-    // The filters, then the UIKit list.
-    if UIDevice.current.userInterfaceIdiom == .phone {
+    // The filters, then the UIKit or AppKit list.
+    if isPhone {
       back(app)
     }
-    // A menu picker's label is its title and its value.
-    let listPicker = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'List,'")).firstMatch
-    if expect(listPicker, "the filters' List picker") {
+    #if os(macOS)
+      let listPicker = app.popUpButtons["List"]
+      let native = app.menuItems["AppKit"]
+    #else
+      // A menu picker's label is its title and its value.
+      let listPicker = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'List,'"))
+        .firstMatch
+      let native = app.buttons["UIKit"]
+    #endif
+    if expect(app, listPicker, "the filters' List picker") {
       settle()
-      snapshot("4 Filters")
-      listPicker.tap()
-      let uiKit = app.buttons["UIKit"]
-      if expect(uiKit, "the UIKit option") {
-        uiKit.tap()
+      snapshot(app, "4 Filters")
+      press(listPicker)
+      if expect(app, native, "the native list option") {
+        press(native)
       }
-      if UIDevice.current.userInterfaceIdiom == .phone {
+      if isPhone {
         let issues = app.buttons["Issues"]
-        if expect(issues, "the Issues button") { issues.tap() }
+        if expect(app, issues, "the Issues button") { press(issues) }
       }
-      if expect(app.tables.cells.firstMatch, "an issue in the UIKit list") {
+      let cell = app.descendants(matching: .any).matching(identifier: "IssueCell").firstMatch
+      if expect(app, cell, "an issue in the native list") {
         settle()
-        snapshot("5 Issues (UIKit)")
+        snapshot(app, "5 Issues (native)")
       }
     }
   }
 
-  /// Waits for `element`, recording a failure when it doesn't appear.
   @MainActor
-  private func expect(_ element: XCUIElement, _ what: String, timeout: Double = 20) -> Bool {
+  private var isPhone: Bool {
+    #if os(iOS)
+      UIDevice.current.userInterfaceIdiom == .phone
+    #else
+      false
+    #endif
+  }
+
+  /// Waits for `element`. When it doesn't appear, records a failure with a
+  /// screenshot and the accessibility tree.
+  @MainActor
+  private func expect(
+    _ app: XCUIApplication, _ element: XCUIElement, _ what: String, timeout: Double = 20
+  ) -> Bool {
     if element.waitForExistence(timeout: timeout) { return true }
-    snapshot("Missing \(what)")
+    snapshot(app, "Missing \(what)")
+    let tree = XCTAttachment(string: app.debugDescription)
+    tree.name = "Missing \(what).txt"
+    tree.lifetime = .keepAlways
+    add(tree)
     XCTFail("No \(what)")
     return false
+  }
+
+  @MainActor
+  private func press(_ element: XCUIElement) {
+    #if os(macOS)
+      element.click()
+    #else
+      element.tap()
+    #endif
   }
 
   /// The navigation bar's back button.
   @MainActor
   private func back(_ app: XCUIApplication) {
     let button = app.navigationBars.buttons.element(boundBy: 0)
-    if button.waitForExistence(timeout: 5) { button.tap() }
+    if button.waitForExistence(timeout: 5) { press(button) }
   }
 
   /// Lets animations and the rows' relationships finish.
@@ -91,9 +126,15 @@ final class ScreenshotTests: XCTestCase {
     Thread.sleep(forTimeInterval: 2)
   }
 
+  /// The screen on iOS, the window and its sheets on macOS.
   @MainActor
-  private func snapshot(_ name: String) {
-    let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+  private func snapshot(_ app: XCUIApplication, _ name: String) {
+    #if os(macOS)
+      let screenshot = app.windows.firstMatch.screenshot()
+    #else
+      let screenshot = XCUIScreen.main.screenshot()
+    #endif
+    let attachment = XCTAttachment(screenshot: screenshot)
     attachment.name = name
     attachment.lifetime = .keepAlways
     add(attachment)

@@ -26,6 +26,9 @@
     @State private var selection: String?
     @State private var listLayer = ListLayer.swiftUI
     @State private var sheet: Sheet?
+    /// All three columns, on an iPad or a Mac: the filters are how you get
+    /// around.
+    @State private var columns = NavigationSplitViewVisibility.all
     /// The column an iPhone shows: the list, with the filters before it and
     /// the selected issue after.
     @State private var compactColumn = NavigationSplitViewColumn.content
@@ -43,7 +46,7 @@
     }
 
     public var body: some View {
-      NavigationSplitView(preferredCompactColumn: $compactColumn) {
+      NavigationSplitView(columnVisibility: $columns, preferredCompactColumn: $compactColumn) {
         Sidebar(filter: $filter, listLayer: $listLayer)
           .navigationTitle("Zero Bugs")
           #if os(iOS)

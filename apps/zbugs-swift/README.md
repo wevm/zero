@@ -50,14 +50,17 @@ ZBUGS_E2E_URL=http://127.0.0.1:4848 ZBUGS_E2E_API=http://127.0.0.1:5173 \
 ```
 
 `App/UITests` drives the app through each screen against the backend and
-keeps a screenshot of each one. The `zbugs screenshots` workflow runs it in
-the iOS Simulator and uploads the screenshots as an artifact. To run it
-locally, generate the project and pass the backend's token:
+keeps a screenshot of each one. The `zbugs screenshots` workflow runs it on
+an iPhone and an iPad simulator and on macOS, and uploads the screenshots as
+an artifact. To run it locally, generate the project and pass the backend's
+token:
 
 ```sh
 TEST_RUNNER_ZBUGS_TOKEN=<token> xcodebuild test -project App/ZBugs.xcodeproj \
   -scheme ZBugsApp -destination 'platform=iOS Simulator,name=iPhone 17'
 ```
+
+On macOS the destination is `platform=macOS`.
 
 The app reads `ZBUGS_TOKEN`, `ZBUGS_CACHE_URL`, and `ZBUGS_API_URL` from its
 environment as well; they override the saved login and servers.

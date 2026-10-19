@@ -28,6 +28,7 @@
             content.imageProperties.tintColor = issue.open ? .systemGreen : .systemPurple
           }
           cell.contentConfiguration = content
+          cell.accessibilityIdentifier = "IssueCell"
           return cell
         }
       }
@@ -85,6 +86,7 @@
         dataSource = NSTableViewDiffableDataSource(tableView: tableView) {
           [unowned self] _, _, _, id in
           let cell = NSTableCellView()
+          cell.setAccessibilityIdentifier("IssueCell")
           let title = NSTextField(labelWithString: "")
           title.font = .preferredFont(forTextStyle: .headline)
           title.lineBreakMode = .byTruncatingTail

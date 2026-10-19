@@ -10,5 +10,6 @@ struct ZBugsApp: App {
     WindowGroup {
       RootView(model: model)
     }
+    .defaultSize(width: 1200, height: 800)
   }
 }

@@ -1,8 +1,9 @@
 name: zbugs screenshots
 
-# Runs the Swift zbugs app in the iOS Simulator against zbugs' backend
-# (apps/zbugs-swift/server/server.ts) and keeps a screenshot of each screen
-# (apps/zbugs-swift/App/UITests) as the zbugs-screenshots artifact.
+# Runs the Swift zbugs app on an iPhone and an iPad simulator and on macOS
+# against zbugs' backend (apps/zbugs-swift/server/server.ts), and keeps a
+# screenshot of each screen (apps/zbugs-swift/App/UITests) as the
+# zbugs-screenshots artifact.
 # Path-filtered to the app and the UI layer: macOS runners are slow to start.
 
 on:
@@ -29,7 +30,7 @@ permissions:
 
 jobs:
   screenshots:
-    name: zbugs screenshots (iOS Simulator)
+    name: zbugs screenshots (iPhone, iPad, and macOS)
     runs-on: macos-26
     timeout-minutes: 60
     steps:
@@ -74,16 +75,32 @@ jobs:
         run: |
           TEST_RUNNER_ZBUGS_TOKEN="$(grep '^token ' "$RUNNER_TEMP/zbugs.log" | cut -d' ' -f2)"
           export TEST_RUNNER_ZBUGS_TOKEN
-          device="$(xcrun simctl list devices available -j |
-            python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for k,v in d.items() if "iOS" in k for x in v if x["name"].startswith("iPhone")))')"
-          xcodebuild test -project ZBugs.xcodeproj -scheme ZBugsApp \
-            -destination "id=$device" -resultBundlePath "$RUNNER_TEMP/screenshots.xcresult" \
-            -skipPackagePluginValidation CODE_SIGNING_ALLOWED=NO
+          # The first available simulator whose name starts with $1.
+          simulator() {
+            xcrun simctl list devices available -j |
+              python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for k,v in d.items() if "iOS" in k for x in v if x["name"].startswith(sys.argv[1])))' "$1"
+          }
+          # Every run, even after one fails, so each keeps its screenshots.
+          status=0
+          screenshots() {
+            name="$1"
+            shift
+            xcodebuild test -project ZBugs.xcodeproj -scheme ZBugsApp \
+              -resultBundlePath "$RUNNER_TEMP/results/$name.xcresult" \
+              -skipPackagePluginValidation "$@" || status=1
+          }
+          screenshots iPhone -destination "id=$(simulator iPhone)" CODE_SIGNING_ALLOWED=NO
+          screenshots iPad -destination "id=$(simulator iPad)" CODE_SIGNING_ALLOWED=NO
+          # A macOS UI test needs a signed app; ad hoc does.
+          screenshots macOS -destination platform=macOS CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=-
+          exit "$status"
       - name: Export screenshots
         if: always()
         run: |
-          xcrun xcresulttool export attachments \
-            --path "$RUNNER_TEMP/screenshots.xcresult" --output-path "$RUNNER_TEMP/screenshots"
+          for result in "$RUNNER_TEMP"/results/*.xcresult; do
+            xcrun xcresulttool export attachments --path "$result" \
+              --output-path "$RUNNER_TEMP/screenshots/$(basename "$result" .xcresult)" || true
+          done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:

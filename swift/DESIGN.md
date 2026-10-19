@@ -498,8 +498,9 @@ the Zero convention of passing IDs and timestamps as arguments.
   `apps/zbugs-swift/`.** The Apple layer (URLSession transport against a local
   mock WebSocket server, SwiftUI, UIKit, and AppKit helpers), iOS simulator
   tests, all three DocC catalogs, and the zbugs app built for iOS and macOS.
-- **zbugs screenshots, path-filtered to the app and `ZeroUI`.** The app in the
-  iOS Simulator against zbugs' backend, through each screen, with the
+- **zbugs screenshots, path-filtered to the app and `ZeroUI`.** The app on an
+  iPhone and an iPad simulator and on macOS against zbugs' backend, through
+  each screen and both the SwiftUI and the UIKit or AppKit list, with the
   screenshots kept as an artifact.
 - **Benchmarks.** Ports of the key JS benchmarks
   (`zero-client/src/client/zero.bench.ts`, the shared B-tree and hash

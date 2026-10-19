@@ -42,7 +42,7 @@ targets:
   # Screenshots of each screen against zbugs' backend (UITests/).
   ZBugsUITests:
     type: bundle.ui-testing
-    platform: iOS
+    supportedDestinations: [iOS, macOS]
     sources:
       - path: UITests
     dependencies:
