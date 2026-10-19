@@ -36,7 +36,8 @@
   /// must be the request's. Until there is one, the value is empty.
   @MainActor
   @propertyWrapper
-  public struct ZeroQuery<Row: ZeroRow, Result: QueryResult, Context: Sendable>: DynamicProperty
+  public struct ZeroQuery<Row: ZeroRow, Result: QueryResult, Context: Sendable>:
+    @preconcurrency DynamicProperty
   where Result.Row == Row {
     @Environment(\.zero) private var zero
     @State private var state = QueryState<Result>()

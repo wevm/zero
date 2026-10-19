@@ -7,7 +7,7 @@
 
   /// Feeds a view's rows to a diffable data source: one item per row, keyed
   /// by its primary key, in the view's order. Items whose row changed are
-  /// reconfigured.
+  /// reconfigured (reloaded on AppKit).
   ///
   /// ```swift
   /// let dataSource = UITableViewDiffableDataSource<Int, RowID>(tableView: tableView) {
@@ -45,7 +45,14 @@
         var s = Snapshot()
         s.appendSections([section])
         s.appendItems(snapshot.ids, toSection: section)
-        if !snapshot.updated.isEmpty { s.reconfigureItems(Array(snapshot.updated)) }
+        if !snapshot.updated.isEmpty {
+          #if canImport(UIKit)
+            s.reconfigureItems(Array(snapshot.updated))
+          #else
+            // AppKit snapshots can only reload.
+            s.reloadItems(Array(snapshot.updated))
+          #endif
+        }
         apply(s, animating)
         animating = true
       }

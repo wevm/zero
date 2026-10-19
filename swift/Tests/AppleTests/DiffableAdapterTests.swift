@@ -28,7 +28,9 @@
       let b = RowID(["b"])
       #expect(applied.map(\.snapshot.sectionIdentifiers) == Array(repeating: [0], count: 5))
       #expect(applied.map(\.snapshot.itemIdentifiers) == [[], [b], [a, b], [a, b], [a]])
-      #expect(applied.map(\.snapshot.reconfiguredItemIdentifiers) == [[], [], [], [a], []])
+      #if canImport(UIKit)
+        #expect(applied.map(\.snapshot.reconfiguredItemIdentifiers) == [[], [], [], [a], []])
+      #endif
       #expect(applied.map(\.animating) == [false, true, true, true, true])
       #expect(adapter.row(for: a) == Note(id: "a", text: "1!"))
       #expect(adapter.row(for: b) == nil)
