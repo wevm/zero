@@ -18,10 +18,18 @@ public final class LiveQuery<Result: QueryResult> {
   /// The view the object reads.
   @ObservationIgnored public let view: MaterializedView
   @ObservationIgnored private var removeListener: () -> Void = {}
+  /// The entries last read and the rows read from them: an update reads
+  /// only the rows whose entries changed.
+  @ObservationIgnored private var entries: [ViewEntry] = []
+  @ObservationIgnored private var rows: [Result.Row] = []
 
   init(_ view: MaterializedView) throws {
     self.view = view
-    data = try Result(view: view.data)
+    var entries: [ViewEntry] = []
+    var rows: [Result.Row] = []
+    data = try Self.read(view.data, &entries, &rows)
+    self.entries = entries
+    self.rows = rows
     resultType = view.resultType
     error = view.error.map { QueryError($0) }
     removeListener = view.addListener { [weak self] data, type, error in
@@ -36,11 +44,37 @@ public final class LiveQuery<Result: QueryResult> {
   private func update(_ value: ViewValue, _ type: ResultType, _ queryError: ErroredQuery?) {
     resultType = type
     do {
-      data = try Result(view: value)
+      data = try Self.read(value, &entries, &rows)
       error = queryError.map { QueryError($0) }
     } catch {
       self.error = error
     }
+  }
+
+  /// The result of `value`, reusing the rows read from equal `entries`.
+  /// Most updates change a few rows in place, or insert or remove one, so
+  /// the entries are matched in order, skipping at most one.
+  private static func read(
+    _ value: ViewValue, _ entries: inout [ViewEntry], _ rows: inout [Result.Row]
+  ) throws(ZeroValueError) -> Result {
+    let new = value.entries
+    var out: [Result.Row] = []
+    out.reserveCapacity(new.count)
+    var j = 0
+    for entry in new {
+      if j < entries.count, entries[j] == entry {
+        out.append(rows[j])
+        j += 1
+      } else if j + 1 < entries.count, entries[j + 1] == entry {
+        out.append(rows[j + 1])
+        j += 2
+      } else {
+        out.append(try Result.Row(entry: entry))
+      }
+    }
+    entries = new
+    rows = out
+    return Result(rows: out)
   }
 
   /// Raises the query's TTL; a lower one is ignored.

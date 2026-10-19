@@ -13,6 +13,10 @@ public enum StringCompare {
   public static func utf8(_ a: String, _ b: String) -> Int {
     // No `a == b` shortcut: Swift's `==` equates canonically equivalent
     // strings ("é" and "e\u{301}"), which are distinct in Zero.
+    let contiguous = a.utf8.withContiguousStorageIfAvailable { a in
+      b.utf8.withContiguousStorageIfAvailable { b in compare(a, b) }
+    }
+    if let result = contiguous ?? nil { return result }
     var ai = a.utf8.makeIterator()
     var bi = b.utf8.makeIterator()
     while true {
@@ -28,6 +32,19 @@ public enum StringCompare {
 
   @inlinable
   public static func utf8Less(_ a: String, _ b: String) -> Bool { utf8(a, b) < 0 }
+
+  /// Byte order: negative, zero, or positive.
+  @inlinable
+  static func compare(_ a: UnsafeBufferPointer<UInt8>, _ b: UnsafeBufferPointer<UInt8>) -> Int {
+    let n = Swift.min(a.count, b.count)
+    var i = 0
+    while i < n {
+      let (x, y) = (a[i], b[i])
+      if x != y { return x < y ? -1 : 1 }
+      i += 1
+    }
+    return a.count == b.count ? 0 : a.count < b.count ? -1 : 1
+  }
 
   /// JS `a < b ? -1 : a > b ? 1 : 0` for strings.
   @inlinable
@@ -51,7 +68,13 @@ public enum StringCompare {
   /// Code unit equality, as JS `===` compares strings.
   @inlinable
   public static func equal(_ a: String, _ b: String) -> Bool {
-    a.utf8.elementsEqual(b.utf8)
+    let contiguous = a.utf8.withContiguousStorageIfAvailable { a in
+      b.utf8.withContiguousStorageIfAvailable { b in
+        a.count == b.count && compare(a, b) == 0
+      }
+    }
+    if let result = contiguous ?? nil { return result }
+    return a.utf8.elementsEqual(b.utf8)
   }
 }
 

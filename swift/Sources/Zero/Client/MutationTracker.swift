@@ -37,8 +37,12 @@ final class MutationTracker {
     init(_ server: Deferred<JSONValue?>) { self.server = server }
   }
 
-  /// In insertion order, which is mutation ID order.
-  private var outstanding: [(id: Int, entry: Entry)] = []
+  /// By ephemeral ID (a `Map` in JS).
+  private var outstanding: [Int: Entry] = [:]
+  /// The ephemeral IDs in insertion order, which is mutation ID order, from
+  /// `head` on. Settled IDs stay until the head passes them.
+  private var order: [Int] = []
+  private var head = 0
   private var ephemeralIDsByMutationID: [Double: Int] = [:]
   private var allMutationsAppliedListeners: [() -> Void] = []
   private var nextEphemeralID = 0
@@ -64,7 +68,12 @@ final class MutationTracker {
   func trackMutation() -> (ephemeralID: Int, server: Deferred<JSONValue?>) {
     nextEphemeralID += 1
     let server = Deferred<JSONValue?>()
-    outstanding.append((nextEphemeralID, Entry(server)))
+    if outstanding.isEmpty {
+      order.removeAll(keepingCapacity: true)
+      head = 0
+    }
+    outstanding[nextEphemeralID] = Entry(server)
+    order.append(nextEphemeralID)
     return (nextEphemeralID, server)
   }
 
@@ -85,7 +94,11 @@ final class MutationTracker {
   /// in error, or closed.
   func rejectAllOutstandingMutations(_ error: ConnectionError) {
     guard !outstanding.isEmpty else { return }
-    for (id, entry) in outstanding { settle(id, entry, .failure(error)) }
+    for id in order[head...] {
+      if let entry = outstanding[id] { settle(id, entry, .failure(error)) }
+    }
+    order = []
+    head = 0
     largestOutstandingMutationID = currentMutationID
     notifyAllMutationsApplied()
   }
@@ -159,8 +172,17 @@ final class MutationTracker {
     }
     if lastMutationID == currentMutationID { return }
     currentMutationID = lastMutationID
-    while let (id, entry) = outstanding.first, let mid = entry.mutationID, mid <= lastMutationID {
-      settle(id, entry, .success(nil))
+    while head < order.count {
+      let id = order[head]
+      if let entry = outstanding[id] {
+        guard let mid = entry.mutationID, mid <= lastMutationID else { break }
+        settle(id, entry, .success(nil))
+      }
+      head += 1
+    }
+    if head > 0, head * 2 >= order.count {
+      order.removeFirst(head)
+      head = 0
     }
     if lastMutationID >= largestOutstandingMutationID { notifyAllMutationsApplied() }
   }
@@ -173,9 +195,7 @@ final class MutationTracker {
     for l in allMutationsAppliedListeners { l() }
   }
 
-  private func entry(_ ephemeralID: Int) -> Entry? {
-    outstanding.first { $0.id == ephemeralID }?.entry
-  }
+  private func entry(_ ephemeralID: Int) -> Entry? { outstanding[ephemeralID] }
 
   private func processMutationError(
     _ clientID: String, _ mid: Double, _ error: MutationError
@@ -233,7 +253,7 @@ final class MutationTracker {
     case .success(let data): entry.server.resolve(data)
     case .failure(let error): entry.server.reject(error)
     }
-    outstanding.removeAll { $0.id == ephemeralID }
+    outstanding[ephemeralID] = nil
     if let mid = entry.mutationID { ephemeralIDsByMutationID[mid] = nil }
   }
 }

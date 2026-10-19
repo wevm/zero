@@ -6,6 +6,7 @@ public struct ZeroValueError: Error, Sendable, Hashable, CustomStringConvertible
     self.description = description
   }
 
+  @usableFromInline
   static func mismatch(_ expected: String, _ value: JSONValue) -> ZeroValueError {
     ZeroValueError("expected \(expected), got \(value.typeName) \(value)")
   }
@@ -26,32 +27,40 @@ public protocol ZeroValue: Sendable {
 }
 
 extension ZeroValue {
+  @inlinable
   public static var valueForNull: Self? { nil }
 }
 
 extension String: ZeroValue {
+  @inlinable
   public init(zeroValue: JSONValue) throws(ZeroValueError) {
     guard case .string(let s) = zeroValue else { throw .mismatch("a string", zeroValue) }
     self = s
   }
 
   public var zeroValue: JSONValue { .string(self) }
+
+  @inlinable
   public static var valueForNull: String? { "" }
 }
 
 extension Double: ZeroValue {
+  @inlinable
   public init(zeroValue: JSONValue) throws(ZeroValueError) {
     guard case .number(let n) = zeroValue else { throw .mismatch("a number", zeroValue) }
     self = n
   }
 
   public var zeroValue: JSONValue { .number(self) }
+
+  @inlinable
   public static var valueForNull: Double? { 0 }
 }
 
 /// For a `number()` column the codegen config declares an integer: the
 /// value must be exact, which every integer up to 2^53 is.
 extension Int: ZeroValue {
+  @inlinable
   public init(zeroValue: JSONValue) throws(ZeroValueError) {
     guard case .number(let n) = zeroValue, let i = Int(exactly: n),
       abs(i) <= 1 << 53
@@ -60,28 +69,39 @@ extension Int: ZeroValue {
   }
 
   public var zeroValue: JSONValue { .number(Double(self)) }
+
+  @inlinable
   public static var valueForNull: Int? { 0 }
 }
 
 extension Bool: ZeroValue {
+  @inlinable
   public init(zeroValue: JSONValue) throws(ZeroValueError) {
     guard case .bool(let b) = zeroValue else { throw .mismatch("a boolean", zeroValue) }
     self = b
   }
 
   public var zeroValue: JSONValue { .bool(self) }
+
+  @inlinable
   public static var valueForNull: Bool? { false }
 }
 
 extension JSONValue: ZeroValue {
+  @inlinable
   public init(zeroValue: JSONValue) { self = zeroValue }
   public var zeroValue: JSONValue { self }
 }
 
 /// An optional column: `.null` reads as nil.
 extension Optional: ZeroValue where Wrapped: ZeroValue {
+  @inlinable
   public init(zeroValue: JSONValue) throws(ZeroValueError) {
-    self = zeroValue == .null ? nil : try Wrapped(zeroValue: zeroValue)
+    if case .null = zeroValue {
+      self = nil
+    } else {
+      self = try Wrapped(zeroValue: zeroValue)
+    }
   }
 
   public var zeroValue: JSONValue { self?.zeroValue ?? .null }
@@ -89,6 +109,7 @@ extension Optional: ZeroValue where Wrapped: ZeroValue {
 
 /// The JSON arrays a `json()` column can hold.
 extension Array: ZeroValue where Element: ZeroValue {
+  @inlinable
   public init(zeroValue: JSONValue) throws(ZeroValueError) {
     guard case .array(let a) = zeroValue else { throw .mismatch("an array", zeroValue) }
     var out: [Element] = []
@@ -104,6 +125,7 @@ extension Array: ZeroValue where Element: ZeroValue {
 public protocol ZeroEnum: ZeroValue, RawRepresentable where RawValue == String {}
 
 extension ZeroEnum {
+  @inlinable
   public init(zeroValue: JSONValue) throws(ZeroValueError) {
     guard case .string(let s) = zeroValue, let v = Self(rawValue: s) else {
       throw .mismatch("one of the cases of \(Self.self)", zeroValue)

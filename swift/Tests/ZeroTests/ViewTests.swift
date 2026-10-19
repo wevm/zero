@@ -24,12 +24,19 @@ import ZeroTesting
   static let remove = defineMutator("issue.remove") { (tx, id: String) in
     try tx.mutate.issue.delete(["id": .string(id)])
   }
+  static let comment = defineMutator("comment.create") { (tx, args: Edit) in
+    try tx.mutate.comment.insert([
+      "id": .string("c-\(args.id)"), "authorId": "u", "issueId": .string(args.id),
+      "text": .string(args.title), "createdAt": 1,
+    ])
+  }
 
   func makeZero() throws -> Zero<Void> {
     var options = ZeroOptions(userID: "u", storageKey: randomID(), storage: .memory)
     options.logSink = RecordingLogSink()
     return try Zero(
-      schema: .test, mutators: [Self.create, Self.retitle, Self.remove], options: options,
+      schema: .test, mutators: [Self.create, Self.retitle, Self.remove, Self.comment],
+      options: options,
       scheduler: ManualScheduler(now: 0), socketFactory: nil)
   }
 
@@ -95,5 +102,29 @@ import ZeroTesting
     #expect(changed.raised)
     #expect(live.data.map(\.title) == ["A"])
     #expect(live.resultType == .unknown)
+  }
+
+  /// A live query reads again only the rows that changed, and must read
+  /// what reading every row would.
+  @Test func liveQueriesKeepUpWithEachKindOfChange() throws {
+    let zero = try makeZero()
+    let live = try zero.liveQuery(zql.issue.related(\.comments).orderBy(\.title, .asc))
+    let steps = [
+      Self.create(Edit(id: "a", title: "1")), Self.create(Edit(id: "b", title: "2")),
+      Self.create(Edit(id: "c", title: "3")), Self.create(Edit(id: "d", title: "4")),
+      // In place, then the first row, a row between two, and the last row
+      // to the front.
+      Self.retitle(Edit(id: "b", title: "2!")), Self.remove("a"),
+      Self.create(Edit(id: "e", title: "2.5")), Self.retitle(Edit(id: "d", title: "0")),
+      // A related row.
+      Self.comment(Edit(id: "e", title: "hi")),
+    ]
+    for step in steps {
+      zero.mutate(step)
+      #expect(live.data == (try [Issue](view: live.view.data)))
+    }
+    #expect(live.data.map(\.id) == ["d", "b", "e", "c"])
+    #expect(live.data.map(\.title) == ["0", "2!", "2.5", "3"])
+    #expect(live.data[2].comments?.map(\.text) == ["hi"])
   }
 }

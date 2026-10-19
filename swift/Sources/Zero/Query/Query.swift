@@ -46,9 +46,10 @@ extension ZeroRow {
 extension ViewEntry {
   /// A column of the row, for generated `init(entry:)`s. A null in a
   /// column that can't be null reads as `V.valueForNull`.
+  @inlinable
   public func column<V: ZeroValue>(_ name: String) throws(ZeroValueError) -> V {
     let value = row[name] ?? .null
-    if value == .null, let fallback = V.valueForNull { return fallback }
+    if case .null = value, let fallback = V.valueForNull { return fallback }
     do {
       return try V(zeroValue: value)
     } catch {
@@ -76,6 +77,8 @@ extension ViewEntry {
 public protocol QueryResult: Sendable {
   associatedtype Row: ZeroRow
   init(view: ViewValue) throws(ZeroValueError)
+  /// The result of rows already read, in the view's order.
+  init(rows: [Row])
 }
 
 extension Array: QueryResult where Element: ZeroRow {
@@ -86,6 +89,8 @@ extension Array: QueryResult where Element: ZeroRow {
     for e in view.entries { out.append(try Element(entry: e)) }
     self = out
   }
+
+  public init(rows: [Element]) { self = rows }
 }
 
 extension Optional: QueryResult where Wrapped: ZeroRow {
@@ -94,6 +99,8 @@ extension Optional: QueryResult where Wrapped: ZeroRow {
   public init(view: ViewValue) throws(ZeroValueError) {
     self = try view.entries.first.map { (e) throws(ZeroValueError) in try Wrapped(entry: e) }
   }
+
+  public init(rows: [Wrapped]) { self = rows.first }
 }
 
 /// A query over the rows of one table, typed by its generated row struct

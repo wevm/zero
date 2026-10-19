@@ -7,34 +7,41 @@ public struct BTreeSet<Element> {
   public typealias Compare = (Element, Element) -> Int
 
   @usableFromInline final class Node {
+    // Unchecked: the tree is a value type that copies shared nodes before
+    // writing them, so no access to a node overlaps a write to it, and the
+    // checks cost more than the reads (`ForwardIterator`).
     /// Leaf: the elements. Internal: the highest element of each child.
-    @usableFromInline var keys: [Element]
+    @exclusivity(unchecked) @usableFromInline var keys: [Element]
     /// Empty for a leaf.
-    @usableFromInline var children: [Node]
+    @exclusivity(unchecked) @usableFromInline var children: [Node]
 
-    @usableFromInline init(keys: [Element], children: [Node] = []) {
+    @inlinable init(keys: [Element], children: [Node] = []) {
       self.keys = keys
       self.children = children
     }
 
     @usableFromInline var isLeaf: Bool { children.isEmpty }
 
-    func copy() -> Node { Node(keys: keys, children: children) }
+    @inlinable func copy() -> Node { Node(keys: keys, children: children) }
   }
 
-  static var maxNodeSize: Int { 64 }
+  @usableFromInline static var maxNodeSize: Int { 64 }
 
   @usableFromInline var root: Node
-  public private(set) var count: Int
+  @usableFromInline var _count: Int
   public let compare: Compare
 
+  public var count: Int { _count }
+
+  @inlinable
   public init(_ compare: @escaping Compare) {
     self.compare = compare
     root = Node(keys: [])
-    count = 0
+    _count = 0
   }
 
   /// Builds a tree from elements already sorted by `compare`, in O(n).
+  @inlinable
   public init<S: Sequence>(sorted elements: S, _ compare: @escaping Compare)
   where S.Element == Element {
     self.compare = compare
@@ -63,12 +70,13 @@ public struct BTreeSet<Element> {
       level = next
     }
     root = level[0]
-    count = n
+    _count = n
   }
 
-  public var isEmpty: Bool { count == 0 }
+  public var isEmpty: Bool { _count == 0 }
 
   /// The stored element equal to `element`.
+  @inlinable
   public func get(_ element: Element) -> Element? {
     var node = root
     while !node.isLeaf {
@@ -81,10 +89,11 @@ public struct BTreeSet<Element> {
     return nil
   }
 
+  @inlinable
   public func contains(_ element: Element) -> Bool { get(element) != nil }
 
   /// Adds `element`, replacing an equal one. Returns whether it was new.
-  @discardableResult
+  @inlinable @discardableResult
   public mutating func add(_ element: Element) -> Bool {
     if !isKnownUniquelyReferenced(&root) { root = root.copy() }
     let (inserted, split) = Self.insert(element, into: root, compare)
@@ -93,31 +102,34 @@ public struct BTreeSet<Element> {
         keys: [root.keys[root.keys.count - 1], split.keys[split.keys.count - 1]],
         children: [root, split])
     }
-    if inserted { count += 1 }
+    if inserted { _count += 1 }
     return inserted
   }
 
   /// Removes the element equal to `element`. Returns whether there was one.
-  @discardableResult
+  @inlinable @discardableResult
   public mutating func delete(_ element: Element) -> Bool {
     if !isKnownUniquelyReferenced(&root) { root = root.copy() }
     let removed = Self.remove(element, from: root, compare)
     while !root.isLeaf && root.children.count == 1 { root = root.children[0] }
     if !root.isLeaf && root.children.isEmpty { root = Node(keys: []) }
-    if removed { count -= 1 }
+    if removed { _count -= 1 }
     return removed
   }
 
   /// The elements, ascending.
+  @inlinable
   public func values() -> ForwardIterator { values(from: nil) }
 
   /// The elements not less than `probe`, ascending. `probe(e)` compares `e`
   /// to the bound: negative when `e` is before it.
+  @inlinable
   public func values(from probe: ((Element) -> Int)?) -> ForwardIterator {
     ForwardIterator(root: root, probe: probe)
   }
 
   /// The elements not greater than `probe`, descending.
+  @inlinable
   public func valuesReversed(from probe: ((Element) -> Int)?) -> ReverseIterator {
     ReverseIterator(root: root, probe: probe)
   }
@@ -126,6 +138,7 @@ public struct BTreeSet<Element> {
 
   /// Inserts into `node`, which the caller made unique. Returns whether the
   /// element was new and the new right sibling if `node` split.
+  @inlinable
   static func insert(_ e: Element, into node: Node, _ compare: Compare) -> (Bool, Node?) {
     if node.isLeaf {
       let i = lowerBound(node.keys) { compare($0, e) }
@@ -149,6 +162,7 @@ public struct BTreeSet<Element> {
     return (inserted, splitIfNeeded(node))
   }
 
+  @inlinable
   static func splitIfNeeded(_ node: Node) -> Node? {
     if node.keys.count <= maxNodeSize { return nil }
     let half = node.keys.count / 2
@@ -160,6 +174,7 @@ public struct BTreeSet<Element> {
   }
 
   /// Removes from `node`, which the caller made unique.
+  @inlinable
   static func remove(_ e: Element, from node: Node, _ compare: Compare) -> Bool {
     let i = lowerBound(node.keys) { compare($0, e) }
     if i == node.keys.count { return false }
@@ -200,10 +215,13 @@ public struct BTreeSet<Element> {
   // MARK: Iteration
 
   public struct ForwardIterator: IteratorProtocol, Sequence {
-    var path: [(Node, Int)] = []
-    var leaf: Node?
-    var index = 0
+    @usableFromInline var path: [(Node, Int)] = []
+    @usableFromInline var leaf: Node?
+    /// The leaf's keys, read once per leaf.
+    @usableFromInline var keys: [Element] = []
+    @usableFromInline var index = 0
 
+    @inlinable
     init(root: Node, probe: ((Element) -> Int)?) {
       var node = root
       while !node.isLeaf {
@@ -213,16 +231,23 @@ public struct BTreeSet<Element> {
         node = node.children[i]
       }
       leaf = node
+      keys = node.keys
       index = probe.map { p in lowerBound(node.keys) { p($0) } } ?? 0
     }
 
+    @inlinable
     public mutating func next() -> Element? {
-      while let l = leaf {
-        if index < l.keys.count {
+      if index < keys.count {
+        index += 1
+        return keys[index - 1]
+      }
+      while leaf != nil {
+        if index < keys.count {
           index += 1
-          return l.keys[index - 1]
+          return keys[index - 1]
         }
         leaf = nil
+        keys = []
         while let (node, ci) = path.popLast() {
           if ci + 1 < node.children.count {
             path.append((node, ci + 1))
@@ -232,6 +257,7 @@ public struct BTreeSet<Element> {
               n = n.children[0]
             }
             leaf = n
+            keys = n.keys
             index = 0
             break
           }
@@ -242,10 +268,11 @@ public struct BTreeSet<Element> {
   }
 
   public struct ReverseIterator: IteratorProtocol, Sequence {
-    var path: [(Node, Int)] = []
-    var leaf: Node?
-    var index = 0
+    @usableFromInline var path: [(Node, Int)] = []
+    @usableFromInline var leaf: Node?
+    @usableFromInline var index = 0
 
+    @inlinable
     init(root: Node, probe: ((Element) -> Int)?) {
       var node = root
       while !node.isLeaf {
@@ -265,6 +292,7 @@ public struct BTreeSet<Element> {
       }
     }
 
+    @inlinable
     public mutating func next() -> Element? {
       while let l = leaf {
         if index >= 0 {

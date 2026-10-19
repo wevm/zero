@@ -235,6 +235,30 @@ enum ViewApply {
     }
   }
 
+  /// Applies `.add` for each node, taking the list out of `parent` once
+  /// rather than for each node.
+  static func addAll(
+    _ parent: inout ViewEntry, _ nodes: some Sequence<Node>, _ schema: SourceSchema,
+    _ relationship: String, _ format: Format
+  ) {
+    guard !schema.isHidden, !format.singular else {
+      for node in nodes { apply(&parent, .add(node), schema, relationship, format) }
+      return
+    }
+    var list = takeList(&parent, relationship)
+    for node in nodes {
+      let pos = search(list, node.row, schema.compareRows)
+      if pos >= 0 {
+        list[pos].refCount += 1
+      } else {
+        var entry = ViewEntry(row: node.row)
+        initializeRelationships(&entry, node, schema, format.relationships)
+        list.insert(entry, at: ~pos)
+      }
+    }
+    parent.relationships[relationship] = .many(list)
+  }
+
   /// `{...existing, ...row}`.
   static func applyEdit(_ entry: inout ViewEntry, _ row: Row) {
     entry.row.merge(row) { _, new in new }
@@ -393,10 +417,7 @@ public final class ArrayView: Output {
 
   private func hydrate() {
     dirty = true
-    let schema = getSchema()
-    for node in input.fetch(FetchRequest()) {
-      ViewApply.apply(&root, .add(node), schema, "", format)
-    }
+    ViewApply.addAll(&root, input.fetch(FetchRequest()), getSchema(), "", format)
     flush()
   }
 
