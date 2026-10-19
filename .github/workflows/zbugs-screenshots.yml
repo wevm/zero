@@ -76,14 +76,18 @@ jobs:
           export TEST_RUNNER_ZBUGS_TOKEN
           device="$(xcrun simctl list devices available -j |
             python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for k,v in d.items() if "iOS" in k for x in v if x["name"].startswith("iPhone")))')"
+          echo "DEVICE=$device" >> "$GITHUB_ENV"
           xcodebuild test -project ZBugs.xcodeproj -scheme ZBugsApp \
             -destination "id=$device" -resultBundlePath "$RUNNER_TEMP/screenshots.xcresult" \
             -skipPackagePluginValidation CODE_SIGNING_ALLOWED=NO
+      # With the client's log (os.Logger, subsystem zero).
       - name: Export screenshots
         if: always()
         run: |
           xcrun xcresulttool export attachments \
             --path "$RUNNER_TEMP/screenshots.xcresult" --output-path "$RUNNER_TEMP/screenshots"
+          xcrun simctl spawn "$DEVICE" log show --last 1h --info --style compact \
+            --predicate 'subsystem == "zero"' > "$RUNNER_TEMP/screenshots/client.log" || true
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:

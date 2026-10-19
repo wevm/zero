@@ -47,6 +47,18 @@ const upstreamURL = (() => {
   return url.toString();
 })();
 
+/**
+ * The API URLs zero-cache may forward to: clients send the URL they know
+ * the API server by, which on this machine can be either loopback name.
+ */
+function apiURLs(path: string) {
+  const hosts =
+    host === '127.0.0.1' || host === 'localhost'
+      ? ['127.0.0.1', 'localhost']
+      : [host];
+  return hosts.map(h => `http://${h}:${apiPort}/api/${path}`).join(',');
+}
+
 function psql(url: string, ...args: string[]) {
   execFileSync('psql', [url, '-v', 'ON_ERROR_STOP=1', '-q', ...args], {
     stdio: ['ignore', 'ignore', 'inherit'],
@@ -136,8 +148,8 @@ const zeroCache = spawn(
       ['ZERO_UPSTREAM_DB']: upstreamURL,
       ['ZERO_REPLICA_FILE']: join(workDir, 'replica.db'),
       ['ZERO_PORT']: String(port),
-      ['ZERO_QUERY_URL']: `http://${host}:${apiPort}/api/query`,
-      ['ZERO_MUTATE_URL']: `http://${host}:${apiPort}/api/mutate`,
+      ['ZERO_QUERY_URL']: apiURLs('query'),
+      ['ZERO_MUTATE_URL']: apiURLs('mutate'),
       ['ZERO_NUM_SYNC_WORKERS']: '1',
       ['ZERO_LOG_LEVEL']: env['ZERO_LOG_LEVEL'] ?? 'info',
     },

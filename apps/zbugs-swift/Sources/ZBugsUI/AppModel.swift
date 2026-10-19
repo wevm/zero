@@ -34,10 +34,10 @@
       self.defaults = defaults
       let cacheURL =
         environment["ZBUGS_CACHE_URL"] ?? defaults.string(forKey: "cacheURL")
-        ?? "http://localhost:4848"
+        ?? "http://127.0.0.1:4848"
       let apiURL =
         environment["ZBUGS_API_URL"] ?? defaults.string(forKey: "apiURL")
-        ?? "http://localhost:5173"
+        ?? "http://127.0.0.1:5173"
       // An expired token logs out.
       let saved = environment["ZBUGS_TOKEN"] ?? Keychain.token
       let auth = saved.flatMap { AuthData(jwt: $0, now: Date().timeIntervalSince1970) }
