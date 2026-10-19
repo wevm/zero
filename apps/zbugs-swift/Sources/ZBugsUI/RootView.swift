@@ -22,6 +22,12 @@
     @State private var selection: String?
     @State private var listLayer = ListLayer.swiftUI
     @State private var sheet: Sheet?
+    /// The column an iPhone shows: the list, with the filters before it and
+    /// the selected issue after.
+    @State private var compactColumn = NavigationSplitViewColumn.content
+    #if os(iOS)
+      @Environment(\.horizontalSizeClass) private var sizeClass
+    #endif
 
     enum Sheet: String, Identifiable {
       case newIssue, login, servers
@@ -31,9 +37,19 @@
     public init() {}
 
     public var body: some View {
-      NavigationSplitView {
+      NavigationSplitView(preferredCompactColumn: $compactColumn) {
         Sidebar(filter: $filter, listLayer: $listLayer)
           .navigationTitle("Zero Bugs")
+          #if os(iOS)
+            .toolbar {
+              // The columns don't report the window's size class.
+              if sizeClass == .compact {
+                ToolbarItem(placement: .confirmationAction) {
+                  Button("Issues") { compactColumn = .content }
+                }
+              }
+            }
+          #endif
       } content: {
         list
           .navigationTitle(filter.status.title + " Issues")
@@ -45,6 +61,11 @@
         } else {
           ContentUnavailableView("No Issue Selected", systemImage: "list.bullet.rectangle")
         }
+      }
+      // The UIKit and AppKit lists set the selection outside a List, which
+      // a collapsed split view doesn't follow on its own.
+      .onChange(of: selection) { _, selection in
+        if selection != nil { compactColumn = .detail }
       }
       .zero(model.zero)
       .environment(model)

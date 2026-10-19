@@ -24,13 +24,24 @@
 
     public nonisolated static let projectName = zeroProjectName
 
-    public init(defaults: UserDefaults = .standard) {
+    /// - Parameter environment: `ZBUGS_TOKEN`, `ZBUGS_CACHE_URL`, and
+    ///   `ZBUGS_API_URL` override the saved token and servers without saving
+    ///   them, for UI tests.
+    public init(
+      defaults: UserDefaults = .standard,
+      environment: [String: String] = ProcessInfo.processInfo.environment
+    ) {
       self.defaults = defaults
-      let cacheURL = defaults.string(forKey: "cacheURL") ?? "http://localhost:4848"
-      let apiURL = defaults.string(forKey: "apiURL") ?? "http://localhost:5173"
+      let cacheURL =
+        environment["ZBUGS_CACHE_URL"] ?? defaults.string(forKey: "cacheURL")
+        ?? "http://localhost:4848"
+      let apiURL =
+        environment["ZBUGS_API_URL"] ?? defaults.string(forKey: "apiURL")
+        ?? "http://localhost:5173"
       // An expired token logs out.
-      let auth = Keychain.token.flatMap { AuthData(jwt: $0, now: Date().timeIntervalSince1970) }
-      let token = auth == nil ? nil : Keychain.token
+      let saved = environment["ZBUGS_TOKEN"] ?? Keychain.token
+      let auth = saved.flatMap { AuthData(jwt: $0, now: Date().timeIntervalSince1970) }
+      let token = auth == nil ? nil : saved
       self.cacheURL = cacheURL
       self.apiURL = apiURL
       self.token = token
