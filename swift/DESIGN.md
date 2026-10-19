@@ -56,6 +56,7 @@ swift/                      Swift package (source of truth)
   Sources/Zero/             core engine, platform-agnostic
   Sources/ZeroUI/           SwiftUI, UIKit, AppKit helpers; URLSession transport
   Sources/ZeroTesting/      drift-harness replay API and test helpers
+  Sources/ZeroNIOTesting/   SwiftNIO WebSocket transport for Linux end-to-end tests
   Tests/...
   VERSION
 packages/zero-conformance/  private JS package: fixtures, vector generators, JS runners
@@ -70,7 +71,8 @@ apps/zbugs-swift/           dogfood app (iOS + macOS)
   mirror directly.
 - The mirror is private until launch, then public. The Swift source is visible
   in this public monorepo either way.
-- SwiftPM products: `Zero`, `ZeroUI`, `ZeroTesting`.
+- SwiftPM products: `Zero`, `ZeroUI`, `ZeroTesting`, and `ZeroNIOTesting`
+  (test-only; the only product that depends on SwiftNIO).
 - The CLI ships as the unscoped npm package `zero-swift` (we don't own the
   `@rocicorp` scope) with a peer dependency on `@rocicorp/zero`. It is
   versioned with the Swift releases.
@@ -199,7 +201,9 @@ Rationale:
   reason, which the client's error handling reads.
 - One writer task per connection sends frames in order.
 - Tests use an in-memory transport that replays scenario vectors, and, on Linux
-  end-to-end runs, a test-only SwiftNIO WebSocket transport.
+  end-to-end runs, `NIOTransport` from `ZeroNIOTesting` (plain `ws://`). Linux
+  needs it because corelibs Foundation's `URLSessionWebSocketTask` compiles
+  but never completes a connection.
 - Wire details follow `zero-protocol`: connect to `/sync/v53/connect`, put
   `initConnection` and the auth token in `Sec-WebSocket-Protocol` while they fit
   under `maxHeaderLength`, and accept binary poke chunks (protocol 52 and later).
@@ -281,6 +285,13 @@ structs, and typed column references for the builder.
 Row struct names are the table names in PascalCase. The generated code stays
 readable enough to hand-write.
 
+Databases drift from schemas: zbugs' Postgres columns allow nulls its schema
+doesn't. JS shows such a row with the null; failing to decode it would empty
+the whole view. So a null in a non-optional `String`, `Double`, `Int`, or
+`Bool` column reads as `""`, `0`, or `false` (`ZeroValue.valueForNull`).
+Enums and JSON types have no such value and fail; declare those columns
+`optional()`.
+
 ### Queries and mutators
 
 Named queries and mutators are hand-written in Swift, including their argument
@@ -337,7 +348,9 @@ zql.issue
   each other without their structs containing each other.
 - `one()` returns `Row?`.
 - Comparing with `nil` (`where(\.assignee, nil)`, `$0.assignee == nil`) uses
-  `IS`, since `= NULL` matches nothing. An explicit `.eq` keeps `=`.
+  `IS`, since `= NULL` matches nothing. An explicit `.eq` keeps `=`, and
+  `where(\.assignee, .eq, optionalValue)` is the port of JS
+  `where('assignee', value)` where `value` may be `undefined`.
 - The typed builder wraps `AnyQuery`, the untyped port of `QueryImpl`, which
   the IVM vectors check against JS.
 
@@ -462,11 +475,12 @@ the Zero convention of passing IDs and timestamps as arguments.
 
 - **Linux, every PR.** Swift build, unit tests, and conformance vectors; the
   vector and drift-vector staleness checks; `apps/zbugs-swift`'s drift test;
-  an end-to-end run against a real `zero-cache` and Postgres.
-- **macOS, path-filtered to `swift/` and `packages/zero-conformance/`.** The
-  Apple layer (URLSession transport against a local mock WebSocket server,
-  SwiftUI, UIKit, and AppKit helpers), iOS simulator tests, and the
-  `apps/zbugs-swift` build.
+  an end-to-end run against a real `zero-cache` and Postgres; and
+  `apps/zbugs-swift` against zbugs' backend (`server/server.ts`).
+- **macOS, path-filtered to `swift/`, `packages/zero-conformance/`, and
+  `apps/zbugs-swift/`.** The Apple layer (URLSession transport against a local
+  mock WebSocket server, SwiftUI, UIKit, and AppKit helpers), iOS simulator
+  tests, and the zbugs app built for iOS and macOS.
 - **Benchmarks.** Ports of the key JS benchmarks
   (`zero-client/src/client/zero.bench.ts`, the shared B-tree and hash
   benchmarks) plus Swift benchmarks for query hydration over N rows, poke
@@ -481,6 +495,11 @@ the Zero convention of passing IDs and timestamps as arguments.
 - Features: issue list with filters, issue detail, comments, labels, create
   and edit issue.
 - Built in macOS CI; not shipped to TestFlight or the App Store in v1.
+- Layout: `ZBugs` (generated schema, queries, mutators, auth; builds on
+  Linux), `ZBugsUI` (the SwiftUI app and the UIKit and AppKit lists), `App/`
+  (an XcodeGen project with one multiplatform target), and `server/server.ts`
+  (zbugs' backend from this repository's sources: Postgres with zbugs'
+  migrations and seed data, the API server, and `zero-cache`).
 - Auth: zbugs login sets the JWT as a browser cookie and redirects
   (`apps/zbugs/api/index.ts`), which a native app can't read. An additive
   change to the zbugs API allows a `zbugs-swift://` redirect that carries the

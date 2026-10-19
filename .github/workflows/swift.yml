@@ -138,6 +138,30 @@ jobs:
         env:
           ZERO_E2E_URL: ws://127.0.0.1:4848
         run: swift test --skip-build --filter E2ETests
-      - name: Server log
+      # zbugs' Swift port against zbugs' backend: its migrations and seed
+      # data, its API server running the TS queries and mutators, and
+      # zero-cache.
+      - name: Start zbugs' backend
+        env:
+          ZBUGS_PG: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+          ZBUGS_PORT: '4858'
+          ZBUGS_API_PORT: '5183'
+        run: |
+          node apps/zbugs-swift/server/server.ts > "$RUNNER_TEMP/zbugs.log" 2>&1 &
+          for _ in $(seq 1 300); do
+            grep -q '^ready ' "$RUNNER_TEMP/zbugs.log" && exit 0
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/zbugs.log"
+          exit 1
+      - name: Test zbugs against its backend
+        working-directory: apps/zbugs-swift
+        run: |
+          ZBUGS_E2E_TOKEN="$(grep '^token ' "$RUNNER_TEMP/zbugs.log" | cut -d' ' -f2)" \
+          ZBUGS_E2E_URL=http://127.0.0.1:4858 ZBUGS_E2E_API=http://127.0.0.1:5183 \
+            swift test --filter BackendTests
+      - name: Server logs
         if: failure()
-        run: cat "$RUNNER_TEMP/server.log"
+        run: |
+          cat "$RUNNER_TEMP/server.log"
+          cat "$RUNNER_TEMP/zbugs.log" || true

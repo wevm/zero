@@ -1,7 +1,55 @@
 # zbugs on the Zero Swift client
 
-The schema, queries, and mutators of [zbugs](../zbugs) (`apps/zbugs/shared`),
-ported to Swift as the `ZBugs` library.
+[zbugs](../zbugs) as a native app for iOS and macOS:
+
+- `ZBugs`: zbugs' schema, queries, and mutators (`apps/zbugs/shared`),
+  ported to Swift. Builds on Linux too.
+- `ZBugsUI`: the app's screens in SwiftUI, with the issue list also in UIKit
+  (iOS) and AppKit (macOS) through `DiffableAdapter`.
+- `App/`: the app target, as an [XcodeGen](https://github.com/yonaskolb/XcodeGen)
+  project.
+- `server/server.ts`: zbugs' backend from this repository's sources, for the
+  app and the end-to-end tests.
+
+## Running the app
+
+Start the backend. It needs Node 24, `psql`, and Postgres with
+`wal_level = logical` (for example `docker compose up` in
+`apps/zbugs/docker`, which listens on 6434):
+
+```sh
+ZBUGS_PG=postgresql://user:password@127.0.0.1:6434/postgres \
+  node apps/zbugs-swift/server/server.ts
+```
+
+It recreates the `zbugs_swift` database with zbugs' seed data, then prints a
+token for a crew user and `ready <zero-cache> <API>` (ports 4848 and 5173).
+
+Then generate the Xcode project and run the `ZBugsApp` scheme on a Mac or an
+iOS simulator:
+
+```sh
+cd apps/zbugs-swift/App
+xcodegen generate
+open ZBugs.xcodeproj
+```
+
+Log in from the account menu with the printed token, or through GitHub when
+the API server has `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` (it
+redirects back to `zbugs-swift://auth`). Servers… points the app elsewhere.
+
+## End-to-end tests
+
+`BackendTests` runs the Swift queries and mutators against the backend: the
+API server runs the TS versions, and the test checks that both sides agree.
+It is skipped unless the backend's URLs and a token are set:
+
+```sh
+ZBUGS_E2E_URL=http://127.0.0.1:4848 ZBUGS_E2E_API=http://127.0.0.1:5173 \
+  ZBUGS_E2E_TOKEN=<token> swift test --filter BackendTests
+```
+
+## Keeping the port current
 
 - `Sources/ZBugs/Schema.swift` is generated from `apps/zbugs/shared/schema.ts`
   by `zero-swift codegen` (config in `zero-swift.json`).
