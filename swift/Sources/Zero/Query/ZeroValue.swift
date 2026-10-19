@@ -17,6 +17,16 @@ public protocol ZeroValue: Sendable {
   /// Reads a value from a row; a missing column reads as `.null`.
   init(zeroValue: JSONValue) throws(ZeroValueError)
   var zeroValue: JSONValue { get }
+  /// What a row's null reads as when the schema says the column can't be
+  /// null; nil to fail. Databases drift from schemas, and JS shows such a
+  /// row with the null rather than failing, so strings, numbers, and
+  /// booleans read as `""`, `0`, and `false`. Declare the column
+  /// `optional()` to read the null.
+  static var valueForNull: Self? { get }
+}
+
+extension ZeroValue {
+  public static var valueForNull: Self? { nil }
 }
 
 extension String: ZeroValue {
@@ -26,6 +36,7 @@ extension String: ZeroValue {
   }
 
   public var zeroValue: JSONValue { .string(self) }
+  public static var valueForNull: String? { "" }
 }
 
 extension Double: ZeroValue {
@@ -35,6 +46,7 @@ extension Double: ZeroValue {
   }
 
   public var zeroValue: JSONValue { .number(self) }
+  public static var valueForNull: Double? { 0 }
 }
 
 /// For a `number()` column the codegen config declares an integer: the
@@ -48,6 +60,7 @@ extension Int: ZeroValue {
   }
 
   public var zeroValue: JSONValue { .number(Double(self)) }
+  public static var valueForNull: Int? { 0 }
 }
 
 extension Bool: ZeroValue {
@@ -57,6 +70,7 @@ extension Bool: ZeroValue {
   }
 
   public var zeroValue: JSONValue { .bool(self) }
+  public static var valueForNull: Bool? { false }
 }
 
 extension JSONValue: ZeroValue {

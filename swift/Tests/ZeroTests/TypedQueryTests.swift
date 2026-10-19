@@ -150,6 +150,18 @@ import Testing
     #expect(bare.owner == nil && bare.comments == nil && bare.ownerId == nil)
   }
 
+  @Test func readsANullInAColumnThatCannotBeNullAsZero() throws {
+    let issues = try materialize(
+      zql.issue,
+      ["issue": [["id": "i1", "title": nil, "description": nil, "closed": nil, "createdAt": nil]]])
+    #expect(issues.map(\.title) == [""])
+    #expect(issues.map(\.closed) == [false])
+    #expect(issues.map(\.createdAt) == [0])
+    #expect(issues.map(\.ownerId) == [nil])
+    // An enum has no zero to read a null as.
+    #expect(FxStatus.valueForNull == nil)
+  }
+
   @Test func rejectsValuesTheRowTypesCannotHold() throws {
     #expect(throws: ZeroValueError.self) {
       try FxStatus(zeroValue: "reopened")

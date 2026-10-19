@@ -4,19 +4,21 @@ import NIOPosix
 import NIOWebSocket
 import Zero
 
-/// A `Transport` over SwiftNIO for the Linux end-to-end tests: plain `ws://`
-/// only, and no TLS.
-struct NIOTransport: Transport {
-  struct Failure: Error, CustomStringConvertible {
-    var description: String
+/// A `Transport` over SwiftNIO for end-to-end tests on Linux, where
+/// Foundation has no dependable WebSocket: plain `ws://` only, and no TLS.
+public struct NIOTransport: Transport {
+  public struct Failure: Error, CustomStringConvertible {
+    public var description: String
   }
+
+  public init() {}
 
   private enum Upgrade {
     case websocket(NIOAsyncChannel<WebSocketFrame, WebSocketFrame>)
     case declined
   }
 
-  func connect(url: String, secProtocol: String?) async throws -> any Socket {
+  public func connect(url: String, secProtocol: String?) async throws -> any Socket {
     let (host, port, uri) = try Self.parse(url)
     let upgrade: EventLoopFuture<Upgrade> = try await ClientBootstrap(
       group: MultiThreadedEventLoopGroup.singleton

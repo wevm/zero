@@ -44,10 +44,13 @@ extension ZeroRow {
 }
 
 extension ViewEntry {
-  /// A column of the row, for generated `init(entry:)`s.
+  /// A column of the row, for generated `init(entry:)`s. A null in a
+  /// column that can't be null reads as `V.valueForNull`.
   public func column<V: ZeroValue>(_ name: String) throws(ZeroValueError) -> V {
+    let value = row[name] ?? .null
+    if value == .null, let fallback = V.valueForNull { return fallback }
     do {
-      return try V(zeroValue: row[name] ?? .null)
+      return try V(zeroValue: value)
     } catch {
       throw ZeroValueError("\(name): \(error.description)")
     }

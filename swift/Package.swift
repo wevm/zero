@@ -8,6 +8,7 @@ let package = Package(
     .library(name: "Zero", targets: ["Zero"]),
     .library(name: "ZeroUI", targets: ["ZeroUI"]),
     .library(name: "ZeroTesting", targets: ["ZeroTesting"]),
+    .library(name: "ZeroNIOTesting", targets: ["ZeroNIOTesting"]),
   ],
   dependencies: [
     // Test-only: the WebSocket transport of the Linux end-to-end tests.
@@ -20,13 +21,9 @@ let package = Package(
     .target(name: "Zero", dependencies: ["CSQLite"]),
     .target(name: "ZeroUI", dependencies: ["Zero"]),
     .target(name: "ZeroTesting", dependencies: ["Zero"]),
-    .testTarget(name: "ZeroTests", dependencies: ["Zero", "ZeroTesting"]),
-    .testTarget(name: "ConformanceTests", dependencies: ["Zero", "ZeroTesting"]),
-    // The Apple layer: the URLSession transport, SwiftUI, UIKit, and AppKit.
-    // Empty elsewhere.
-    .testTarget(name: "AppleTests", dependencies: ["Zero", "ZeroUI", "ZeroTesting"]),
-    .testTarget(
-      name: "E2ETests",
+    // A plain ws:// transport for end-to-end tests on Linux.
+    .target(
+      name: "ZeroNIOTesting",
       dependencies: [
         "Zero",
         .product(name: "NIOCore", package: "swift-nio"),
@@ -34,6 +31,12 @@ let package = Package(
         .product(name: "NIOHTTP1", package: "swift-nio"),
         .product(name: "NIOWebSocket", package: "swift-nio"),
       ]),
+    .testTarget(name: "ZeroTests", dependencies: ["Zero", "ZeroTesting"]),
+    .testTarget(name: "ConformanceTests", dependencies: ["Zero", "ZeroTesting"]),
+    // The Apple layer: the URLSession transport, SwiftUI, UIKit, and AppKit.
+    // Empty elsewhere.
+    .testTarget(name: "AppleTests", dependencies: ["Zero", "ZeroUI", "ZeroTesting"]),
+    .testTarget(name: "E2ETests", dependencies: ["Zero", "ZeroNIOTesting"]),
   ],
   swiftLanguageModes: [.v6]
 )
