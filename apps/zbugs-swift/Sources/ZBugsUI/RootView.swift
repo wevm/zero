@@ -114,13 +114,24 @@
       case .swiftUI:
         IssueList(filter: filter, selection: $selection)
       case .native:
-        IssueTable(zero: model.zero, filter: filter, selection: selection) { id in
+        IssueTable(zero: model.zero, filter: filter, selection: highlighted) { id in
           selection = id
           // Also when it's the issue the detail shows, which doesn't change
           // the selection.
           compactColumn = .detail
         }
       }
+    }
+
+    /// The issue the list highlights: the selected one, when the list is
+    /// beside it (not on an iPhone). The columns themselves are compact on an
+    /// iPad too.
+    private var highlighted: String? {
+      #if os(iOS)
+        sizeClass == .compact ? nil : selection
+      #else
+        selection
+      #endif
     }
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {

@@ -42,10 +42,8 @@
         adapter = DiffableAdapter(view, section: 0, dataSource: dataSource)
       }
 
-      /// Highlights the issue the detail shows, except on an iPhone, where
-      /// the list and the issue aren't side by side.
+      /// Highlights the issue the detail shows.
       func select(_ issueID: String?) {
-        guard traitCollection.horizontalSizeClass != .compact else { return }
         let indexPath = issueID.flatMap { issueID in
           adapter?.rows.first { $0.value.id == issueID }
             .flatMap { dataSource?.indexPath(for: $0.key) }
