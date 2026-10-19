@@ -1,5 +1,6 @@
 import {mkdirSync, readFileSync, writeFileSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
+import {runInNewContext} from 'node:vm';
 import {expect} from 'vitest';
 
 /**
@@ -12,6 +13,28 @@ const vectorsDir = fileURLToPath(new URL('../vectors/', import.meta.url));
 const generatedDir = fileURLToPath(new URL('../generated/', import.meta.url));
 
 export const updateVectors = process.env['UPDATE_VECTORS'] === '1';
+
+/**
+ * Throws when this runtime's `JSON.parse` misreads escaped keys. Once Node
+ * 24.22's V8 has parsed an object keyed by a backslash, it reads the JSON text
+ * `{"\n":2}` as keyed by a backslash too. Vectors written on such a runtime
+ * would hold its wrong answers, so generate them with the Node in `.nvmrc`.
+ * The probe runs in a fresh context because the bug depends on what the
+ * process parsed before.
+ */
+function assertSoundJSONParse(): void {
+  const key: unknown = runInNewContext(
+    String.raw`JSON.parse('{"\\\\":1}'); Object.keys(JSON.parse('{"\\n":2}'))[0]`,
+  );
+  if (key !== '\n') {
+    throw new Error(
+      `JSON.parse in Node ${process.version} misreads escaped keys; ` +
+        'generate vectors with the Node version in .nvmrc',
+    );
+  }
+}
+
+assertSoundJSONParse();
 
 export type VectorFile<T> = {
   formatVersion: number;
