@@ -66,10 +66,11 @@
       } content: {
         list
           .navigationTitle(filter.status.title + " Issues")
+          .searchable(text: $filter.text, prompt: "Search issues")
           #if os(macOS)
+            // After `searchable`, which drops a width set before it.
             .navigationSplitViewColumnWidth(min: 280, ideal: 340)
           #endif
-          .searchable(text: $filter.text, prompt: "Search issues")
           .toolbar { toolbar }
       } detail: {
         if let selection {
