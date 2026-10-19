@@ -3,7 +3,8 @@ name: zbugs screenshots
 # Runs the Swift zbugs app on an iPhone and an iPad simulator and on macOS
 # against zbugs' backend (apps/zbugs-swift/server/server.ts), and keeps a
 # screenshot of each screen (apps/zbugs-swift/App/UITests) as the
-# zbugs-screenshots artifact.
+# zbugs-screenshots artifact. Then it stops the backend and runs each again
+# offline, from what the app stored locally.
 # Path-filtered to the app and the UI layer: macOS runners are slow to start.
 
 on:
@@ -93,6 +94,20 @@ jobs:
           screenshots iPad -destination "id=$(simulator iPad)" CODE_SIGNING_ALLOWED=NO
           # A macOS UI test needs a signed app; ad hoc does.
           screenshots macOS -destination platform=macOS CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=-
+          # Again offline: with the backend stopped, each screen comes from
+          # what the app stored locally while it synced.
+          pkill -f apps/zbugs-swift/server/server.ts
+          for _ in $(seq 1 30); do
+            curl -s -o /dev/null http://127.0.0.1:4848/ || break
+            sleep 1
+          done
+          if curl -s -o /dev/null http://127.0.0.1:4848/; then
+            echo "zero-cache is still serving"
+            exit 1
+          fi
+          screenshots iPhone-offline -destination "id=$(simulator iPhone)" CODE_SIGNING_ALLOWED=NO
+          screenshots iPad-offline -destination "id=$(simulator iPad)" CODE_SIGNING_ALLOWED=NO
+          screenshots macOS-offline -destination platform=macOS CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=-
           exit "$status"
       - name: Export screenshots
         if: always()
