@@ -21,10 +21,16 @@ struct ChatScreen: View {
       // Off the safe area's edges, the scroll view's frame is its viewport,
       // which the UI tests measure rows against.
       Divider()
-      VirtualList(list) { item in
-        MessageRow(message: item.row)
+      // On screen once it knows where to open, the latest message: shown
+      // before, it would draw the top of the chat for a frame.
+      if started {
+        VirtualList(list) { item in
+          MessageRow(message: item.row)
+        }
+        .accessibilityIdentifier("list")
+      } else {
+        Spacer()
       }
-      .accessibilityIdentifier("list")
       Divider()
       HStack {
         Button("Receive") { backend.receive() }.accessibilityIdentifier("receive")

@@ -19,8 +19,8 @@ import SwiftUI
 ///
 /// - Driven by the probe itself (`drive`), the scroll is known exactly: the
 ///   rows must move by it, to the half point.
-/// - Flung by a finger (iOS), the momentum is smooth: a frame whose speed
-///   departs from both of its neighbors' is a jump in it.
+/// - Flung by a finger (iOS), the momentum is smooth: two frames whose
+///   speed departs from both neighboring pairs' are a jump in it.
 /// - At rest, nothing moves.
 /// - A jump (Latest) shows the rows as they were, then as they end up, and
 ///   nothing in between.
@@ -39,7 +39,7 @@ final class FrameProbe {
   @ObservationIgnored private var markers: [String: WeakView] = [:]
   @ObservationIgnored private(set) weak var scrollView: PlatformScrollView?
   @ObservationIgnored private var previous: Sample?
-  @ObservationIgnored private var smooth: [(v: Double, real: Bool, sample: Sample, dy: Double)] =
+  @ObservationIgnored private var smooth: [(dy: Double, dt: Double, real: Bool, sample: Sample)] =
     []
   @ObservationIgnored private var applied: Double?
   @ObservationIgnored private var drive: (velocity: Double, done: CheckedContinuation<Void, Never>)?
@@ -50,6 +50,17 @@ final class FrameProbe {
   @ObservationIgnored private var wrongByPhase: [(String, Int)] = []
   @ObservationIgnored private(set) var wrong = 0
   @ObservationIgnored private var frames = 0
+  @ObservationIgnored private var moving = 0
+  @ObservationIgnored private var dropped = 0
+  /// The last wrong frames' reasons, for a failing test's message.
+  @ObservationIgnored private var lastWrong: [String] = []
+  private static var frameInterval: Double {
+    #if os(iOS)
+      1 / Double(UIScreen.main.maximumFramesPerSecond)
+    #else
+      1 / Double(NSScreen.main?.maximumFramesPerSecond ?? 60)
+    #endif
+  }
   @ObservationIgnored private var flings: [String] = []
   @ObservationIgnored private var done = false
   @ObservationIgnored private var ticker: AnyObject?
@@ -100,8 +111,8 @@ final class FrameProbe {
   func finish() {
     finishJump()
     done = true
-    log("DONE \(summary)")
     publish()
+    log("DONE \(summary)")
   }
 
   /// A programmatic jump starts: the frames until it settles are checked
@@ -140,6 +151,12 @@ final class FrameProbe {
     if scrollView.window == nil { return }
     let sample = sample(t, scrollView)
     frames += 1
+    // A frame interval over 1.5 of the display's: frames dropped while the
+    // list moves.
+    if let previous, drive != nil || sample.decelerating {
+      moving += 1
+      if t - previous.t > 1.5 * Self.frameInterval { dropped += 1 }
+    }
     if let previous { check(previous, sample) }
     previous = sample
     step(t, scrollView)
@@ -151,7 +168,9 @@ final class FrameProbe {
       let port = scrollView.convert(scrollView.bounds, to: nil)
         .inset(by: scrollView.adjustedContentInset)
       for (id, m) in markers {
-        guard let v = m.view, v.window != nil, v.bounds.height > 0 else { continue }
+        guard let v = m.view, v.window != nil, v.bounds.height > 0, !Self.hidden(v) else {
+          continue
+        }
         let r = v.convert(v.bounds, to: nil)
         guard r.maxY > port.minY + 0.5, r.minY < port.maxY - 0.5 else { continue }
         s.rows[id] = (Double(r.minY - port.minY), Double(r.maxY - port.minY))
@@ -164,7 +183,9 @@ final class FrameProbe {
       let clip = scrollView.contentView
       let port = clip.convert(clip.bounds, to: nil)
       for (id, m) in markers {
-        guard let v = m.view, v.window != nil, v.bounds.height > 0 else { continue }
+        guard let v = m.view, v.window != nil, v.bounds.height > 0, !Self.hidden(v) else {
+          continue
+        }
         let r = v.convert(v.bounds, to: nil)
         // Window coordinates count up from the bottom.
         let minY = port.maxY - r.maxY
@@ -216,17 +237,29 @@ final class FrameProbe {
     trackFling(a, b, dy)
   }
 
-  /// Momentum is smooth: a frame whose speed departs from both neighbors'
-  /// is a jump. Checked one frame late, once the next frame is in.
+  /// Momentum is smooth: two frames whose speed departs from both
+  /// neighboring pairs' is a jump in it. Checked over pairs, as UIKit moves
+  /// a slow fling every other frame; and not across a late frame, after
+  /// which momentum catches up (counted as dropped instead).
   private func smoothCheck(dy: Double, a: Sample, b: Sample) {
-    let dt = max(0.001, b.t - a.t)
-    smooth.append((dy / dt, !(a.tracking || b.tracking), b, dy))
-    if smooth.count > 3 { smooth.removeFirst() }
-    guard smooth.count == 3, smooth.allSatisfy(\.real) else { return }
-    let (p, m, n) = (smooth[0], smooth[1], smooth[2])
+    smooth.append((dy, b.t - a.t, !(a.tracking || b.tracking), b))
+    if smooth.count > 6 { smooth.removeFirst() }
+    guard smooth.count == 6, smooth.allSatisfy(\.real),
+      smooth.allSatisfy({ $0.dt <= 1.5 * Self.frameInterval })
+    else { return }
+    func speed(_ i: Int) -> Double {
+      (smooth[i].dy + smooth[i + 1].dy) / (smooth[i].dt + smooth[i + 1].dt)
+    }
+    let (p, m, n) = (speed(0), speed(2), speed(4))
     let limit = 300.0
-    if abs(m.v - p.v) > limit && abs(m.v - n.v) > limit {
-      flag(m.sample, "speed \(fmt(m.v)) between \(fmt(p.v)) and \(fmt(n.v)) (moved \(fmt(m.dy)))")
+    let sample = smooth[3].sample
+    let moved = smooth[2].dy + smooth[3].dy
+    if abs(m - p) > limit && abs(m - n) > limit {
+      // Once per jump: the next check starts after it.
+      smooth.removeAll()
+      flag(
+        sample,
+        "speed \(fmt(m)) between \(fmt(p)) and \(fmt(n)) (moved \(fmt(moved)))")
     }
   }
 
@@ -279,14 +312,16 @@ final class FrameProbe {
     let was = before.map { b in
       " was " + b.ids.prefix(2).map { "\($0)@\(fmt(b.rows[$0]!.minY))" }.joined(separator: " ")
     }
-    log("WRONG [\(phase)] \(why): \(rows)\(was ?? "")")
+    let line = "WRONG [\(phase)] \(why): \(rows)\(was ?? "")"
+    lastWrong = Array((lastWrong + [line]).suffix(4))
+    log(line)
     publish()
   }
 
   private func publish() {
     let phases = wrongByPhase.map { "\($0.0):\($0.1)" }.joined(separator: ",")
     summary =
-      "wrong=\(wrong) frames=\(frames) phases=[\(phases)] flings=[\(flings.suffix(8).joined(separator: ","))]\(done ? " done" : "")"
+      "wrong=\(wrong) frames=\(frames) moving=\(moving) dropped=\(dropped) phases=[\(phases)] flings=[\(flings.suffix(8).joined(separator: ","))] last=[\(lastWrong.joined(separator: "; "))]\(done ? " done" : "")"
   }
 
   private func log(_ s: String) {
@@ -328,6 +363,20 @@ final class FrameProbe {
     } else {
       drive = (v, d.done)
     }
+  }
+
+  /// A row's view the list hides: drawn rows only count.
+  private static func hidden(_ view: PlatformView) -> Bool {
+    #if os(iOS)
+      var v: UIView? = view
+      while let s = v {
+        if s.isHidden { return true }
+        v = s.superview
+      }
+      return false
+    #else
+      return view.isHiddenOrHasHiddenAncestor
+    #endif
   }
 
   private static func enclosingScrollView(_ view: PlatformView) -> PlatformScrollView? {
