@@ -68,10 +68,13 @@
       #endif
     }
 
-    /// Runs the main run loop until `done`, for at most `seconds`.
-    func run(_ seconds: Double, until done: () -> Bool) {
+    /// Waits until `done`, for at most `seconds`, leaving the main actor
+    /// free: the server's deliveries and SwiftUI's layout run on it. (A
+    /// nested run loop wouldn't drain the main queue from a test running on
+    /// it.)
+    func run(_ seconds: Double, until done: () -> Bool) async throws {
       let end = Date().addingTimeInterval(seconds)
-      while Date() < end, !done() { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+      while Date() < end, !done() { try await Task.sleep(for: .milliseconds(20)) }
     }
 
     /// The scroll view's offset from the content's top and the height it
@@ -102,14 +105,14 @@
       #endif
     }
 
-    @Test func scrollsToARowFarBelow() throws {
+    @Test func scrollsToARowFarBelow() async throws {
       let (zero, list) = try makeList()
       let window = show(VirtualList(list) { Text($0.row.text).frame(height: 30) })
-      run(5) { list.snapshot.complete && !list.snapshot.items.isEmpty }
+      try await run(5) { list.snapshot.complete && !list.snapshot.items.isEmpty }
       #expect(list.snapshot.items.first?.key == Self.id(0))
       list.scrollToItem(Self.id(250), align: .end)
-      run(5) { list.lastVisibleItem()?.key == Self.id(250) }
-      run(0.5) { false }
+      try await run(5) { list.lastVisibleItem()?.key == Self.id(250) }
+      try await run(0.5) { false }
       #expect(list.lastVisibleItem()?.key == Self.id(250))
       // The scroll view itself moved there, not just the virtualizer's idea
       // of it: n250's bottom (30-point rows) at the viewport's.

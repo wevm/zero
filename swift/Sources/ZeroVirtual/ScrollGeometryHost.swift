@@ -107,8 +107,10 @@ package final class ScrollGeometryHost: VirtualHost {
     // A row not measured yet is laid out on a pass still coming; so is
     // content that doesn't reach the last row yet. Rows can report before
     // the scroll view does, and the core scrolls within `contentHeight`.
+    // A point of slack: the scroll view rounds its content size to pixels,
+    // and rows of text have fractional heights.
     guard items.allSatisfy({ heights[$0.key] != nil }),
-      contentHeight >= (rowFrames().last?.maxY ?? 0)
+      contentHeight + 1 >= (rowFrames().last?.maxY ?? 0)
     else { return }
     afterUpdate()
   }

@@ -121,6 +121,13 @@ final class GeometryScrollView {
     run()
     #expect(updates == 1)
     #expect(host.rowFrames().map(\.maxY) == [20, 50])
+
+    // Content the view rounded to the pixel below the rows' fractional end.
+    host.rowFrame("b", minY: 20, maxY: 60.33)
+    host.geometry(
+      contentOffset: 0, containerHeight: 100, contentHeight: 60, insetTop: 0, insetBottom: 0)
+    run()
+    #expect(updates == 2)
   }
 
   @Test("its own scroll lands and is reported; the user's is reported once")
