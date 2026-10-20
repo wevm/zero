@@ -529,7 +529,9 @@ package final class VirtualizerCore<
       lastSettleContext = options.listContext
       resetSettleTimer()
     }
-    measureAndCompensate()
+    // Space that takes up rows moving moves them back on the next layout:
+    // the rows aren't where paging would read them until then.
+    let respaced = measureAndCompensate()
     restoreOrReset()
     updatePageSize()
     land()
@@ -539,7 +541,7 @@ package final class VirtualizerCore<
     updatePaging()
     resolveProbe()
     repinToBottom()
-    evaluatePaging()
+    if !respaced { evaluatePaging() }
     persist(onlyIfChanged: true)
   }
 
@@ -728,29 +730,35 @@ package final class VirtualizerCore<
     setScrollOffset(host.scrollOffset + delta)
   }
 
-  private func measureAndCompensate() {
-    guard manual, !anchorSuppressed, isListContextCurrent, !landing, let host else { return }
+  /// Keeps the anchor row in place; true when the space before the rows
+  /// took up its move, which the next layout applies.
+  @discardableResult
+  private func measureAndCompensate() -> Bool {
+    guard manual, !anchorSuppressed, isListContextCurrent, !landing, let host else {
+      return false
+    }
     // At the top, rows added above are revealed, not compensated away.
     if host.scrollOffset <= 0 {
       refreshAnchor()
-      return
+      return false
     }
     guard let key = anchorKey, let ref = frame(host, key: key) else {
       refreshAnchor()
-      return
+      return false
     }
     let delta = ref.minY - anchorOffset
     defer { reconciling = false }
-    if abs(delta) < 0.5 { return }
+    if abs(delta) < 0.5 { return false }
     // Taken up by the space before the rows, which moves them back, when
     // it can be: the scroll view isn't touched, so a fling carries on.
     let space = snapshot.spaceBefore - delta
     if !reconciling, space >= 0 {
       spaceAdjust = space - estimatedSpaceBefore
       version += 1
-      return
+      return true
     }
     compensate(delta)
+    return false
   }
 
   // Once scrolling stops, space short of its estimate goes back to it, and
