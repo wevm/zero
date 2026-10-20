@@ -101,6 +101,14 @@ public protocol VirtualHost: AnyObject {
   var contentHeight: Double { get }
   /// The rendered rows, in list order.
   func rowFrames() -> [VirtualRowFrame]
+  /// A scroll and a new snapshot are applied in the same layout pass, and a
+  /// scroll doesn't stop a fling: the list can scroll while it may be
+  /// moving. False by default.
+  var scrollsWithLayout: Bool { get }
+}
+
+extension VirtualHost {
+  public var scrollsWithLayout: Bool { false }
 }
 
 /// What the list renders (`VirtualizerSnapshot`).
@@ -533,7 +541,8 @@ package final class VirtualizerCore<
     }
     // Space that takes up rows moving moves them back on the next layout:
     // the rows aren't where paging would read them until then.
-    let respaced = measureAndCompensate()
+    var respaced = measureAndCompensate()
+    if dropSpaceAtStart() { respaced = true }
     restoreOrReset()
     updatePageSize()
     land()
@@ -761,6 +770,25 @@ package final class VirtualizerCore<
     }
     compensate(delta)
     return false
+  }
+
+  /// At the start nothing stands before the first row: on a host that
+  /// scrolls with its layout, space left over there (from rows that came
+  /// out shorter, or carried over as the first page arrived) comes out at
+  /// once, with a scroll by as much in the same pass, so no frame shows a
+  /// gap above the first row, even mid-fling. What the offset can't take,
+  /// near the top, waits for the list to rest.
+  private func dropSpaceAtStart() -> Bool {
+    guard manual, rows.atStart, spaceAdjust > 0, isListContextCurrent, !landing, let host,
+      host.scrollsWithLayout
+    else { return false }
+    let removed = min(spaceAdjust, max(0, host.scrollOffset))
+    guard removed >= 0.5 else { return false }
+    spaceAdjust -= removed
+    anchorOffset -= removed
+    version += 1
+    setScrollOffset(host.scrollOffset - removed)
+    return true
   }
 
   // Once scrolling stops, space short of its estimate goes back to it, and

@@ -165,6 +165,19 @@ struct ManualAnchoringTests {
     #expect(h.rowTop("r50") == 0)
   }
 
+  @Test(
+    "on a host that scrolls with its layout, shrinkage at the start comes out with a scroll at once"
+  )
+  func shrinkageAboveScrollsWithLayout() {
+    let h = scrolled()
+    h.view.scrollsWithLayout = true
+    h.setRowHeight("r30", 5)
+    h.tick()
+    #expect(h.core.snapshot.spaceBefore == 0)
+    #expect(h.scrollOffset == 985)
+    #expect(h.rowTop("r50") == 0)
+  }
+
   @Test("away from the start, the space before the rows takes up growth; at rest it's given back")
   func spaceTakesUpChange() {
     let h = Harness(rowCount: 1000) { $0.anchoring = .manual }

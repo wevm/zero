@@ -15,6 +15,7 @@ package final class LayoutHost: VirtualHost {
   package private(set) var viewportHeight = 0.0
   package var viewportInsets: (top: Double, bottom: Double) { (0, 0) }
   package private(set) var contentHeight = 0.0
+  package var scrollsWithLayout: Bool { true }
 
   /// The rows to lay out, and the space before and after them: the
   /// snapshot's.

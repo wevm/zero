@@ -72,6 +72,8 @@ final class FrameProbe {
     var tracking = false
     var decelerating = false
     var atEdge = false
+    /// The viewport's top in content coordinates: below 0 in a bounce.
+    var offset = 0.0
 
     /// Top to bottom.
     var ids: [String] { rows.sorted { $0.value.minY < $1.value.minY }.map(\.key) }
@@ -178,6 +180,7 @@ final class FrameProbe {
       s.tracking = scrollView.isTracking
       s.decelerating = scrollView.isDecelerating
       let y = scrollView.contentOffset.y + scrollView.adjustedContentInset.top
+      s.offset = Double(y)
       s.atEdge = y <= 0.5 || y >= scrollView.contentSize.height - viewportHeight - 0.5
     #else
       let clip = scrollView.contentView
@@ -194,6 +197,7 @@ final class FrameProbe {
         s.rows[id] = (Double(minY), Double(maxY))
       }
       let y = clip.bounds.origin.y
+      s.offset = Double(y)
       let height = scrollView.documentView?.frame.height ?? 0
       s.atEdge = y <= 0.5 || y >= height - clip.bounds.height - 0.5
     #endif
@@ -235,6 +239,18 @@ final class FrameProbe {
       flag(b, "\(anchor) moved \(fmt(dy)) at rest", a)
     }
     trackFling(a, b, dy)
+    // At rest, the list's first row is at its top or above: space below
+    // it is a gap the list shows, not a bounce (which only moves).
+    if !real, driven == nil, drive == nil, let first = Self.firstID,
+      let y = b.rows[first]?.minY, y > 0.5
+    {
+      flag(b, "gap of \(fmt(y)) above \(first) at rest (offset \(fmt(b.offset)))")
+    }
+  }
+
+  /// The list's first row: where its top is the list's.
+  private static var firstID: String? {
+    ["chat": "m0000", "issues": "i0000"][UserDefaults.standard.string(forKey: "screen") ?? ""]
   }
 
   /// Momentum is smooth: two frames whose speed departs from both
@@ -242,7 +258,9 @@ final class FrameProbe {
   /// a slow fling every other frame; and not across a late frame, after
   /// which momentum catches up (counted as dropped instead).
   private func smoothCheck(dy: Double, a: Sample, b: Sample) {
-    smooth.append((dy, b.t - a.t, !(a.tracking || b.tracking), b))
+    // A bounce past the top springs back at its own pace: not momentum.
+    let bouncing = a.offset < -0.5 || b.offset < -0.5
+    smooth.append((dy, b.t - a.t, !(a.tracking || b.tracking || bouncing), b))
     if smooth.count > 6 { smooth.removeFirst() }
     guard smooth.count == 6, smooth.allSatisfy(\.real),
       smooth.allSatisfy({ $0.dt <= 1.5 * Self.frameInterval })

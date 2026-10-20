@@ -97,6 +97,32 @@ final class FrameProbeUITests: XCTestCase {
     /// Up from the latest message, older pages of many heights loading.
     func testChatFlingsUpRunTheirLength() { flingThrough("chat", Array(repeating: true, count: 8)) }
 
+    /// Flung back to the top from a few distances at a few speeds: at rest
+    /// the first issue is at the top, with no gap above it.
+    func testIssuesFlingsToTheTopLeaveNoGap() {
+      launch("issues", script: false)
+      let list = app.scrollViews.firstMatch
+      XCTAssertTrue(list.waitForExistence(timeout: 10))
+      let first = app.descendants(matching: .any)["row-i0000"].firstMatch
+      RunLoop.current.run(until: Date().addingTimeInterval(2))
+      for (away, speed) in [
+        (2, 6000.0), (4, 800.0), (6, 3000.0), (10, 1500.0), (3, 3000.0), (8, 6000.0),
+      ] {
+        for _ in 0..<away {
+          list.swipeUp(velocity: .fast)
+          RunLoop.current.run(until: Date().addingTimeInterval(1))
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(2))
+        for _ in 0..<20 {
+          list.swipeDown(velocity: XCUIGestureVelocity(rawValue: speed))
+          RunLoop.current.run(until: Date().addingTimeInterval(3.5))
+          if first.exists, abs(first.frame.minY - list.frame.minY) <= 1 { break }
+        }
+      }
+      let s = summary
+      XCTAssertEqual(wrong(s), 0, s)
+    }
+
     /// Down a few hundred rows, then back up as earlier pages load.
     func testIssuesFlingsRunTheirLength() {
       flingThrough("issues", Array(repeating: false, count: 10) + Array(repeating: true, count: 8))

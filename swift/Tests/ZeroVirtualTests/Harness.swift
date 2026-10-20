@@ -19,6 +19,7 @@ final class FakeScrollView: VirtualHost {
   var viewportHeight: Double
   var viewportInsets: (top: Double, bottom: Double) = (0, 0)
   var synchronousEvents = false
+  var scrollsWithLayout = false
   weak var core: VirtualizerCore<String, TestRow, String, TestRow>?
 
   private(set) var items: [VirtualItem<TestRow, String>] = []
