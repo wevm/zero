@@ -45,6 +45,9 @@ final class FrameProbe {
   @ObservationIgnored private var drive: (velocity: Double, done: CheckedContinuation<Void, Never>)?
   @ObservationIgnored private var jump: [Sample]?
   @ObservationIgnored private var jumpStill = 0.0
+  /// Since the jump began, and whether it has moved yet.
+  @ObservationIgnored private var jumpTime = 0.0
+  @ObservationIgnored private var jumpMoved = false
   @ObservationIgnored private var flingStart: (t: Double, moved: Double)?
   @ObservationIgnored private(set) var phase = "start"
   @ObservationIgnored private var wrongByPhase: [(String, Int)] = []
@@ -124,6 +127,8 @@ final class FrameProbe {
     finishJump()
     jump = previous.map { [$0] } ?? []
     jumpStill = 0
+    jumpTime = 0
+    jumpMoved = false
     log("JUMP begin top=\(previous?.ids.first ?? "-")")
   }
 
@@ -209,12 +214,17 @@ final class FrameProbe {
     applied = nil
     if jump != nil {
       jump!.append(b)
+      jumpTime += b.t - a.t
       if moved(a, b) {
         jumpStill = 0
+        jumpMoved = true
       } else {
         jumpStill += b.t - a.t
       }
-      if jumpStill >= 0.5 { finishJump() }
+      // Settled half a second after it last moved. Its rows can take longer
+      // than that to load (a simulator's can), so it waits for its first
+      // move; a jump to where the list already is never moves.
+      if (jumpMoved && jumpStill >= 0.5) || jumpTime >= 5 { finishJump() }
       return
     }
     let common = a.rows.keys.filter { b.rows[$0] != nil }

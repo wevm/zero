@@ -136,9 +136,16 @@ jobs:
           cat "$RUNNER_TEMP/pg.log" || true
 
   virtual-list:
-    name: Virtual list UI tests (iPhone and macOS)
+    # Each platform and suite in its own job: together they outrun a job's
+    # timeout (the frame probe's scripts drive minutes of scrolling).
+    name: Virtual list UI tests (${{ matrix.platform }}, ${{ matrix.suite }})
     runs-on: macos-26
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [iPhone, macOS]
+        suite: [VirtualListUITests, FrameProbeUITests]
     defaults:
       run:
         working-directory: swift/TestHost
@@ -149,25 +156,25 @@ jobs:
       - name: Generate the Xcode project
         run: brew install xcodegen && xcodegen generate
       - name: UI tests
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          SUITE: ${{ matrix.suite }}
         run: |
           simulator() {
             xcrun simctl list devices available -j |
               python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for k,v in d.items() if "iOS" in k for x in v if x["name"].startswith(sys.argv[1])))' "$1"
           }
-          # Both, even after one fails.
-          status=0
-          uitests() {
-            name="$1"
-            shift
-            xcodebuild test -project TestHost.xcodeproj -scheme TestHost \
-              -resultBundlePath "$RUNNER_TEMP/results/$name.xcresult" \
-              -skipPackagePluginValidation "$@" || status=1
-          }
-          uitests iPhone -destination "id=$(simulator iPhone)" CODE_SIGNING_ALLOWED=NO
-          uitests macOS -destination platform=macOS CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=-
-          exit "$status"
+          if [ "$PLATFORM" = macOS ]; then
+            set -- -destination platform=macOS CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=-
+          else
+            set -- -destination "id=$(simulator "$PLATFORM")" CODE_SIGNING_ALLOWED=NO
+          fi
+          xcodebuild test -project TestHost.xcodeproj -scheme TestHost \
+            -only-testing:"TestHostUITests/$SUITE" \
+            -resultBundlePath "$RUNNER_TEMP/results/$PLATFORM-$SUITE.xcresult" \
+            -skipPackagePluginValidation "$@"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: failure()
         with:
-          name: virtual-list-results
+          name: virtual-list-results-${{ matrix.platform }}-${{ matrix.suite }}
           path: ${{ runner.temp }}/results
