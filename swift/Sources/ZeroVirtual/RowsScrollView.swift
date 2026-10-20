@@ -244,10 +244,14 @@
         let r = rows.layout(
           width: width, offset: Double(clip.bounds.origin.y + inset.top),
           viewport: Double(clip.bounds.height - inset.top - inset.bottom))
+        // On whole pixels of the content, not of the window: aligned in the
+        // window, a row would snap differently at each offset and move by a
+        // pixel against the content as it scrolls.
+        let scale = max(1, window?.backingScaleFactor ?? 1)
+        func align(_ y: Double) -> CGFloat { (CGFloat(y) * scale).rounded() / scale }
         for f in r.frames {
-          let frame = document.backingAlignedRect(
-            CGRect(x: 0, y: f.minY, width: width, height: f.maxY - f.minY),
-            options: .alignAllEdgesNearest)
+          let frame = CGRect(
+            x: 0, y: align(f.minY), width: width, height: align(f.maxY) - align(f.minY))
           f.cell.view.isHidden = !rows.shown
           // Set only when it moves: a frame set lays the row's view out again.
           guard f.cell.view.frame != frame else { continue }
