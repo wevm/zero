@@ -19,6 +19,7 @@ final class GeometryScrollView {
   private var snapshot = VirtualSnapshot<TestRow, String>()
   private(set) var afterUpdates = 0
   private(set) var scrollRequests = 0
+  private var reported: [String: (minY: Double, maxY: Double)] = [:]
 
   init(_ h: Harness, containerHeight: Double = 400, insetTop: Double = 0) {
     self.h = h
@@ -53,9 +54,17 @@ final class GeometryScrollView {
     snapshot = h.core.snapshot
     host.render(
       snapshot.items.map { (key: $0.key, index: $0.index) }, spaceBefore: snapshot.spaceBefore)
+    // Only frames that changed are reported, as `onGeometryChange` does,
+    // and a row's first: one that left and came back is a new view.
+    let live = Set(snapshot.items.map(\.key))
+    reported = reported.filter { live.contains($0.key) }
     var y = snapshot.spaceBefore
     for item in snapshot.items {
-      host.rowFrame(item.key, minY: y, maxY: y + height(item.key))
+      let frame = (minY: y, maxY: y + height(item.key))
+      if reported[item.key].map({ $0 != frame }) ?? true {
+        reported[item.key] = frame
+        host.rowFrame(item.key, minY: frame.minY, maxY: frame.maxY)
+      }
       y += height(item.key)
     }
     let maxOffset = max(0, contentHeight - (containerHeight - insetTop)) - insetTop
@@ -127,24 +136,34 @@ final class GeometryScrollView {
     run()
     #expect(updates == 1)
 
-    // A new space before the rows: their old frames don't count.
+    // A new space over the same first row moves the rows by its change,
+    // with no new reports (the view reports a frame only when it changes;
+    // here the update waits on the content reaching the moved rows).
     host.render([(key: "a", index: 0), (key: "b", index: 1)], spaceBefore: 30)
     run()
     #expect(updates == 1)
-    host.rowFrame("a", minY: 30, maxY: 50)
-    host.rowFrame("b", minY: 50, maxY: 80)
+    #expect(host.rowFrames().map(\.maxY) == [50, 80])
     host.geometry(
       contentOffset: 0, containerHeight: 100, contentHeight: 80, insetTop: 0, insetBottom: 0)
     run()
     #expect(updates == 2)
-    #expect(host.rowFrames().map(\.maxY) == [50, 80])
+
+    // A new first row: the space was sized to keep the rows in place, so
+    // the ones still there keep their frames and only the new one waits.
+    host.render([(key: "z", index: 0), (key: "a", index: 1), (key: "b", index: 2)], spaceBefore: 0)
+    run()
+    #expect(updates == 2)
+    host.rowFrame("z", minY: 0, maxY: 30)
+    run()
+    #expect(updates == 3)
+    #expect(host.rowFrames().map(\.maxY) == [30, 50, 80])
 
     // Content the view rounded to the pixel below the rows' fractional end.
     host.rowFrame("b", minY: 20, maxY: 60.33)
     host.geometry(
       contentOffset: 0, containerHeight: 100, contentHeight: 60, insetTop: 0, insetBottom: 0)
     run()
-    #expect(updates == 3)
+    #expect(updates == 4)
   }
 
   @Test("its own scroll lands and is reported; the user's is reported once")

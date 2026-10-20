@@ -59,15 +59,17 @@ package final class ScrollGeometryHost: VirtualHost {
   /// The view rendered a snapshot with these rows: every snapshot, even one
   /// with the same rows, since the core waits on `afterUpdate` for it.
   package func render<Key: Hashable>(_ keys: [(key: Key, index: Int)], spaceBefore: Double) {
+    let oldFirst = items.first?.key
     items = keys.map { (AnyHashable($0.key), $0.index) }
     let live = Set(items.map(\.key))
-    // A new space before the rows moves every row: frames from before are
-    // stale, and the core would take the move it asked for as a new one.
-    if spaceBefore != self.spaceBefore {
-      self.spaceBefore = spaceBefore
-      heights = [:]
-    } else {
-      heights = heights.filter { live.contains($0.key) }
+    heights = heights.filter { live.contains($0.key) }
+    // The view reports only frames that change, so frames are kept. A new
+    // space over the same first row moves every row by the difference; over
+    // a new first row, the core sized it to keep the rows where they were.
+    let shift = spaceBefore - self.spaceBefore
+    self.spaceBefore = spaceBefore
+    if shift != 0, oldFirst != nil, oldFirst == items.first?.key {
+      heights = heights.mapValues { ($0.minY + shift, $0.maxY + shift) }
     }
     scheduleFlush()
   }
