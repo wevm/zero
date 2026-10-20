@@ -7,6 +7,7 @@ let package = Package(
   products: [
     .library(name: "Zero", targets: ["Zero"]),
     .library(name: "ZeroUI", targets: ["ZeroUI"]),
+    .library(name: "ZeroVirtual", targets: ["ZeroVirtual"]),
     .library(name: "ZeroTesting", targets: ["ZeroTesting"]),
     .library(name: "ZeroNIOTesting", targets: ["ZeroNIOTesting"]),
   ],
@@ -20,6 +21,8 @@ let package = Package(
     .systemLibrary(name: "CSQLite", path: "Sources/CSQLite"),
     .target(name: "Zero", dependencies: ["CSQLite"]),
     .target(name: "ZeroUI", dependencies: ["Zero"]),
+    // Virtual lists that page their rows in (`@rocicorp/zero-virtual`).
+    .target(name: "ZeroVirtual", dependencies: ["Zero"]),
     .target(name: "ZeroTesting", dependencies: ["Zero"]),
     // A plain ws:// transport for end-to-end tests on Linux.
     .target(
@@ -38,6 +41,7 @@ let package = Package(
     // The Apple layer: the URLSession transport, SwiftUI, UIKit, and AppKit.
     // Empty elsewhere.
     .testTarget(name: "AppleTests", dependencies: ["Zero", "ZeroUI", "ZeroTesting"]),
+    .testTarget(name: "ZeroVirtualTests", dependencies: ["Zero", "ZeroVirtual", "ZeroTesting"]),
     .testTarget(name: "E2ETests", dependencies: ["Zero", "ZeroNIOTesting"]),
   ],
   swiftLanguageModes: [.v6]

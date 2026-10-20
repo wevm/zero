@@ -339,7 +339,7 @@ public struct QueryError: Error, Sendable, CustomStringConvertible {
   /// What the view held when the query failed. JS rejects `run` with it.
   let data: ViewValue?
 
-  init(_ error: ErroredQuery?, data: ViewValue? = nil) {
+  package init(_ error: ErroredQuery?, data: ViewValue? = nil) {
     self.error = error
     self.data = data
   }
