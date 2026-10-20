@@ -55,7 +55,9 @@ struct MessageRow: View {
     .frame(maxWidth: .infinity, alignment: .leading)
     .padding(.horizontal, 12)
     .padding(.vertical, 6)
-    // One element with the padded row's frame (`.combine`'s is its texts').
+    // One element with the padded row's frame: without the shape, it's
+    // its texts'.
+    .contentShape(.accessibility, Rectangle())
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(message.text)
     .accessibilityIdentifier("row-\(message.id)")
@@ -89,6 +91,7 @@ struct IssuesScreen: View {
       .frame(maxWidth: .infinity, alignment: .leading)
       .padding(.horizontal, 12)
       .padding(.vertical, 8)
+      .contentShape(.accessibility, Rectangle())
       .accessibilityElement(children: .ignore)
       .accessibilityLabel(item.row.title)
       .accessibilityIdentifier("row-\(item.row.id)")

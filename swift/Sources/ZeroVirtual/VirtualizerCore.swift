@@ -691,6 +691,9 @@ package final class VirtualizerCore<
 
   private func landed() {
     if !anchorSuppressed { refreshAnchor() }
+    // A scroll that lands at the bottom, such as to the latest row, follows
+    // from there; one that lands above it doesn't.
+    measureStuck()
     persist()
   }
 

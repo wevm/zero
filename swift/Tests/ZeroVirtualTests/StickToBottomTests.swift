@@ -90,3 +90,25 @@ import Testing
     #expect(bottomGap(h) == 0)
   }
 }
+
+extension StickToBottomTests {
+  @Test("scrolled up, scrolling to the last row with .end follows again")
+  func rearmsAfterScrollToItem() {
+    let h = chat(rows: 200)
+    h.core.scrollToItem("r199", align: .end)
+    h.settle()
+    #expect(bottomGap(h) == 0)
+    h.userScroll(h.scrollOffset - 300)
+    h.settle()
+    append(h, 1)
+    h.settle()
+    #expect(bottomGap(h) > 300)
+    h.core.scrollToItem("r200", align: .end)
+    h.settle()
+    #expect(bottomGap(h) == 0)
+    append(h, 1)
+    h.settle()
+    #expect(h.core.lastVisibleItem()?.key == "r201")
+    #expect(bottomGap(h) == 0)
+  }
+}

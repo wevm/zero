@@ -115,9 +115,12 @@
       try await run(0.5) { false }
       #expect(list.lastVisibleItem()?.key == Self.id(250))
       // The scroll view itself moved there, not just the virtualizer's idea
-      // of it: n250's bottom (30-point rows) at the viewport's.
+      // of it: n250's bottom at the viewport's. Its rows are 30 points, after
+      // the space that stands in for the rows before the window.
       let g = try #require(platformGeometry(window))
-      #expect(abs(g.offset - (251 * 30 - g.viewport)) <= 1)
+      let s = list.snapshot
+      let first = try #require(s.items.first?.index)
+      #expect(abs(g.offset - (s.spaceBefore + Double(250 - first + 1) * 30 - g.viewport)) <= 1)
       withExtendedLifetime((zero, window)) {}
     }
   }
