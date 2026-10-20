@@ -133,7 +133,8 @@ final class VirtualListUITests: XCTestCase {
     launch("chat")
     waitUntil("the latest message is at the bottom") { atBottom("m0199") }
     var reachedStart = false
-    for _ in 0..<40 where !reachedStart {
+    // About 4 messages a swipe, 200 messages: stops once m0000 is in place.
+    for _ in 0..<70 where !reachedStart {
       scrollTowardTop()
       rest()
       assertHoldsStill()
