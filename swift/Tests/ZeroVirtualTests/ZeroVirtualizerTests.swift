@@ -175,7 +175,9 @@ import ZeroTesting
     // Rows the server adds later sync, and the list pages to them.
     server.put("issues", (150..<160).map(issue))
     view.scroll(list, to: .infinity)
-    for _ in 0..<20 where list.snapshot.items.last?.key != Self.id(159) {
+    // Until the last page is there and its query confirmed.
+    for _ in 0..<40
+    where list.snapshot.items.last?.key != Self.id(159) || !list.snapshot.complete {
       view.render(list)
       list.afterUpdate()
       view.scroll(list, to: .infinity)
