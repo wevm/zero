@@ -33,6 +33,7 @@ package final class ScrollGeometryHost: VirtualHost {
 
   /// The rendered rows, in list order.
   private var items: [(key: AnyHashable, index: Int)] = []
+  private var spaceBefore = 0.0
   private var heights: [AnyHashable: (minY: Double, maxY: Double)] = [:]
   private var pendingScroll: Double?
   private var flushScheduled = false
@@ -57,10 +58,17 @@ package final class ScrollGeometryHost: VirtualHost {
 
   /// The view rendered a snapshot with these rows: every snapshot, even one
   /// with the same rows, since the core waits on `afterUpdate` for it.
-  package func render<Key: Hashable>(_ keys: [(key: Key, index: Int)]) {
+  package func render<Key: Hashable>(_ keys: [(key: Key, index: Int)], spaceBefore: Double) {
     items = keys.map { (AnyHashable($0.key), $0.index) }
     let live = Set(items.map(\.key))
-    heights = heights.filter { live.contains($0.key) }
+    // A new space before the rows moves every row: frames from before are
+    // stale, and the core would take the move it asked for as a new one.
+    if spaceBefore != self.spaceBefore {
+      self.spaceBefore = spaceBefore
+      heights = [:]
+    } else {
+      heights = heights.filter { live.contains($0.key) }
+    }
     scheduleFlush()
   }
 

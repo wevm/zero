@@ -23,6 +23,7 @@ final class FakeScrollView: VirtualHost {
 
   private(set) var items: [VirtualItem<TestRow, String>] = []
   private var spaceBefore = 0.0
+  var renderedSpaceBefore: Double { spaceBefore }
   private var spaceAfter = 0.0
   /// Space above the rows that isn't theirs: other content over the list.
   var marginTop = 0.0
@@ -206,6 +207,12 @@ final class Harness {
     view.render(core.snapshot)
     core.attach(view)
     core.afterUpdate()
+    // A new space before the rows (taking up a change above them) renders
+    // again at once, as the view re-renders on every snapshot.
+    for _ in 0..<3 where core.snapshot.spaceBefore != view.renderedSpaceBefore {
+      view.render(core.snapshot)
+      core.afterUpdate()
+    }
     if scroll { view.deliverScroll() }
   }
 

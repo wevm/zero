@@ -18,6 +18,7 @@ final class GeometryScrollView {
   private var deferred: [@MainActor () -> Void] = []
   private var snapshot = VirtualSnapshot<TestRow, String>()
   private(set) var afterUpdates = 0
+  private(set) var scrollRequests = 0
 
   init(_ h: Harness, containerHeight: Double = 400, insetTop: Double = 0) {
     self.h = h
@@ -25,7 +26,10 @@ final class GeometryScrollView {
     self.insetTop = insetTop
     // At rest at the top, the inset is above the content.
     offset = -insetTop
-    host.requestScroll = { [unowned self] in requested = $0 }
+    host.requestScroll = { [unowned self] in
+      requested = $0
+      scrollRequests += 1
+    }
     host.defer_ = { [unowned self] in deferred.append($0) }
     host.didScroll = { [unowned self] in self.h.core.didScroll() }
     host.viewportDidResize = { [unowned self] in self.h.core.viewportDidResize() }
@@ -47,7 +51,8 @@ final class GeometryScrollView {
     h.core.setRows(h.answer(h.core.queryInputs))
     // Every snapshot is rendered, as `ZeroVirtualizer.onSnapshot` has it.
     snapshot = h.core.snapshot
-    host.render(snapshot.items.map { (key: $0.key, index: $0.index) })
+    host.render(
+      snapshot.items.map { (key: $0.key, index: $0.index) }, spaceBefore: snapshot.spaceBefore)
     var y = snapshot.spaceBefore
     for item in snapshot.items {
       host.rowFrame(item.key, minY: y, maxY: y + height(item.key))
@@ -69,9 +74,10 @@ final class GeometryScrollView {
 
   func settle(sourceLocation: SourceLocation = #_sourceLocation) {
     for _ in 0..<30 {
-      let before = (h.queryKey(h.core.queryInputs), offset, requested)
+      let before = (h.queryKey(h.core.queryInputs), offset, requested, snapshot.spaceBefore)
       pass()
-      if (h.queryKey(h.core.queryInputs), offset, requested) == before, deferred.isEmpty,
+      if (h.queryKey(h.core.queryInputs), offset, requested, h.core.snapshot.spaceBefore) == before,
+        deferred.isEmpty,
         h.core.snapshot.complete
       {
         return
@@ -108,7 +114,7 @@ final class GeometryScrollView {
       work.forEach { $0() }
     }
 
-    host.render([(key: "a", index: 0), (key: "b", index: 1)])
+    host.render([(key: "a", index: 0), (key: "b", index: 1)], spaceBefore: 0)
     host.rowFrame("a", minY: 0, maxY: 20)
     run()
     #expect(updates == 0)
@@ -120,14 +126,25 @@ final class GeometryScrollView {
       contentOffset: 0, containerHeight: 100, contentHeight: 50, insetTop: 0, insetBottom: 0)
     run()
     #expect(updates == 1)
-    #expect(host.rowFrames().map(\.maxY) == [20, 50])
+
+    // A new space before the rows: their old frames don't count.
+    host.render([(key: "a", index: 0), (key: "b", index: 1)], spaceBefore: 30)
+    run()
+    #expect(updates == 1)
+    host.rowFrame("a", minY: 30, maxY: 50)
+    host.rowFrame("b", minY: 50, maxY: 80)
+    host.geometry(
+      contentOffset: 0, containerHeight: 100, contentHeight: 80, insetTop: 0, insetBottom: 0)
+    run()
+    #expect(updates == 2)
+    #expect(host.rowFrames().map(\.maxY) == [50, 80])
 
     // Content the view rounded to the pixel below the rows' fractional end.
     host.rowFrame("b", minY: 20, maxY: 60.33)
     host.geometry(
       contentOffset: 0, containerHeight: 100, contentHeight: 60, insetTop: 0, insetBottom: 0)
     run()
-    #expect(updates == 2)
+    #expect(updates == 3)
   }
 
   @Test("its own scroll lands and is reported; the user's is reported once")
@@ -239,5 +256,43 @@ extension ScrollGeometryHostTests {
     view.settle()
     #expect(h.core.lastVisibleItem()?.key == "r199")
     #expect(view.bottomGap == 0)
+  }
+}
+
+extension ScrollGeometryHostTests {
+  @Test(
+    "a fling up through pages of taller rows isn't scrolled under; at rest the space is given back")
+  func flingKeepsGoing() {
+    let h = Harness(rowCount: 400) { $0.anchoring = .manual }
+    let view = GeometryScrollView(h)
+    for i in 0..<400 where i % 3 == 0 { view.heights["r\(i)"] = 60 }
+    view.settle()
+    h.core.scrollToItem("r300", align: .start)
+    view.settle()
+    h.scheduler.advance(by: 200)
+    view.settle()
+    let before = view.scrollRequests
+
+    // A fling: the offset moves every frame, and pages load under it.
+    var expected = view.host.scrollOffset
+    var key = h.core.firstVisibleItem()!.key
+    for _ in 0..<60 {
+      let top = view.rowTop(key)!
+      view.userScroll(view.host.scrollOffset - 40)
+      // Within the frame: the pages' rows, and the space that takes them up.
+      view.settle()
+      expected -= 40
+      // Each frame moves what's on screen by the fling's 40 points, no more.
+      #expect(view.rowTop(key) == top + 40)
+      key = h.core.firstVisibleItem()!.key
+    }
+    #expect(view.scrollRequests == before)
+    #expect(view.host.scrollOffset == max(0, expected))
+
+    // At rest, the space goes back to its estimate, nothing on screen moving.
+    let top = view.rowTop(key)!
+    h.scheduler.advance(by: 200)
+    view.settle()
+    #expect(view.rowTop(key) == top)
   }
 }

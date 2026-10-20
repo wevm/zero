@@ -264,6 +264,15 @@ package final class VirtualizerCore<
   private var anchorOffset = 0.0
   // From a reset until the new window's rows are in.
   private var anchorSuppressed = false
+  // How far the space before the rows is off its estimate. Rows above the
+  // reference row that load, go, or come out another height than estimated
+  // would move it; the space takes up the difference instead of a scroll,
+  // which would stop a fling. Space short of the estimate is given back with
+  // a scroll once the list rests.
+  private var spaceAdjust = 0.0
+  private var idleTimer: (any ScheduledTimer)?
+  // The space is being given back: compensation scrolls.
+  private var reconciling = false
   private var settleTimer: (any ScheduledTimer)?
   private var target: Target?
   private var permalinkMissing = 0
@@ -324,8 +333,45 @@ package final class VirtualizerCore<
 
   /// Takes new rows without notifying.
   package func setRows(_ new: RowsSnapshot<Row, StartRow>) {
+    let old = rows
+    let oldSpace = manual && host != nil ? snapshot.spaceBefore : nil
     rows = new
     version += 1
+    if let oldSpace { carrySpace(from: old, oldSpace) }
+  }
+
+  /// Keeps the space before the rows where it was through new rows: less
+  /// the rows added above the first one, by estimate, or more the rows gone
+  /// from above it, as laid out. Their index, which paging renumbers, and
+  /// the anchor's kind don't move what's on screen.
+  private func carrySpace(from old: RowsSnapshot<Row, StartRow>, _ oldSpace: Double) {
+    guard isListContextCurrent, !rows.atStart, !old.rowsEmpty, !rows.rowsEmpty,
+      let oldFirst = old.rowAt(old.firstRowIndex).map(options.rowKey),
+      let newFirst = rows.rowAt(rows.firstRowIndex).map(options.rowKey)
+    else { return }
+    func position(of key: Key, in r: RowsSnapshot<Row, StartRow>) -> Int? {
+      for i in 0..<r.rowsLength where r.rowAt(r.firstRowIndex + i).map(options.rowKey) == key {
+        return i
+      }
+      return nil
+    }
+    var space = oldSpace
+    if oldFirst == newFirst {
+      // Same first row: the space stays as it was.
+    } else if let added = position(of: oldFirst, in: rows) {
+      space -= Double(added) * rowEstimate
+    } else if let removed = position(of: newFirst, in: old) {
+      if let host, let from = frame(host, key: AnyHashable(oldFirst)),
+        let to = frame(host, key: AnyHashable(newFirst))
+      {
+        space += to.minY - from.minY
+      } else {
+        space += Double(removed) * rowEstimate
+      }
+    } else {
+      return
+    }
+    spaceAdjust = space - estimatedSpaceBefore
   }
 
   /// The queries the rows must answer.
@@ -366,6 +412,8 @@ package final class VirtualizerCore<
     host = nil
     settleTimer?.cancel()
     settleTimer = nil
+    idleTimer?.cancel()
+    idleTimer = nil
   }
 
   /// After the host rendered a new snapshot, or its rows changed height.
@@ -436,6 +484,7 @@ package final class VirtualizerCore<
     setTarget(.row(request))
     anchorKey = nil
     anchorSuppressed = true
+    spaceAdjust = 0
     setPaging(Self.permalinkPaging(id, options.listContext))
   }
 
@@ -532,7 +581,22 @@ package final class VirtualizerCore<
     return .top
   }
 
+  // How long without a scroll counts as at rest, in milliseconds: longer
+  // than the gap between a fling's frames.
+  private static var idleTime: Double { 150 }
+
   private var rowEstimate: Double { max(1, options.estimatedRowHeight) }
+
+  // The space before the rows, as their count estimates it. Under a
+  // permalink, whose indexes count from the window and estimate nothing,
+  // at least a reserve for the space to take changes above the rows out
+  // of. None once the rows reach the start.
+  private var estimatedSpaceBefore: Double {
+    if rows.atStart { return 0 }
+    let estimate = Double(max(0, rows.firstRowIndex)) * rowEstimate
+    guard manual, rows.anchor.isPermalink, !rows.rowsEmpty else { return estimate }
+    return max(estimate, Double(3 * pageSize) * rowEstimate)
+  }
 
   private var manual: Bool { options.anchoring == .manual }
 
@@ -545,7 +609,6 @@ package final class VirtualizerCore<
   private func buildSnapshot() -> VirtualSnapshot<Row, Key> {
     let total = effectiveEstimatedTotal
     let end = rows.firstRowIndex + rows.rowsLength
-    let before = max(0, rows.firstRowIndex)
     let after = rows.atEnd ? 0 : max(0, total - end)
     var items: [VirtualItem<Row, Key>] = []
     items.reserveCapacity(rows.rowsLength)
@@ -555,7 +618,8 @@ package final class VirtualizerCore<
     }
     var s = VirtualSnapshot<Row, Key>()
     s.items = items
-    s.spaceBefore = rows.atStart ? 0 : Double(before) * rowEstimate
+    // At the start, nothing stands before the first row.
+    s.spaceBefore = rows.atStart ? 0 : max(0, estimatedSpaceBefore + spaceAdjust)
     s.spaceAfter = Double(after) * rowEstimate
     s.complete = rows.complete
     s.rowsEmpty = rows.rowsEmpty
@@ -666,8 +730,34 @@ package final class VirtualizerCore<
       return
     }
     let delta = ref.minY - anchorOffset
+    defer { reconciling = false }
     if abs(delta) < 0.5 { return }
+    // Taken up by the space before the rows, which moves them back, when
+    // it can be: the scroll view isn't touched, so a fling carries on.
+    let space = snapshot.spaceBefore - delta
+    if !reconciling, !rows.atStart, space >= 0 {
+      spaceAdjust = space - estimatedSpaceBefore
+      version += 1
+      return
+    }
     compensate(delta)
+  }
+
+  // Once scrolling stops, space short of its estimate goes back to it, and
+  // the list scrolls by the difference so nothing on screen moves.
+  private func resetIdleTimer() {
+    idleTimer?.cancel()
+    idleTimer = scheduler.schedule(after: Self.idleTime) { [weak self] in
+      // Space short of its estimate is given back, for the next change to
+      // come out of. Space over it stays: taking it back shrinks the content
+      // under the offset, which the view clamps before the list can scroll.
+      guard let self, self.spaceAdjust < 0 else { return }
+      self.withNotify {
+        self.spaceAdjust = 0
+        self.reconciling = true
+        self.version += 1
+      }
+    }
   }
 
   private func liftAnchorSuppression() {
@@ -706,6 +796,7 @@ package final class VirtualizerCore<
     if manual && !programmatic { refreshAnchor() }
     withNotify {
       resetSettleTimer()
+      if manual { resetIdleTimer() }
       evaluate()
       persist()
     }
@@ -817,6 +908,7 @@ package final class VirtualizerCore<
       anchorKey = nil
       anchorSuppressed = true
     }
+    spaceAdjust = 0
 
     if case .offset = target { setTarget(nil) }
     if let restore {
@@ -1012,7 +1104,11 @@ package final class VirtualizerCore<
     guard let host, isListContextCurrent, let report = options.onScrollStateChange else { return }
     lastPersisted = next
     let state = ScrollState(
-      anchor: next.anchor, scrollOffset: host.scrollOffset, estimatedTotal: next.estimatedTotal,
+      // Where the list would be with the space as estimated, as a restore
+      // lays it out.
+      anchor: next.anchor,
+      scrollOffset: host.scrollOffset - (snapshot.spaceBefore - estimatedSpaceBefore),
+      estimatedTotal: next.estimatedTotal,
       hasReachedStart: next.hasReachedStart, hasReachedEnd: next.hasReachedEnd,
       listContext: options.listContext)
     lastWritten = state

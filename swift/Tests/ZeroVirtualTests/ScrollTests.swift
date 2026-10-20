@@ -157,6 +157,34 @@ struct ManualAnchoringTests {
     #expect(h.rowTop("r50") == 0)
   }
 
+  @Test("away from the start, the space before the rows takes up growth; at rest it's given back")
+  func spaceTakesUpChange() {
+    let h = Harness(rowCount: 1000) { $0.anchoring = .manual }
+    h.settle()
+    for _ in 0..<12 {
+      h.userScroll(h.scrollOffset + 400)
+      h.settle()
+    }
+    let first = h.items.first!.index
+    #expect(first > 0)
+    let space = h.core.snapshot.spaceBefore
+    let offset = h.scrollOffset
+    let key = h.core.firstVisibleItem()!.key
+    let top = h.rowTop(key)
+    h.setRowHeight("r\(h.core.firstVisibleItem()!.index - 2)", 50)
+    h.tick()
+    // No scroll while the list may be moving: a scroll would stop a fling.
+    #expect(h.scrollOffset == offset)
+    #expect(h.core.snapshot.spaceBefore == space - 30)
+    #expect(h.rowTop(key) == top)
+
+    h.scheduler.advance(by: 150)
+    h.tick()
+    #expect(h.core.snapshot.spaceBefore == space)
+    #expect(h.scrollOffset == offset + 30)
+    #expect(h.rowTop(key) == top)
+  }
+
   @Test("growth at scroll offset 0 is revealed, not compensated away")
   func growthAtTop() {
     let h = Harness(rowCount: 500) { $0.anchoring = .manual }

@@ -59,6 +59,11 @@ import ZeroTesting
       view.render(list)
       let before = list.core.queryInputs
       list.afterUpdate()
+      // A new space before the rows renders again, as a view would.
+      for _ in 0..<3 where list.snapshot.spaceBefore != view.spaceBefore {
+        view.render(list)
+        list.afterUpdate()
+      }
       server.serve(sockets, scheduler)
       if list.core.queryInputs == before && list.snapshot.complete { return }
     }
@@ -256,6 +261,7 @@ final class ListView: VirtualHost {
   var offset = 0.0
   var frames: [VirtualRowFrame] = []
   var height = 0.0
+  var spaceBefore = 0.0
   let viewportHeight = 400.0
   let viewportInsets: (top: Double, bottom: Double) = (0, 0)
 
@@ -274,6 +280,7 @@ final class ListView: VirtualHost {
   func render(_ list: ZeroVirtualizerTests.List) {
     self.list = list
     let s = list.snapshot
+    spaceBefore = s.spaceBefore
     var y = s.spaceBefore
     frames = s.items.map { item in
       defer { y += 20 }

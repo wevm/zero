@@ -61,7 +61,9 @@
       }
       .onAppear {
         let render = { [host, list] in
-          host.render(list.snapshot.items.map { (key: $0.key, index: $0.index) })
+          host.render(
+            list.snapshot.items.map { (key: $0.key, index: $0.index) },
+            spaceBefore: list.snapshot.spaceBefore)
         }
         list.onSnapshot = render
         host.requestScroll = { y in position.scrollTo(y: y) }
