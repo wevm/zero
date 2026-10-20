@@ -765,22 +765,9 @@ package final class VirtualizerCore<
       guard let self, self.spaceAdjust < 0 || (self.rows.atStart && self.spaceAdjust > 0)
       else { return }
       self.withNotify {
-        let removed =
-          max(0, self.estimatedSpaceBefore + self.spaceAdjust)
-          - max(0, self.estimatedSpaceBefore)
         self.spaceAdjust = 0
         self.reconciling = true
         self.version += 1
-        // Space taken out goes with its scroll, so the view applies both in
-        // one pass; scrolling once the rows report would draw a pass of the
-        // shorter content at the old offset. (Within the space of the top,
-        // the rows move up with it.) Space put back is compensated once the
-        // rows report: the view can't scroll past content it doesn't have.
-        guard removed > 0, self.manual, !self.anchorSuppressed, self.isListContextCurrent,
-          !self.landing, let host = self.host, host.scrollOffset > 0
-        else { return }
-        self.anchorOffset -= removed
-        self.setScrollOffset(host.scrollOffset - removed)
       }
     }
   }
