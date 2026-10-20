@@ -29,18 +29,28 @@ struct ChatScreen: View {
       HStack {
         Button("Receive") { backend.receive() }.accessibilityIdentifier("receive")
         Button("Grow last") { backend.growLast() }.accessibilityIdentifier("grow")
-        Button("Latest") {
-          if let latest { list.scrollToItem(latest.id, align: .end) }
-        }
-        .accessibilityIdentifier("latest")
+        Button("Latest") { toLatest() }
+          .accessibilityIdentifier("latest")
       }
       .padding(8)
     }
+    .overlay(alignment: .topTrailing) { ProbeSummary() }
     .onChange(of: latest?.id, initial: true) {
       guard !started, let id = latest?.id else { return }
       started = true
       list.scrollToItem(id, align: .end)
     }
+    .task {
+      guard FrameProbe.script == "chat" else { return }
+      await ProbeScript.chat(
+        latestID: { latest?.id }, toLatest: toLatest, receive: { backend.receive() })
+    }
+  }
+
+  private func toLatest() {
+    guard let latest else { return }
+    FrameProbe.shared.beginJump()
+    list.scrollToItem(latest.id, align: .end)
   }
 }
 
@@ -61,6 +71,7 @@ struct MessageRow: View {
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(message.text)
     .accessibilityIdentifier("row-\(message.id)")
+    .background(ProbeMarker(id: message.id))
   }
 }
 
@@ -77,6 +88,11 @@ struct IssuesScreen: View {
       Divider()
       issues
       Divider()
+    }
+    .overlay(alignment: .topTrailing) { ProbeSummary() }
+    .task {
+      guard FrameProbe.script == "issues" else { return }
+      await ProbeScript.issues()
     }
   }
 
@@ -95,6 +111,7 @@ struct IssuesScreen: View {
       .accessibilityElement(children: .ignore)
       .accessibilityLabel(item.row.title)
       .accessibilityIdentifier("row-\(item.row.id)")
+      .background(ProbeMarker(id: item.row.id))
     }
     .accessibilityIdentifier("list")
   }

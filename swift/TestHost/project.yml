@@ -20,6 +20,12 @@ targets:
       testTargets: [TestHostUITests]
     sources:
       - path: App
+    # ProMotion: frames at up to 120 Hz, which the frame probe checks. Merged
+    # with the generated Info.plist.
+    info:
+      path: Info.plist
+      properties:
+        CADisableMinimumFrameDurationOnPhone: true
     dependencies:
       - package: Zero
         product: ZeroVirtual
