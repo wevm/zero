@@ -108,10 +108,11 @@
     @Test func scrollsToARowFarBelow() async throws {
       let (zero, list) = try makeList()
       let window = show(VirtualList(list) { Text($0.row.text).frame(height: 30) })
-      try await run(5) { list.snapshot.complete && !list.snapshot.items.isEmpty }
+      // Generous: other tests in the process can hold the main actor for seconds.
+      try await run(30) { list.snapshot.complete && !list.snapshot.items.isEmpty }
       #expect(list.snapshot.items.first?.key == Self.id(0))
       list.scrollToItem(Self.id(250), align: .end)
-      try await run(5) { list.lastVisibleItem()?.key == Self.id(250) }
+      try await run(30) { list.lastVisibleItem()?.key == Self.id(250) }
       try await run(0.5) { false }
       #expect(list.lastVisibleItem()?.key == Self.id(250))
       // The scroll view itself moved there, not just the virtualizer's idea

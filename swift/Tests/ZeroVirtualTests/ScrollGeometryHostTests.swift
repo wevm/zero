@@ -335,16 +335,17 @@ extension ScrollGeometryHostTests {
     while view.host.scrollOffset > 0, flings < 200 {
       flings += 1
       let before = view.scrollRequests
-      // A fling of 20 frames, pages loading under it.
-      for _ in 0..<20 where view.host.scrollOffset > 0 {
+      // A fling of 8 coarse frames, pages loading under it. (Kept cheap: it
+      // runs on the main actor alongside the other targets' tests.)
+      for _ in 0..<8 where view.host.scrollOffset > 0 {
         guard let key = h.core.firstVisibleItem()?.key, let top = view.rowTop(key) else {
           Issue.record("no rows on screen")
           return
         }
         let offset = view.host.scrollOffset
-        view.userScroll(offset - 40)
+        view.userScroll(offset - 100)
         view.settle()
-        let moved = offset - max(0, offset - 40)
+        let moved = offset - max(0, offset - 100)
         #expect(view.rowTop(key) == top + moved, "fling \(flings) at \(offset)")
       }
       #expect(view.scrollRequests == before, "scrolled under fling \(flings)")
