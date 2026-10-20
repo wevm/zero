@@ -22,10 +22,20 @@ final class VirtualListUITests: XCTestCase {
 
   /// The rows on screen, top to bottom.
   func visibleRows() -> [(id: String, frame: CGRect)] {
-    let bounds = list.frame
-    return app.descendants(matching: .any)
-      .matching(NSPredicate(format: "identifier BEGINSWITH 'row-'")).allElementsBoundByIndex
-      .map { (String($0.identifier.dropFirst(4)), $0.frame) }
+    // One snapshot of the list, not a query per row: each element's
+    // identifier and frame is a round trip to the device.
+    guard let snapshot = try? list.snapshot() else { return [] }
+    let bounds = snapshot.frame
+    var rows: [(id: String, frame: CGRect)] = []
+    func walk(_ e: any XCUIElementSnapshot) {
+      if e.identifier.hasPrefix("row-") {
+        rows.append((String(e.identifier.dropFirst(4)), e.frame))
+      }
+      e.children.forEach(walk)
+    }
+    walk(snapshot)
+    return
+      rows
       .filter { $0.frame.maxY > bounds.minY + 1 && $0.frame.minY < bounds.maxY - 1 }
       .sorted { $0.frame.minY < $1.frame.minY }
   }
@@ -140,8 +150,9 @@ final class VirtualListUITests: XCTestCase {
     waitUntil("the first issue is at the top") {
       row("i0000").exists && abs(row("i0000").frame.minY - list.frame.minY) <= 1.5
     }
+    // A swipe moves about 14 issue rows; stop at row 400, not a count.
     var deepest = 0
-    for _ in 0..<30 where deepest < 400 {
+    for _ in 0..<60 where deepest < 400 {
       scrollTowardBottom()
       rest(1)
       deepest = visibleRows().compactMap { Int($0.id.dropFirst()) }.max() ?? deepest
