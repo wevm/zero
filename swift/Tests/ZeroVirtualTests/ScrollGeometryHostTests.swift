@@ -45,10 +45,9 @@ final class GeometryScrollView {
   /// One body evaluation and layout pass, then the work it deferred.
   func pass() {
     h.core.setRows(h.answer(h.core.queryInputs))
-    let next = h.core.snapshot
-    let changed = next.items.map(\.key) != snapshot.items.map(\.key)
-    snapshot = next
-    if changed { host.render(snapshot.items.map { (key: $0.key, index: $0.index) }) }
+    // Every snapshot is rendered, as `ZeroVirtualizer.onSnapshot` has it.
+    snapshot = h.core.snapshot
+    host.render(snapshot.items.map { (key: $0.key, index: $0.index) })
     var y = snapshot.spaceBefore
     for item in snapshot.items {
       host.rowFrame(item.key, minY: y, maxY: y + height(item.key))
@@ -220,5 +219,18 @@ final class GeometryScrollView {
     h.data += (63..<66).map { TestRow(id: "r\($0)") }
     view.settle()
     #expect(view.host.scrollOffset == offset)
+  }
+}
+
+extension ScrollGeometryHostTests {
+  @Test("scrolls to a row not loaded yet, under a top inset")
+  func scrollToItemFarBelow() {
+    let h = Harness(rowCount: 200) { $0.anchoring = .manual }
+    let view = GeometryScrollView(h, containerHeight: 459, insetTop: 59)
+    view.settle()
+    h.core.scrollToItem("r199", align: .end)
+    view.settle()
+    #expect(h.core.lastVisibleItem()?.key == "r199")
+    #expect(view.bottomGap == 0)
   }
 }

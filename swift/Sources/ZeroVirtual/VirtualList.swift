@@ -59,18 +59,23 @@
           contentOffset: g.offset, containerHeight: g.container, contentHeight: g.content,
           insetTop: g.top, insetBottom: g.bottom)
       }
-      .onChange(of: Rendered(snapshot), initial: true) { [host] in
-        host.render(snapshot.items.map { (key: $0.key, index: $0.index) })
-      }
       .onAppear {
+        let render = { [host, list] in
+          host.render(list.snapshot.items.map { (key: $0.key, index: $0.index) })
+        }
+        list.onSnapshot = render
         host.requestScroll = { y in position.scrollTo(y: y) }
         host.didScroll = { [list] in list.didScroll() }
         host.viewportDidResize = { [list] in list.viewportDidResize() }
         host.afterUpdate = { [list] in list.afterUpdate() }
         list.anchoring = .manual
         list.attach(host)
+        render()
       }
-      .onDisappear { list.detach() }
+      .onDisappear {
+        list.onSnapshot = nil
+        list.detach()
+      }
     }
 
     private static var rows: String { "ZeroVirtual.VirtualList.rows" }
@@ -86,18 +91,6 @@
       content = g.contentSize.height
       top = g.contentInsets.top
       bottom = g.contentInsets.bottom
-    }
-  }
-
-  /// What a render of the snapshot laid out: a change needs measuring.
-  private struct Rendered: Equatable {
-    var keys: [AnyHashable]
-    var before, after: Double
-
-    init<Row, Key>(_ s: VirtualSnapshot<Row, Key>) {
-      keys = s.items.map { AnyHashable($0.key) }
-      before = s.spaceBefore
-      after = s.spaceAfter
     }
   }
 #endif

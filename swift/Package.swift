@@ -40,7 +40,8 @@ let package = Package(
     .testTarget(name: "ConformanceTests", dependencies: ["Zero", "ZeroTesting"]),
     // The Apple layer: the URLSession transport, SwiftUI, UIKit, and AppKit.
     // Empty elsewhere.
-    .testTarget(name: "AppleTests", dependencies: ["Zero", "ZeroUI", "ZeroTesting"]),
+    .testTarget(
+      name: "AppleTests", dependencies: ["Zero", "ZeroUI", "ZeroVirtual", "ZeroTesting"]),
     .testTarget(
       name: "ZeroVirtualTests", dependencies: ["Zero", "ZeroVirtual", "ZeroTesting"],
       exclude: ["UPSTREAM.md"]),

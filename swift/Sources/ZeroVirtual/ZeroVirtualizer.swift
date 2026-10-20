@@ -48,6 +48,10 @@ public final class ZeroVirtualizer<
   @ObservationIgnored private var after = Slot<[Row]>()
   @ObservationIgnored private var syncing = false
   @ObservationIgnored private var dirty = false
+  /// Called with each snapshot published: the adapter re-renders and calls
+  /// `afterUpdate` once it's laid out, as a React render does, even when
+  /// the rows are the same ones.
+  @ObservationIgnored package var onSnapshot: (() -> Void)?
 
   /// - Parameters:
   ///   - listContext: What the list shows, such as its filter and sort. A
@@ -224,6 +228,7 @@ public final class ZeroVirtualizer<
     } while dirty
     error = single.error ?? main.error ?? after.error
     snapshot = core.snapshot
+    onSnapshot?()
   }
 
   /// The slot for `request`: nil when `slot` already runs it.

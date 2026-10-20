@@ -18,10 +18,14 @@ struct ChatScreen: View {
 
   var body: some View {
     VStack(spacing: 0) {
+      // Off the safe area's edges, the scroll view's frame is its viewport,
+      // which the UI tests measure rows against.
+      Divider()
       VirtualList(list) { item in
         MessageRow(message: item.row)
       }
       .accessibilityIdentifier("list")
+      Divider()
       HStack {
         Button("Receive") { backend.receive() }.accessibilityIdentifier("receive")
         Button("Grow last") { backend.growLast() }.accessibilityIdentifier("grow")
@@ -65,6 +69,14 @@ struct IssuesScreen: View {
   }
 
   var body: some View {
+    VStack(spacing: 0) {
+      Divider()
+      issues
+      Divider()
+    }
+  }
+
+  private var issues: some View {
     VirtualList(list) { item in
       VStack(alignment: .leading, spacing: 2) {
         Text(item.row.title)

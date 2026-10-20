@@ -55,7 +55,8 @@ package final class ScrollGeometryHost: VirtualHost {
     requestScroll(offset)
   }
 
-  /// The view rendered a snapshot with these rows.
+  /// The view rendered a snapshot with these rows: every snapshot, even one
+  /// with the same rows, since the core waits on `afterUpdate` for it.
   package func render<Key: Hashable>(_ keys: [(key: Key, index: Int)]) {
     items = keys.map { (AnyHashable($0.key), $0.index) }
     let live = Set(items.map(\.key))
