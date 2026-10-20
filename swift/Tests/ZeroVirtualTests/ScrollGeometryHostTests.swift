@@ -105,6 +105,9 @@ final class GeometryScrollView {
     host.rowFrames().first { $0.key == AnyHashable(key) }.map { $0.minY - host.scrollOffset }
   }
 
+  /// Where the row was drawn on the last pass, from the viewport's top.
+  func drawnTop(_ key: String) -> Double? { reported[key].map { $0.minY - offset - insetTop } }
+
   var bottomGap: Double { host.contentHeight - host.scrollOffset - host.viewportHeight }
 }
 
@@ -351,7 +354,13 @@ extension ScrollGeometryHostTests {
       #expect(view.scrollRequests == before, "scrolled under fling \(flings)")
       // At rest: the space is given back, nothing on screen moving.
       guard let key = h.core.firstVisibleItem()?.key, let top = view.rowTop(key) else { return }
+      let (space, first) = (h.core.snapshot.spaceBefore, h.core.snapshot.items.first?.key)
       h.scheduler.advance(by: 200)
+      // Space taken out goes with its scroll: no pass drawn at the old offset.
+      view.pass()
+      if h.core.snapshot.spaceBefore < space, h.core.snapshot.items.first?.key == first {
+        #expect(view.drawnTop(key) == top, "the give-back after fling \(flings) drew rows moved")
+      }
       view.settle()
       #expect(view.rowTop(key) == top, "the give-back after fling \(flings) moved the rows")
     }
