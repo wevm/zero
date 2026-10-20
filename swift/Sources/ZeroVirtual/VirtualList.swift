@@ -1,4 +1,4 @@
-#if canImport(SwiftUI)
+#if canImport(SwiftUI) && (canImport(UIKit) || canImport(AppKit))
   import SwiftUI
   import Zero
 
@@ -14,6 +14,14 @@
   ///
   /// Rows can be any height, and change it. The list draws only the rows
   /// near the screen, with space standing in for the rest.
+  ///
+  /// Underneath is the platform's scroll view (`UIScrollView`,
+  /// `NSScrollView`), which lays the rows out itself: their frames, its
+  /// content's size and its offset are set in one layout pass, so no frame
+  /// shows rows moved by a page loading before the offset that keeps them
+  /// in place. Each row is hosted in its own hosting view: it gets the
+  /// platform's traits (color scheme, Dynamic Type, layout direction), but
+  /// not the list's custom environment values. Apply those in `row`.
   public struct VirtualList<
     Context: Sendable, Row: ZeroRow, Key: Hashable, StartRow: Equatable & Sendable,
     ListContext: Equatable & Sendable, RowContent: View
@@ -22,8 +30,7 @@
 
     private let list: Virtualizer
     private let row: (VirtualItem<Row, Key>) -> RowContent
-    @State private var host = ScrollGeometryHost()
-    @State private var position = ScrollPosition()
+    @State private var model = VirtualListModel()
 
     public init(
       _ list: Virtualizer, @ViewBuilder row: @escaping (VirtualItem<Row, Key>) -> RowContent
@@ -33,68 +40,67 @@
     }
 
     public var body: some View {
-      let snapshot = list.snapshot
-      ScrollView {
-        // Not lazy: the snapshot is already the rows to draw, and each must
-        // be measured (`ScrollGeometryHost`).
-        VStack(spacing: 0) {
-          Color.clear.frame(height: snapshot.spaceBefore)
-          ForEach(snapshot.items, id: \.key) { item in
-            row(item)
-              .onGeometryChange(for: CGRect.self) {
-                $0.frame(in: .named(Self.rows))
-              } action: { [host] frame in
-                host.rowFrame(item.key, minY: frame.minY, maxY: frame.maxY)
-              }
-          }
-          Color.clear.frame(height: snapshot.spaceAfter)
-        }
-        .coordinateSpace(.named(Self.rows))
+      // Read here, so the list renders each snapshot.
+      _ = list.snapshot
+      return RowsScrollViewRepresentable(source: source, model: model)
+        .onAppear { model.attach(list) }
+        .onDisappear { model.detach(list) }
+    }
+
+    /// The snapshot's rows, as the scroll view draws them.
+    private var source: () -> RowsSource {
+      { [list, row] in
+        let snapshot = list.snapshot
+        return RowsSource(
+          items: snapshot.items.map { item in
+            RowsItem(
+              key: AnyHashable(item.key), index: item.index, row: item.row,
+              view: { AnyView(row(item)) })
+          },
+          spaceBefore: snapshot.spaceBefore, spaceAfter: snapshot.spaceAfter)
       }
-      .scrollPosition($position)
-      .onScrollGeometryChange(for: Geometry.self) {
-        Geometry($0)
-      } action: { [host] _, g in
-        host.geometry(
-          contentOffset: g.offset, containerHeight: g.container, contentHeight: g.content,
-          insetTop: g.top, insetBottom: g.bottom)
-      }
-      .onAppear {
-        let render = { [host, list] in
-          host.render(
-            list.snapshot.items.map { (key: $0.key, index: $0.index) },
-            spaceBefore: list.snapshot.spaceBefore)
-        }
-        list.onSnapshot = render
-        host.requestScroll = { y in position.scrollTo(y: y) }
+    }
+  }
+
+  /// Ties the virtualizer to the scroll view: attached while the list is
+  /// on screen.
+  @MainActor
+  final class VirtualListModel {
+    weak var view: RowsScrollView?
+    var source: () -> RowsSource = { RowsSource() }
+    private var attachAs: ((RowsScrollView) -> Void)?
+    private var attached = false
+
+    func attach<C, R, K, S, L>(_ list: ZeroVirtualizer<C, R, K, S, L>) {
+      attachAs = { [unowned self] view in
+        let host = view.rows.host
         host.didScroll = { [list] in list.didScroll() }
         host.viewportDidResize = { [list] in list.viewportDidResize() }
         host.afterUpdate = { [list] in list.afterUpdate() }
+        host.isLanding = { [list] in list.isLanding }
         list.anchoring = .manual
+        // Each snapshot, in the layout pass or out of it, goes to the view
+        // at once: a pass lays out what the core publishes during it.
+        list.onSnapshot = { [weak view, unowned self] in view?.rows.update(source()) }
         list.attach(host)
-        render()
+        view.rows.update(source())
       }
-      .onDisappear {
-        list.onSnapshot = nil
-        list.detach()
-      }
+      if let view { connect(view) }
     }
 
-    private static var rows: String { "ZeroVirtual.VirtualList.rows" }
-  }
+    func detach<C, R, K, S, L>(_ list: ZeroVirtualizer<C, R, K, S, L>) {
+      attachAs = nil
+      attached = false
+      list.onSnapshot = nil
+      list.detach()
+    }
 
-  /// What the host needs of `ScrollGeometry`.
-  private struct Geometry: Equatable {
-    var offset, container, content, top, bottom: Double
-
-    init(_ g: ScrollGeometry) {
-      offset = g.contentOffset.y
-      // The scroll view's full height, as UIKit's bounds: `containerSize`
-      // already leaves out the insets, which the host takes off itself.
-      container = g.visibleRect.height
-      content = g.contentSize.height
-      top = g.contentInsets.top
-      bottom = g.contentInsets.bottom
+    /// The view exists: attach to it if the list is on screen.
+    func connect(_ view: RowsScrollView) {
+      self.view = view
+      guard !attached, let attachAs else { return }
+      attached = true
+      attachAs(view)
     }
   }
 #endif

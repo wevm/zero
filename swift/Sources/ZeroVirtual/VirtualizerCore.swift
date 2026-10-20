@@ -278,6 +278,8 @@ package final class VirtualizerCore<
   private var reconciling = false
   private var settleTimer: (any ScheduledTimer)?
   private var target: Target?
+  /// A jump or a restore hasn't landed: the position is still on its way.
+  package var isLanding: Bool { target != nil }
   private var permalinkMissing = 0
 
   // A restore not yet applied: from `scrollState` at first, then

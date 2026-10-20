@@ -195,6 +195,9 @@ public final class ZeroVirtualizer<
   /// The content moved.
   public func didScroll() { core.didScroll() }
 
+  /// A jump or a restore hasn't landed yet.
+  package var isLanding: Bool { core.isLanding }
+
   /// The viewport changed size.
   public func viewportDidResize() { core.viewportDidResize() }
 
