@@ -87,7 +87,9 @@
 
     init(_ g: ScrollGeometry) {
       offset = g.contentOffset.y
-      container = g.containerSize.height
+      // The scroll view's full height, as UIKit's bounds: `containerSize`
+      // already leaves out the insets, which the host takes off itself.
+      container = g.visibleRect.height
       content = g.contentSize.height
       top = g.contentInsets.top
       bottom = g.contentInsets.bottom

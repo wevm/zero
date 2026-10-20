@@ -73,8 +73,8 @@ package final class ScrollGeometryHost: VirtualHost {
   }
 
   /// The scroll view's geometry: `contentOffset` as UIKit reports it (the
-  /// top inset is negative space above the content), the size it shows
-  /// content in, and its insets.
+  /// top inset is negative space above the content), its full height,
+  /// insets included (UIKit's bounds), and its insets.
   package func geometry(
     contentOffset: Double, containerHeight: Double, contentHeight: Double, insetTop: Double,
     insetBottom: Double
