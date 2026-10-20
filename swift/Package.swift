@@ -41,7 +41,9 @@ let package = Package(
     // The Apple layer: the URLSession transport, SwiftUI, UIKit, and AppKit.
     // Empty elsewhere.
     .testTarget(name: "AppleTests", dependencies: ["Zero", "ZeroUI", "ZeroTesting"]),
-    .testTarget(name: "ZeroVirtualTests", dependencies: ["Zero", "ZeroVirtual", "ZeroTesting"]),
+    .testTarget(
+      name: "ZeroVirtualTests", dependencies: ["Zero", "ZeroVirtual", "ZeroTesting"],
+      exclude: ["UPSTREAM.md"]),
     .testTarget(name: "E2ETests", dependencies: ["Zero", "ZeroNIOTesting"]),
   ],
   swiftLanguageModes: [.v6]

@@ -134,6 +134,58 @@ import ZeroTesting
     #expect(list.snapshot.total == 100)
     withExtendedLifetime(zero) {}
   }
+
+  /// Polls until `done`, on real time.
+  func eventually(
+    _ done: () -> Bool, sourceLocation: SourceLocation = #_sourceLocation
+  ) async throws {
+    for _ in 0..<500 {
+      if done() { return }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    Issue.record("timed out", sourceLocation: sourceLocation)
+  }
+
+  @Test func pagesOverALoopbackServerOnRealTime() async throws {
+    let server = LoopbackServer()
+    func issue(_ i: Int) -> [String: JSONValue] {
+      [
+        "id": .string(Self.id(i)), "title": "", "description": "", "closed": .bool(false),
+        "owner_id": .null, "createdAt": 1,
+      ]
+    }
+    server.put("issues", (0..<150).map(issue))
+    var options = ZeroOptions(
+      cacheURL: "http://zero.test", userID: "u", storageKey: randomID(), storage: .memory)
+    options.logSink = RecordingLogSink()
+    let zero = try Zero(schema: .test, options: options, socketFactory: server)
+    let list = List(
+      zero: zero, listContext: nil, estimatedRowHeight: 20, rowKey: \.id, toStartRow: \.id,
+      pageQuery: { r, _ in
+        Self.page(PageArgs(limit: r.limit, start: r.start, backward: r.direction == .backward))
+      },
+      rowQuery: { r, _ in Self.byID(r.id) }, minPageSize: 100)
+    let view = ListView()
+    list.attach(view)
+    view.render(list)
+    list.afterUpdate()
+    try await eventually { list.snapshot.complete && list.snapshot.items.count == 100 }
+    #expect(list.snapshot.items.first?.key == Self.id(0))
+
+    // Rows the server adds later sync, and the list pages to them.
+    server.put("issues", (150..<160).map(issue))
+    view.scroll(list, to: .infinity)
+    for _ in 0..<20 where list.snapshot.items.last?.key != Self.id(159) {
+      view.render(list)
+      list.afterUpdate()
+      view.scroll(list, to: .infinity)
+      try await Task.sleep(for: .milliseconds(50))
+    }
+    #expect(list.snapshot.items.last?.key == Self.id(159))
+    #expect(list.snapshot.complete)
+    #expect(list.error == nil)
+    withExtendedLifetime(zero) {}
+  }
 }
 
 /// A server that sends every row at first, then reports each query the

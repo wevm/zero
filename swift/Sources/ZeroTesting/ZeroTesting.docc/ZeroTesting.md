@@ -50,6 +50,21 @@ socket.receive(text: #"["connected",{"wsid":"w1"}]"#)
 
 `RecordingLogSink` keeps the client's log messages for a test to check.
 
+### A server in the app
+
+For previews, demos, and UI tests that need synced data on real time,
+`LoopbackServer` plays a server in the app's process: it sends the rows it
+holds, confirms every query, and syncs rows added later, as another user's
+change would.
+
+```swift
+let server = LoopbackServer()
+server.put("message", ["id": "m1", "body": "Hi", "createdAt": 1])
+let zero = try Zero(
+  schema: .app, options: ZeroOptions(cacheURL: "http://loopback"),
+  socketFactory: server)
+```
+
 `ZeroTesting` re-exports `Zero`.
 
 ## Topics
@@ -64,3 +79,4 @@ socket.receive(text: #"["connected",{"wsid":"w1"}]"#)
 - ``MockSocketFactory``
 - ``MockSocket``
 - ``RecordingLogSink``
+- ``LoopbackServer``

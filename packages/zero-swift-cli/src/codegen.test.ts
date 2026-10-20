@@ -54,6 +54,17 @@ const fixtures: {name: string; dir?: string; config: Config}[] = [
     },
   },
   {
+    name: 'zql test schema for the virtual list test app',
+    config: {
+      schema: 'packages/zql/src/query/test/test-schemas.ts',
+      output: 'swift/TestHost/App/Generated/TestSchema.swift',
+      schemaName: 'test',
+      zql: 'testZQL',
+      typePrefix: 'Test',
+      access: 'internal',
+    },
+  },
+  {
     name: 'codegen fixture schema',
     config: {
       schema: 'packages/zero-swift-cli/test/fixture-schema.ts',

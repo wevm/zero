@@ -4,7 +4,9 @@ name: zbugs screenshots
 # against zbugs' backend (apps/zbugs-swift/server/server.ts), and keeps a
 # screenshot of each screen (apps/zbugs-swift/App/UITests) as the
 # zbugs-screenshots artifact. Then it stops the backend and runs each again
-# offline, from what the app stored locally.
+# offline, from what the app stored locally. Alongside, the virtual list
+# UI tests run the ZeroVirtual test app (swift/TestHost), which needs no
+# backend.
 # Path-filtered to the app and the UI layer: macOS runners are slow to start.
 
 on:
@@ -13,12 +15,18 @@ on:
     paths:
       - 'apps/zbugs-swift/**'
       - 'swift/Sources/ZeroUI/**'
+      - 'swift/Sources/ZeroVirtual/**'
+      - 'swift/Sources/ZeroTesting/**'
+      - 'swift/TestHost/**'
       - '.github/workflows/zbugs-screenshots.yml'
   pull_request:
     branches: [main]
     paths:
       - 'apps/zbugs-swift/**'
       - 'swift/Sources/ZeroUI/**'
+      - 'swift/Sources/ZeroVirtual/**'
+      - 'swift/Sources/ZeroTesting/**'
+      - 'swift/TestHost/**'
       - '.github/workflows/zbugs-screenshots.yml'
   workflow_dispatch:
 
@@ -126,3 +134,40 @@ jobs:
         run: |
           cat "$RUNNER_TEMP/zbugs.log"
           cat "$RUNNER_TEMP/pg.log" || true
+
+  virtual-list:
+    name: Virtual list UI tests (iPhone and macOS)
+    runs-on: macos-26
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: swift/TestHost
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Generate the Xcode project
+        run: brew install xcodegen && xcodegen generate
+      - name: UI tests
+        run: |
+          simulator() {
+            xcrun simctl list devices available -j |
+              python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for k,v in d.items() if "iOS" in k for x in v if x["name"].startswith(sys.argv[1])))' "$1"
+          }
+          # Both, even after one fails.
+          status=0
+          uitests() {
+            name="$1"
+            shift
+            xcodebuild test -project TestHost.xcodeproj -scheme TestHost \
+              -resultBundlePath "$RUNNER_TEMP/results/$name.xcresult" \
+              -skipPackagePluginValidation "$@" || status=1
+          }
+          uitests iPhone -destination "id=$(simulator iPhone)" CODE_SIGNING_ALLOWED=NO
+          uitests macOS -destination platform=macOS CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=-
+          exit "$status"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure()
+        with:
+          name: virtual-list-results
+          path: ${{ runner.temp }}/results
