@@ -474,8 +474,10 @@ The drift harness catches it in the app's own tests.
   offline client of its own, and writes `drift-vectors.json`. In this repo,
   the zero-swift tests record the apps' vectors and fail when they are stale.
 - **Swift side.** `ZeroTesting` exposes
-  `Drift.failures(vectors:schema:queries:mutators:)` and
-  `Drift.expectNoDrift`, which records a Swift Testing issue per difference.
+  `Drift.failures(vectors:schema:queries:mutators:)`, which a test expects
+  to be empty. It doesn't import `Testing`: on Apple platforms that links
+  `Testing.framework`, which only test bundles find, so anything else that
+  linked `ZeroTesting`, such as the benchmarks, failed to launch.
   Queries are `NamedQuery`s, the query definitions with decodable arguments.
 
 Checks:

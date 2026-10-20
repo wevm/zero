@@ -11,7 +11,8 @@ import ZeroTesting
     let vectors = try String(
       contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         .appendingPathComponent("drift-vectors.json"), encoding: .utf8)
-    Drift.expectNoDrift(
+    let failures = try Drift.failures(
       vectors: vectors, schema: .zbugs, queries: Queries.all, mutators: Mutators.all)
+    #expect(failures == [])
   }
 }

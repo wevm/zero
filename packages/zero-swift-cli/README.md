@@ -42,9 +42,9 @@ plain object or a literal union, the tool generates a `Codable` type.
 
 You write the Swift queries and mutators by hand, and the drift harness
 checks them against the TypeScript ones. This command runs the TypeScript
-definitions on samples and records what they did. `Drift.expectNoDrift` in
-the Swift `ZeroTesting` library then fails a test wherever the Swift ones
-differ.
+definitions on samples and records what they did. `Drift.failures` in
+the Swift `ZeroTesting` library then lists wherever the Swift ones differ,
+for a test to expect none.
 
 ```sh
 npx zero-swift drift record --samples drift-samples.ts --out Tests/AppTests/drift-vectors.json

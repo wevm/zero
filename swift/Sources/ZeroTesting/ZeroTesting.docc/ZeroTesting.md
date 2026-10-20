@@ -15,12 +15,13 @@ vectors file. `Drift` checks the Swift definitions against those vectors:
 ```swift
 @Test @MainActor func matchesTheTSQueriesAndMutators() throws {
   let vectors = try String(contentsOf: vectorsURL, encoding: .utf8)
-  Drift.expectNoDrift(
+  let failures = try Drift.failures(
     vectors: vectors, schema: .app, queries: Queries.all, mutators: Mutators.all)
+  #expect(failures == [])
 }
 ```
 
-The test fails when:
+The test fails, listing each difference, when:
 
 - a name is in one registry but not the other;
 - a sample's arguments don't round-trip through the Swift argument type;

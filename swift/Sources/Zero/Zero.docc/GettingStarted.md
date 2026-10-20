@@ -79,8 +79,8 @@ same rows.
 
 The drift harness checks the ports: `zero-swift drift record` runs your
 TypeScript queries and mutators on sample arguments and writes what they
-did, and `Drift.expectNoDrift` in `ZeroTesting` fails a test where the Swift
-ones do something else, or where a query or mutator exists on one side only.
+did, and `Drift.failures` in `ZeroTesting` lists where the Swift ones
+do something else, or where a query or mutator exists on one side only.
 
 ## Create a client
 

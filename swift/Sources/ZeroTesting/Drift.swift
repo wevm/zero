@@ -1,7 +1,3 @@
-#if canImport(Testing)
-  import Testing
-#endif
-
 /// The drift harness: checks an app's Swift queries and mutators against
 /// what their TS definitions did on the same samples
 /// (`zero-swift drift record` writes the vectors).
@@ -16,7 +12,10 @@
 @MainActor
 public enum Drift {
   /// The differences between `vectors` and the Swift definitions; empty when
-  /// there are none.
+  /// there are none. A test expects none: `#expect(failures == [])`.
+  ///
+  /// (No `Testing` helper here: a module that imports `Testing` links
+  /// `Testing.framework`, which only test bundles find on Apple platforms.)
   ///
   /// - Parameters:
   ///   - vectors: The contents of the `drift-vectors.json` that
@@ -70,25 +69,6 @@ public enum Drift {
     }
     return failures
   }
-
-  #if canImport(Testing)
-    /// Records an issue for each difference between `vectors` and the Swift
-    /// definitions.
-    public static func expectNoDrift<Context: Decodable & Sendable>(
-      vectors: String, schema: ZeroSchema, queries: [any NamedQuery<Context>],
-      mutators: [any Mutator<Context>], sourceLocation: SourceLocation = #_sourceLocation
-    ) {
-      do {
-        for failure in try failures(
-          vectors: vectors, schema: schema, queries: queries, mutators: mutators)
-        {
-          Issue.record(Comment(rawValue: failure), sourceLocation: sourceLocation)
-        }
-      } catch {
-        Issue.record(error, sourceLocation: sourceLocation)
-      }
-    }
-  #endif
 
   private static func context<Context: Decodable>(_ sample: JSONValue) throws -> Context {
     try JSONValueDecoder.decode(Context.self, from: sample["context"] ?? .null)
