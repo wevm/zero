@@ -253,7 +253,7 @@ enum ViewApply {
       } else {
         var entry = ViewEntry(row: node.row)
         initializeRelationships(&entry, node, schema, format.relationships)
-        list.insert(entry, at: ~pos)
+        list.insertOrAppend(entry, at: ~pos)
       }
     }
     parent.relationships[relationship] = .many(list)
@@ -302,7 +302,7 @@ enum ViewApply {
           } else {
             var e = ViewEntry(row: child.row)
             initializeRelationships(&e, child, childSchema, childFormat.relationships)
-            list.insert(e, at: ~pos)
+            list.insertOrAppend(e, at: ~pos)
           }
         }
         entry.relationships[name] = .many(list)
@@ -492,5 +492,13 @@ extension Format: JSONCodable {
     var rels: [String: JSONValue] = [:]
     for (k, v) in relationships { rels[k] = v.json }
     return ["singular": .bool(singular), "relationships": .object(rels)]
+  }
+}
+
+extension Array<ViewEntry> {
+  /// `insert(_:at:)`, appending at the end, where hydration adds rows. Unlike
+  /// `insert`, `append` moves the entry in rather than copying it.
+  mutating func insertOrAppend(_ entry: ViewEntry, at i: Int) {
+    if i == count { append(entry) } else { insert(entry, at: i) }
   }
 }

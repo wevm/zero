@@ -12,11 +12,11 @@ package struct BTreeSet<Element> {
     // writing them, so no access to a node overlaps a write to it, and the
     // checks cost more than the reads (`ForwardIterator`).
     /// Leaf: the elements. Internal: the highest element of each child.
-    @exclusivity(unchecked) @usableFromInline var keys: [Element]
+    @exclusivity(unchecked) @usableFromInline var keys: ContiguousArray<Element>
     /// Empty for a leaf.
-    @exclusivity(unchecked) @usableFromInline var children: [Node]
+    @exclusivity(unchecked) @usableFromInline var children: ContiguousArray<Node>
 
-    @inlinable init(keys: [Element], children: [Node] = []) {
+    @inlinable init(keys: ContiguousArray<Element>, children: ContiguousArray<Node> = []) {
       self.keys = keys
       self.children = children
     }
@@ -47,8 +47,8 @@ package struct BTreeSet<Element> {
   where S.Element == Element {
     self.compare = compare
     let max = Self.maxNodeSize
-    var level: [Node] = []
-    var keys: [Element] = []
+    var level: ContiguousArray<Node> = []
+    var keys: ContiguousArray<Element> = []
     keys.reserveCapacity(max)
     var n = 0
     for e in elements {
@@ -61,11 +61,14 @@ package struct BTreeSet<Element> {
     }
     if !keys.isEmpty || level.isEmpty { level.append(Node(keys: keys)) }
     while level.count > 1 {
-      var next: [Node] = []
+      var next: ContiguousArray<Node> = []
       var i = 0
       while i < level.count {
-        let children = Array(level[i..<Swift.min(i + max, level.count)])
-        next.append(Node(keys: children.map { $0.keys[$0.keys.count - 1] }, children: children))
+        let children = ContiguousArray(level[i..<Swift.min(i + max, level.count)])
+        next.append(
+          Node(
+            keys: ContiguousArray(children.lazy.map { $0.keys[$0.keys.count - 1] }),
+            children: children))
         i += max
       }
       level = next
@@ -175,7 +178,8 @@ package struct BTreeSet<Element> {
     if node.keys.count <= maxNodeSize { return nil }
     let half = node.keys.count / 2
     let right = Node(
-      keys: Array(node.keys[half...]), children: node.isLeaf ? [] : Array(node.children[half...]))
+      keys: ContiguousArray(node.keys[half...]),
+      children: node.isLeaf ? [] : ContiguousArray(node.children[half...]))
     node.keys.removeSubrange(half...)
     if !node.isLeaf { node.children.removeSubrange(half...) }
     return right
@@ -226,7 +230,7 @@ package struct BTreeSet<Element> {
     @usableFromInline var path: [(Node, Int)] = []
     @usableFromInline var leaf: Node?
     /// The leaf's keys, read once per leaf.
-    @usableFromInline var keys: [Element] = []
+    @usableFromInline var keys: ContiguousArray<Element> = []
     @usableFromInline var index = 0
 
     @inlinable
@@ -341,7 +345,7 @@ func lowerBound<E>(_ keys: UnsafeBufferPointer<E>, _ cmp: (E) -> Int) -> Int {
 
 /// The first index whose element compares `>= 0`.
 @inlinable
-func lowerBound<E>(_ keys: [E], _ cmp: (E) -> Int) -> Int {
+func lowerBound<E>(_ keys: ContiguousArray<E>, _ cmp: (E) -> Int) -> Int {
   var low = 0
   var high = keys.count
   while low < high {
@@ -353,7 +357,7 @@ func lowerBound<E>(_ keys: [E], _ cmp: (E) -> Int) -> Int {
 
 /// The first index whose element compares `> 0`.
 @inlinable
-func upperBound<E>(_ keys: [E], _ cmp: (E) -> Int) -> Int {
+func upperBound<E>(_ keys: ContiguousArray<E>, _ cmp: (E) -> Int) -> Int {
   var low = 0
   var high = keys.count
   while low < high {

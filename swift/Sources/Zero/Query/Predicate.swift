@@ -47,7 +47,8 @@ func createPredicate(_ condition: AST.Condition) throws(PipelineError) -> RowPre
         return { _ in result }
       }
       guard case .column(let name) = left else { preconditionFailure() }
-      return { row in impl(row[name]) }
+      let column = ColumnReader(name)
+      return { row in impl(column.read(row)) }
     default:
       break
     }
@@ -59,10 +60,30 @@ func createPredicate(_ condition: AST.Condition) throws(PipelineError) -> RowPre
       return { _ in result }
     }
     guard case .column(let name) = left else { preconditionFailure() }
+    let column = ColumnReader(name)
     return { row in
-      guard let lhs = row[name], lhs != .null else { return false }
+      guard let lhs = column.read(row), lhs != .null else { return false }
       return impl(lhs)
     }
+  }
+}
+
+/// Reads a column of rows, looking its index up once for each layout
+/// rather than hashing its name for each row.
+final class ColumnReader {
+  let name: String
+  // Unchecked: the engine runs pipelines on the main actor, so no read of
+  // the cache overlaps a write to it.
+  @exclusivity(unchecked) private var column: ColumnRef?
+
+  init(_ name: String) { self.name = name }
+
+  func read(_ row: Row) -> Value? {
+    let layout = row.layout
+    if let column, column.layout === layout { return row[column: column] }
+    let column = layout.column(name)
+    self.column = column
+    return row[column: column]
   }
 }
 

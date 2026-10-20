@@ -82,13 +82,16 @@ public struct Row: @unchecked Sendable {
       slots: (0..<row.slotCount).map { row[slot: $0] } + others.map(\.1))
   }
 
+  // `layout` and `slotCount` read the header through its pointer: reading
+  // `header`, a stored class property, checks exclusivity each time.
+
   /// The layout of the row's columns.
   @inlinable
-  package var layout: RowLayout { storage.header.layout }
+  package var layout: RowLayout { storage.withUnsafeMutablePointerToHeader { $0.pointee.layout } }
 
   /// How many columns the layout has.
   @inlinable
-  package var slotCount: Int { storage.header.count }
+  package var slotCount: Int { storage.withUnsafeMutablePointerToHeader { $0.pointee.count } }
 
   /// The value of the layout's column `i`.
   @inlinable

@@ -142,7 +142,7 @@ package final class MemorySource: Source {
   package var indexKeys: [String] { indexOrder }
 
   func fetch(_ req: FetchRequest, _ conn: Connection) -> NodeStream {
-    NodeStream { [self] in AnyIterator(self.fetchIterator(req, conn)) }
+    NodeStream { [self] in self.fetchIterator(req, conn) }
   }
 
   private func fetchIterator(_ req: FetchRequest, _ conn: Connection) -> AnyIterator<Node> {
@@ -207,24 +207,12 @@ package final class MemorySource: Source {
       probe = nil
     }
 
-    let rows: AnyIterator<Row> =
-      req.reverse
-      ? AnyIterator(data.valuesReversed(from: probe)) : AnyIterator(data.values(from: probe))
+    let rows = TreeRows(data, from: probe, reverse: req.reverse)
 
     // Fast path: no overlay, no start, and no filters.
     let overlayActive = overlay.map { conn.lastPushedEpoch >= $0.epoch } ?? false
     if !overlayActive && req.start == nil && conn.filters == nil && req.filter == nil {
-      let constraint = req.constraint
-      var done = false
-      return AnyIterator {
-        if done { return nil }
-        guard let row = rows.next() else { return nil }
-        if let constraint, !constraint.matches(row) {
-          done = true
-          return nil
-        }
-        return Node(row: row)
-      }
+      return AnyIterator(ScanIterator(rows: rows, constraint: req.constraint))
     }
 
     // `req.constraint` and not the primary key constraint, which comes from
@@ -232,6 +220,7 @@ package final class MemorySource: Source {
     let rowsIterable: AnyIterator<Row> =
       if pkConstraint != nil {
         { () -> AnyIterator<Row> in
+          var rows = rows
           var taken = false
           return AnyIterator {
             if taken { return nil }
@@ -240,7 +229,7 @@ package final class MemorySource: Source {
           }
         }()
       } else {
-        rows
+        AnyIterator(rows)
       }
     let withOverlay = generateWithOverlay(
       startAt: startAt, rows: rowsIterable, constraint: req.constraint, overlay: overlay,
@@ -608,11 +597,27 @@ func applyMultiConstraintsToOverlays(
 func generateWithOverlayInner(
   _ rows: AnyIterator<Row>, _ overlays: MemorySource.Overlays, _ compare: @escaping Comparator
 ) -> AnyIterator<Node> {
+  AnyIterator(OverlayIterator(rows: rows, overlays: overlays, compare: compare))
+}
+
+/// `generateWithOverlayInner`'s generator. A struct, so that its state isn't
+/// variables captured by a closure, each access to which checks exclusivity.
+private struct OverlayIterator: IteratorProtocol {
+  let rows: AnyIterator<Row>
+  let overlays: MemorySource.Overlays
+  let compare: Comparator
   var addOverlayYielded = false
   var removeOverlaySkipped = false
   var pending: Row?
   var finished = false
-  return AnyIterator {
+
+  init(rows: AnyIterator<Row>, overlays: MemorySource.Overlays, compare: @escaping Comparator) {
+    self.rows = rows
+    self.overlays = overlays
+    self.compare = compare
+  }
+
+  mutating func next() -> Node? {
     if let p = pending {
       pending = nil
       return Node(row: p)
@@ -709,5 +714,43 @@ func mergeSortedStreams(
       pendingRefill = top.idx
       return top.node
     }
+  }
+}
+
+/// A tree's rows, ascending or descending. A struct rather than an
+/// `AnyIterator` of the tree's iterator, which would call its unspecialized
+/// `next()`, or a closure capturing it, each call of which checks exclusivity.
+private struct TreeRows: IteratorProtocol {
+  var forward: BTreeSet<Row>.ForwardIterator?
+  var reverse: BTreeSet<Row>.ReverseIterator?
+
+  init(_ data: BTreeSet<Row>, from probe: ((Row) -> Int)?, reverse: Bool) {
+    if reverse {
+      self.reverse = data.valuesReversed(from: probe)
+    } else {
+      forward = data.values(from: probe)
+    }
+  }
+
+  mutating func next() -> Row? {
+    forward != nil ? forward!.next() : reverse!.next()
+  }
+}
+
+/// The rows of a fetch without overlay, start, or filters, up to the first
+/// that doesn't match `constraint`.
+private struct ScanIterator: IteratorProtocol {
+  var rows: TreeRows
+  let constraint: Constraint?
+  var done = false
+
+  mutating func next() -> Node? {
+    if done { return nil }
+    guard let row = rows.next() else { return nil }
+    if let constraint, !constraint.matches(row) {
+      done = true
+      return nil
+    }
+    return Node(row: row)
   }
 }
