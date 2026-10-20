@@ -35,10 +35,14 @@ package final class ScrollGeometryHost: VirtualHost {
   private var items: [(key: AnyHashable, index: Int)] = []
   private var spaceBefore = 0.0
   private var heights: [AnyHashable: (minY: Double, maxY: Double)] = [:]
-  private var pendingScroll: Double?
+  /// A scroll asked for and not seen yet: the target, unclamped, and how
+  /// many reports have contradicted it.
+  private var pendingScroll: (target: Double, contradicted: Int)?
   private var flushScheduled = false
 
   package init() {}
+
+  private static var retries: Int { 3 }
 
   package func rowFrames() -> [VirtualRowFrame] {
     items.compactMap { item in
@@ -49,12 +53,14 @@ package final class ScrollGeometryHost: VirtualHost {
   }
 
   package func scroll(to target: Double) {
-    let offset = max(0, min(target, contentHeight - viewportHeight))
+    let offset = clamp(target)
     guard offset != scrollOffset else { return }
     scrollOffset = offset
-    pendingScroll = offset
+    pendingScroll = (target, 0)
     requestScroll(offset)
   }
+
+  private func clamp(_ y: Double) -> Double { max(0, min(y, contentHeight - viewportHeight)) }
 
   /// The view rendered a snapshot with these rows: every snapshot, even one
   /// with the same rows, since the core waits on `afterUpdate` for it.
@@ -95,6 +101,19 @@ package final class ScrollGeometryHost: VirtualHost {
     viewportHeight = viewport
     self.contentHeight = contentHeight
     let offset = contentOffset + insetTop
+    // A report from before the scroll took, or a fling's deceleration
+    // writing over it: the scroll is asked for again, against the content
+    // as it is now, for a few reports.
+    if let pending = pendingScroll, abs(offset - clamp(pending.target)) > 1,
+      pending.contradicted < Self.retries
+    {
+      pendingScroll = (pending.target, pending.contradicted + 1)
+      scrollOffset = clamp(pending.target)
+      requestScroll(scrollOffset)
+      if resized { viewportDidResize() }
+      if grew { scheduleFlush() }
+      return
+    }
     let moved = offset != scrollOffset
     let landed = pendingScroll != nil
     pendingScroll = nil

@@ -148,11 +148,19 @@ struct ManualAnchoringTests {
     #expect(h.rowTop("r50") == 0)
   }
 
-  @Test("shrinkage above the anchor row is compensated too")
+  @Test("shrinkage above the anchor row is taken up by space at the start, given back at rest")
   func shrinkageAbove() {
     let h = scrolled()
     h.setRowHeight("r30", 5)
     h.tick()
+    // No scroll while the list may be moving: a scroll would stop a fling.
+    #expect(h.scrollOffset == 1000)
+    #expect(h.core.snapshot.spaceBefore == 15)
+    #expect(h.rowTop("r50") == 0)
+
+    h.scheduler.advance(by: 150)
+    h.tick()
+    #expect(h.core.snapshot.spaceBefore == 0)
     #expect(h.scrollOffset == 985)
     #expect(h.rowTop("r50") == 0)
   }

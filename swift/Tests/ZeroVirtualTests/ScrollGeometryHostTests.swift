@@ -315,3 +315,82 @@ extension ScrollGeometryHostTests {
     #expect(view.rowTop(key) == top)
   }
 }
+
+extension ScrollGeometryHostTests {
+  @Test(
+    "opened at its end, flings up to the top through rows 3× their estimate, never scrolled under")
+  func flingsUpFromAPermalink() {
+    let h = Harness(rowCount: 400) {
+      $0.anchoring = .manual
+      $0.permalinkID = "r399"
+    }
+    let view = GeometryScrollView(h)
+    for i in 0..<400 { view.heights["r\(i)"] = 60 }
+    view.settle()
+    h.scheduler.advance(by: 200)
+    view.settle()
+    #expect(h.core.lastVisibleItem()?.key == "r399")
+
+    var flings = 0
+    while view.host.scrollOffset > 0, flings < 200 {
+      flings += 1
+      let before = view.scrollRequests
+      // A fling of 20 frames, pages loading under it.
+      for _ in 0..<20 where view.host.scrollOffset > 0 {
+        guard let key = h.core.firstVisibleItem()?.key, let top = view.rowTop(key) else {
+          Issue.record("no rows on screen")
+          return
+        }
+        let offset = view.host.scrollOffset
+        view.userScroll(offset - 40)
+        view.settle()
+        let moved = offset - max(0, offset - 40)
+        #expect(view.rowTop(key) == top + moved, "fling \(flings) at \(offset)")
+      }
+      #expect(view.scrollRequests == before, "scrolled under fling \(flings)")
+      // At rest: the space is given back, nothing on screen moving.
+      guard let key = h.core.firstVisibleItem()?.key, let top = view.rowTop(key) else { return }
+      h.scheduler.advance(by: 200)
+      view.settle()
+      #expect(view.rowTop(key) == top, "the give-back after fling \(flings) moved the rows")
+    }
+    #expect(h.core.snapshot.items.first?.key == "r0")
+    #expect(view.host.scrollOffset == 0)
+    #expect(h.core.snapshot.spaceBefore == 0)
+  }
+
+  @Test("a scroll a report contradicts is asked for again, a few times")
+  func reissuesAContradictedScroll() {
+    let host = ScrollGeometryHost()
+    var requested: [Double] = []
+    var scrolls = 0
+    host.requestScroll = { requested.append($0) }
+    host.didScroll = { scrolls += 1 }
+    func report(_ offset: Double, content: Double = 2000) {
+      host.geometry(
+        contentOffset: offset, containerHeight: 400, contentHeight: content, insetTop: 0,
+        insetBottom: 0)
+    }
+    report(500)
+    scrolls = 0
+    host.scroll(to: 1200)
+    // A fling's deceleration writes over it: asked for again, the core not
+    // told of an offset it didn't ask for.
+    report(490)
+    #expect(requested == [1200, 1200])
+    #expect(host.scrollOffset == 1200)
+    #expect(scrolls == 0)
+    // Against the content as it is now.
+    report(480, content: 1500)
+    #expect(requested == [1200, 1200, 1100])
+    report(1100, content: 1500)
+    #expect(scrolls == 1)
+    #expect(host.scrollOffset == 1100)
+
+    // One that never takes is given up after three reports.
+    host.scroll(to: 200)
+    for y in [1090.0, 1080, 1070, 1060] { report(y, content: 1500) }
+    #expect(requested.count == 3 + 1 + 3)
+    #expect(host.scrollOffset == 1060)
+  }
+}
