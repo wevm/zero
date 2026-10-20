@@ -276,6 +276,16 @@ enum Benchmarks {
 
   /// The sum of column `a` over the view's rows, as the JS benchmarks check.
   static func sum(_ view: MaterializedView) -> Double {
-    view.data.entries.reduce(0) { $0 + ($1.row["a"]?.numberValue ?? 0) }
+    sum(view.data.entries)
+  }
+
+  /// Reads `a` by index, as JS reads `row.a` off the object's shape, and off
+  /// the main actor, which would check its executor for every row.
+  nonisolated static func sum(_ entries: [ViewEntry]) -> Double {
+    guard let first = entries.first else { return 0 }
+    let a = first.row.layout.column("a")
+    var total = 0.0
+    for entry in entries { total += entry.row[column: a]?.numberValue ?? 0 }
+    return total
   }
 }
