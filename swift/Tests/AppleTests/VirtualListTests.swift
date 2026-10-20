@@ -119,8 +119,10 @@
       // the space that stands in for the rows before the window.
       let g = try #require(platformGeometry(window))
       let s = list.snapshot
-      let first = try #require(s.items.first?.index)
-      #expect(abs(g.offset - (s.spaceBefore + Double(250 - first + 1) * 30 - g.viewport)) <= 1)
+      // Its place in the window: under a permalink anchor, `index` counts
+      // from the window's anchor, not the list's start.
+      let position = try #require(s.items.firstIndex { $0.key == Self.id(250) })
+      #expect(abs(g.offset - (s.spaceBefore + Double(position + 1) * 30 - g.viewport)) <= 1)
       withExtendedLifetime((zero, window)) {}
     }
   }
