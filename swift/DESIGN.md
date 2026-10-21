@@ -98,10 +98,12 @@ apps/zbugs-swift/           dogfood app (iOS + macOS)
 
 - Independent semver starting at `0.1.0`. `1.0` once zbugs dogfooding shows the
   API is stable.
-- A PR bumps `swift/VERSION` and the CLI's `package.json` version together. On
-  merge, `swift-release.yml` pushes the subtree split to the mirror, tags it,
-  and publishes the CLI to npm, after approval in the `swift-release`
-  environment.
+- Changesets version both (see `.changeset/README.md`): a change to either
+  adds a changeset for `zero-swift`. `swift-release.yml` keeps a version PR
+  open, and `pnpm changeset:version` writes the CLI's version to
+  `swift/VERSION`. Once that PR merges, the workflow pushes the subtree split
+  to the mirror, tags it, and publishes the CLI to npm, after approval in the
+  `swift-release` environment.
 - The README carries a compatibility table: Swift version → sync protocol
   version → minimum `zero-cache` version → the Zero JS release whose vectors
   it passes.
