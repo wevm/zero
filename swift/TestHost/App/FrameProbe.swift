@@ -456,8 +456,16 @@ struct ProbeMarker: View {
     func updateUIView(_ view: Marker, context: Context) {}
   }
 
-  private final class Marker: UIView {
-    let id: String
+  /// A marker in a row's own view (`NativeRowView`): its id changes with
+  /// the row the view shows.
+  final class Marker: UIView {
+    var id: String {
+      didSet {
+        guard id != oldValue, window != nil else { return }
+        FrameProbe.shared.unregister(oldValue, self)
+        FrameProbe.shared.register(id, self)
+      }
+    }
     init(_ id: String) {
       self.id = id
       super.init(frame: .zero)
@@ -480,8 +488,14 @@ struct ProbeMarker: View {
     func updateNSView(_ view: Marker, context: Context) {}
   }
 
-  private final class Marker: NSView {
-    let id: String
+  final class Marker: NSView {
+    var id: String {
+      didSet {
+        guard id != oldValue, window != nil else { return }
+        FrameProbe.shared.unregister(oldValue, self)
+        FrameProbe.shared.register(id, self)
+      }
+    }
     init(_ id: String) {
       self.id = id
       super.init(frame: .zero)

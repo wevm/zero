@@ -23,7 +23,12 @@ struct ChatScreen: View {
       Divider()
       // On screen once it knows where to open, the latest message: shown
       // before, it would draw the top of the chat for a frame.
-      if started {
+      if started, Native.enabled {
+        NativeVirtualList(list: list) { item, row in
+          let m = item.row
+          row.show(id: m.id, first: m.authorId, second: m.text, captionFirst: true, padding: 6)
+        }
+      } else if started {
         VirtualList(list) { item in
           MessageRow(message: item.row)
         }
@@ -102,7 +107,19 @@ struct IssuesScreen: View {
     }
   }
 
-  private var issues: some View {
+  @ViewBuilder private var issues: some View {
+    if Native.enabled {
+      NativeVirtualList(list: list) { item, row in
+        let i = item.row
+        row.show(
+          id: i.id, first: i.title, second: i.description, captionFirst: false, padding: 8)
+      }
+    } else {
+      swiftUIIssues
+    }
+  }
+
+  private var swiftUIIssues: some View {
     VirtualList(list) { item in
       VStack(alignment: .leading, spacing: 2) {
         Text(item.row.title)

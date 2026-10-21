@@ -3,8 +3,10 @@ import XCTest
 /// ZeroVirtual's SwiftUI list (`VirtualList`) in the test app: rows checked
 /// by where they are on screen.
 @MainActor
-final class VirtualListUITests: XCTestCase {
+class VirtualListUITests: XCTestCase {
   var app: XCUIApplication!
+  /// The screens' lists as UIKit or AppKit views (`VirtualListView`).
+  var native: Bool { false }
 
   override func setUp() async throws {
     continueAfterFailure = false
@@ -12,7 +14,7 @@ final class VirtualListUITests: XCTestCase {
 
   func launch(_ screen: String) {
     app = XCUIApplication()
-    app.launchArguments = ["-screen", screen]
+    app.launchArguments = ["-screen", screen, "-native", native ? "1" : "0"]
     app.launch()
   }
 
@@ -169,4 +171,9 @@ final class VirtualListUITests: XCTestCase {
     }
     XCTAssertTrue(top, "never got back to the first issue")
   }
+}
+
+/// The same, with the screens' lists as UIKit or AppKit views.
+final class NativeVirtualListUITests: VirtualListUITests {
+  override var native: Bool { true }
 }

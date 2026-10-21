@@ -5,8 +5,10 @@ import XCTest
 /// scroll put them. The app drives the transitions itself
 /// (`-probe-script`); the probe's summary is the `probe` element's value.
 @MainActor
-final class FrameProbeUITests: XCTestCase {
+class FrameProbeUITests: XCTestCase {
   var app: XCUIApplication!
+  /// The screens' lists as UIKit or AppKit views (`VirtualListView`).
+  var native: Bool { false }
 
   override func setUp() async throws {
     continueAfterFailure = true
@@ -16,6 +18,7 @@ final class FrameProbeUITests: XCTestCase {
     app = XCUIApplication()
     app.launchArguments =
       ["-screen", screen] + (script ? ["-probe-script", screen] : []) + ["-probe", "1"]
+      + ["-native", native ? "1" : "0"]
     app.launch()
   }
 
@@ -128,4 +131,9 @@ final class FrameProbeUITests: XCTestCase {
       flingThrough("issues", Array(repeating: false, count: 10) + Array(repeating: true, count: 8))
     }
   #endif
+}
+
+/// The same, with the screens' lists as UIKit or AppKit views.
+final class NativeFrameProbeUITests: FrameProbeUITests {
+  override var native: Bool { true }
 }
