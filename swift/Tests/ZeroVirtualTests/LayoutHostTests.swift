@@ -202,6 +202,40 @@ final class LayoutScrollView {
     #expect(abs(middle + h.view.rowHeight / 2 - view.viewportHeight / 2) <= 0.5)
   }
 
+  @Test(
+    "offline, a list opened at a permalink or where it was shows its rows once they're in place")
+  func opensOffline() {
+    // Where the list was, as it reported it.
+    let online = Harness(rowCount: 300) { $0.anchoring = .manual }
+    var saved: VirtualScrollState<TestRow, String>?
+    online.setOptions { $0.onScrollStateChange = { saved = $0 } }
+    let first = LayoutScrollView(online)
+    first.settle()
+    first.userScroll(2400)
+    first.settle()
+    let top = try! #require(online.core.firstVisibleItem()?.key)
+    let state = try! #require(saved)
+
+    let opens: [(key: String, open: (inout Harness.Core.Options) -> Void)] = [
+      ("r150", { $0.permalinkID = "r150" }),
+      (top, { $0.scrollState = state }),
+    ]
+    for (key, open) in opens {
+      let h = Harness(rowCount: 300) {
+        $0.anchoring = .manual
+        open(&$0)
+      }
+      // No server: the queries never complete.
+      h.offline = true
+      let view = LayoutScrollView(h)
+      for _ in 0..<10 { view.pass() }
+      #expect(!h.core.snapshot.complete)
+      // The view draws the rows only once the list isn't landing.
+      #expect(!h.core.isLanding)
+      #expect(h.core.firstVisibleItem()?.key == key)
+    }
+  }
+
   @Test("stuck to the bottom, it follows new rows and a last row growing taller")
   func sticks() {
     let h = Harness(rowCount: 60) {

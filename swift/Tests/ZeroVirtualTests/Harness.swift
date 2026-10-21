@@ -111,6 +111,9 @@ final class Harness {
   let core: Core
   var options: Core.Options
   private var partial: (skip: Int, from: String, key: String?)?
+  /// Every answer is incomplete, as Zero answers from the client's store
+  /// with no server.
+  var offline = false
   private var permalinkBeforePending = false
 
   init(
@@ -168,12 +171,13 @@ final class Harness {
       return assembleRows(
         inputs,
         RowsQueryResults(
-          singleRow: single, singleComplete: true,
+          singleRow: single, singleComplete: !offline,
           mainRows: single.map {
             beforePending ? [] : page($0, .backward, inputs.pageSize / 2 + 1)
           },
-          mainComplete: !beforePending,
-          afterRows: single.map { page($0, .forward, inputs.pageSize / 2) }, afterComplete: true))
+          mainComplete: !beforePending && !offline,
+          afterRows: single.map { page($0, .forward, inputs.pageSize / 2) },
+          afterComplete: !offline))
     }
     let probe = inputs.probeID.flatMap { id in data.first { $0.id == id } }
     let key = Self.pageKey(inputs.anchor)
@@ -185,7 +189,7 @@ final class Harness {
       case .permalink: (nil, .forward)
       }
     var main = page(start, direction, limit)
-    var complete = true
+    var complete = !offline
     if var p = partial, key != p.from, (p.key ?? key) == key {
       if p.key == nil {
         p.key = key

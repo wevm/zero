@@ -124,9 +124,12 @@ jobs:
             echo "zero-cache is still serving"
             exit 1
           fi
-          screenshots iPhone-offline -destination "id=$(simulator iPhone)" CODE_SIGNING_ALLOWED=NO
-          screenshots iPad-offline -destination "id=$(simulator iPad)" CODE_SIGNING_ALLOWED=NO
-          screenshots macOS-offline -destination platform=macOS CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=-
+          # Not the paging test: a list pages on once its page's query has the
+          # server's answer, as zero-virtual's does.
+          online=-skip-testing:ZBugsUITests/ScreenshotTests/testListPagesPastTheFirst200
+          screenshots iPhone-offline -destination "id=$(simulator iPhone)" CODE_SIGNING_ALLOWED=NO "$online"
+          screenshots iPad-offline -destination "id=$(simulator iPad)" CODE_SIGNING_ALLOWED=NO "$online"
+          screenshots macOS-offline -destination platform=macOS CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- "$online"
           exit "$status"
       - name: Export screenshots
         if: always()

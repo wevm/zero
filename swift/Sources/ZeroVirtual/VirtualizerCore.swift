@@ -286,8 +286,12 @@ package final class VirtualizerCore<
   private var reconciling = false
   private var settleTimer: (any ScheduledTimer)?
   private var target: Target?
-  /// A jump or a restore hasn't landed: the position is still on its way.
-  package var isLanding: Bool { target != nil }
+  // The target's position has been applied once: the viewport is where it
+  // goes, though its window may not have settled (offline, it never does).
+  private var placed = false
+  /// A jump or a restore hasn't put the viewport where it goes yet: the
+  /// view holds off drawing the rows it opens with until it has.
+  package var isLanding: Bool { target != nil && !placed }
   private var permalinkMissing = 0
 
   // A restore not yet applied: from `scrollState` at first, then
@@ -508,6 +512,7 @@ package final class VirtualizerCore<
   private func setTarget(_ new: Target?) {
     if target?.isProbe == true || new?.isProbe == true { version += 1 }
     target = new
+    placed = false
   }
 
   private func resolveProbe() {
@@ -1050,6 +1055,7 @@ package final class VirtualizerCore<
     case .row(let pending):
       guard landRow(pending) else { return }
     }
+    placed = true
     if rowsSettled {
       setTarget(nil)
       landed()
