@@ -524,7 +524,7 @@
 
       required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
-      /// A tap or a key selects a row.
+      /// A tap selects a row.
       var selectable: Bool {
         get { rows.selectable }
         set {
@@ -597,11 +597,9 @@
 
       @objc private func tapped() { select(at: Double(tap.location(in: self).y)) }
 
-      /// A tap at `y`, in content coordinates: the list takes focus, and the
-      /// row there is selected.
+      /// A tap at `y`, in content coordinates: the row there is selected.
       func select(at y: Double) {
         guard let key = rows.key(at: y) else { return }
-        becomeFirstResponder()
         rows.userSelect(key)
       }
 
@@ -610,25 +608,6 @@
         _ gestureRecognizer: UIGestureRecognizer,
         shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
       ) -> Bool { true }
-
-      override var canBecomeFirstResponder: Bool { rows.selectable }
-
-      override var keyCommands: [UIKeyCommand]? {
-        guard rows.selectable else { return nil }
-        return [
-          (UIKeyCommand.inputDownArrow, #selector(selectNext)),
-          (UIKeyCommand.inputUpArrow, #selector(selectPrevious)),
-          ("j", #selector(selectNext)), ("k", #selector(selectPrevious)),
-        ].map { input, action in
-          let command = UIKeyCommand(input: input, modifierFlags: [], action: action)
-          // Before the scroll view's own arrow keys.
-          command.wantsPriorityOverSystemBehavior = true
-          return command
-        }
-      }
-
-      @objc func selectNext() { rows.moveSelection(by: 1) }
-      @objc func selectPrevious() { rows.moveSelection(by: -1) }
     }
   #else
     /// A scroll view that lays out the rows itself: their frames, the

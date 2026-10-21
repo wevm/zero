@@ -163,12 +163,12 @@
           $0.isAccessibilitySelected()
         #endif
       }
-      #expect(selected.map(\.id) == [VirtualListTests.id(14)])
+      #expect(selected.map(\.id) == [RowsSelectionCheck.last])
       // Set by the app: highlighted, and not reported back.
       view.selection = VirtualListTests.id(3)
       try await t.run(0.2) { false }
-      #expect(shown[VirtualListTests.id(3)] == true && shown[VirtualListTests.id(14)] == false)
-      #expect(sets.count == 15)
+      #expect(shown[VirtualListTests.id(3)] == true && shown[RowsSelectionCheck.last] == false)
+      #expect(sets.count == RowsSelectionCheck.selections)
       withExtendedLifetime((zero, window)) {}
     }
 

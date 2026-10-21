@@ -26,7 +26,7 @@
   /// }
   /// ```
   ///
-  /// With a `selection`, a tap or a key selects a row (see
+  /// With a `selection`, a tap selects a row, and on macOS so do keys (see
   /// `init(_:selection:row:header:footer:)`).
   ///
   /// Underneath is the platform's scroll view (`UIScrollView`,
@@ -67,8 +67,8 @@
     }
 
     /// A list whose rows can be selected, one at a time: a tap selects a
-    /// row, and while the list has focus, the arrow keys and j and k
-    /// select the next or the previous one and scroll it into view.
+    /// row, and on macOS, while the list has focus, the arrow keys and j
+    /// and k select the next or the previous one and scroll it into view.
     ///
     /// A tap sets `selection` even to the row it is, so the app can open
     /// it again. The list highlights the selected row, as a `List` does;

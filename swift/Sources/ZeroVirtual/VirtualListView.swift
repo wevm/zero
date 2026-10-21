@@ -44,8 +44,8 @@
   /// it's in a window.
   ///
   /// A `headerView` and a `footerView` scroll with the rows, above and below
-  /// them. With an `onSelect`, a tap or a key selects a row; `row` then
-  /// takes whether its row is selected:
+  /// them. With an `onSelect`, a tap selects a row, and on macOS so do
+  /// keys; `row` then takes whether its row is selected:
   ///
   /// ```swift
   /// let list = VirtualListView(issues) { item, isSelected, reusing in
@@ -193,8 +193,9 @@
     }
 
     /// Called with a row the user selects: a tap selects a row (even the
-    /// selected one), and while the list has focus, the arrow keys and j
-    /// and k select the next or the previous one and scroll it into view.
+    /// selected one), and on macOS, while the list has focus, the arrow
+    /// keys and j and k select the next or the previous one and scroll it
+    /// into view.
     /// Rows can be selected while it's set.
     ///
     /// The list highlights the selected row with the platform's selection
