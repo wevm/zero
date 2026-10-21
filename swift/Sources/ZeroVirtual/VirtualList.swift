@@ -155,11 +155,13 @@
       if let view { connect(view) }
     }
 
+    /// Detaches from `list`, unless another list has taken it over since,
+    /// as when one list replaces another with the same virtualizer.
     func detach<C, R, K, S, L>(_ list: ZeroVirtualizer<C, R, K, S, L>) {
       attachAs = nil
       attached = false
+      guard list.detach(view?.rows.host) else { return }
       list.onSnapshot = nil
-      list.detach()
     }
 
     /// The view exists: attach to it if the list is on screen.

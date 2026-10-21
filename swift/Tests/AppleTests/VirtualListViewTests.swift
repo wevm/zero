@@ -102,6 +102,40 @@
       withExtendedLifetime((zero, window)) {}
     }
 
+    // Switching from one list to another on the same virtualizer: the first
+    // one leaving after the second came doesn't detach the second.
+    @Test func aSecondListTakesTheVirtualizerOver() async throws {
+      let t = VirtualListTests()
+      let (zero, list) = try t.makeList()
+      func make() -> VirtualListView<Void, Note, String, String, String> {
+        VirtualListView(list) { item, reusing in
+          let row = reusing as? NoteView ?? NoteView()
+          row.id = item.row.id
+          return row
+        }
+      }
+      let first = make()
+      var firstWindow: AnyObject? = show(first)
+      try await t.run(30) { list.snapshot.complete && !list.snapshot.items.isEmpty }
+      let second = make()
+      let window = show(second)
+      try await t.run(0.2) { false }
+      #if canImport(UIKit)
+        (firstWindow as? UIWindow)?.isHidden = true
+        first.removeFromSuperview()
+      #else
+        (firstWindow as? NSWindow)?.orderOut(nil)
+        (firstWindow as? NSWindow)?.contentView = nil
+      #endif
+      firstWindow = nil
+      try await t.run(0.2) { false }
+      list.scrollToItem(VirtualListTests.id(250), align: .end)
+      try await t.run(30) { list.lastVisibleItem()?.key == VirtualListTests.id(250) }
+      #expect(list.lastVisibleItem()?.key == VirtualListTests.id(250))
+      #expect(rowViews(second.scrollView).contains { $0.id == VirtualListTests.id(250) })
+      withExtendedLifetime((zero, window)) {}
+    }
+
     @Test func selectsByTapAndByKeys() async throws {
       let t = VirtualListTests()
       let (zero, list) = try t.makeList()

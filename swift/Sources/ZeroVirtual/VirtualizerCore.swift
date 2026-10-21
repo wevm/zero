@@ -422,6 +422,8 @@ package final class VirtualizerCore<
     withNotify { resetSettleTimer() }
   }
 
+  package func isAttached(to host: (any VirtualHost)?) -> Bool { self.host === host }
+
   package func detach() {
     host = nil
     settleTimer?.cancel()

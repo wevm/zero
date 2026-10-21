@@ -189,6 +189,15 @@ public final class ZeroVirtualizer<
 
   public func detach() { core.detach() }
 
+  /// Stops driving `host`, if it's the host it drives (nil: a host that's
+  /// gone): another list may have taken the virtualizer over. Whether it
+  /// was.
+  package func detach(_ host: (any VirtualHost)?) -> Bool {
+    guard core.isAttached(to: host) else { return false }
+    core.detach()
+    return true
+  }
+
   /// After the host rendered `snapshot`, or its rows changed height.
   public func afterUpdate() { core.afterUpdate() }
 
