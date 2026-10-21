@@ -22,7 +22,7 @@ let package = Package(
     .target(name: "Zero", dependencies: ["CSQLite"]),
     .target(name: "ZeroUI", dependencies: ["Zero"]),
     // Virtual lists that page their rows in (`@rocicorp/zero-virtual`).
-    .target(name: "ZeroVirtual", dependencies: ["Zero", "ZeroUI"]),
+    .target(name: "ZeroVirtual", dependencies: ["Zero"]),
     .target(name: "ZeroTesting", dependencies: ["Zero"]),
     // A plain ws:// transport for end-to-end tests on Linux.
     .target(

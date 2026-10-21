@@ -1,7 +1,6 @@
 #if canImport(SwiftUI) && (canImport(UIKit) || canImport(AppKit))
   import SwiftUI
   import Zero
-  import ZeroUI
 
   /// A scroll view of a `ZeroVirtualizer`'s rows: they page in as it
   /// scrolls, and what's on screen stays put as rows load, go, and change
@@ -20,11 +19,9 @@
   /// `NSScrollView`), which lays the rows out itself: their frames, its
   /// content's size and its offset are set in one layout pass, so no frame
   /// shows rows moved by a page loading before the offset that keeps them
-  /// in place. Each row is hosted in its own hosting view: it gets the
-  /// platform's traits (color scheme, Dynamic Type, layout direction) and
-  /// the list's Zero client (`.zero(_:)`), so a row's `@ZeroQuery` reads
-  /// from it, but not the list's other environment values. Apply those in
-  /// `row`.
+  /// in place. Each row is hosted in its own hosting view, which inherits
+  /// the list's environment: a row's `@ZeroQuery` reads the list's client
+  /// (`.zero(_:)`), and its `@Environment` values are the list's.
   public struct VirtualList<
     Context: Sendable, Row: ZeroRow, Key: Hashable, StartRow: Equatable & Sendable,
     ListContext: Equatable & Sendable, RowContent: View
@@ -34,7 +31,6 @@
     private let list: Virtualizer
     private let row: (VirtualItem<Row, Key>) -> RowContent
     @State private var model = VirtualListModel()
-    @Environment(\.zero) private var zero
 
     public init(
       _ list: Virtualizer, @ViewBuilder row: @escaping (VirtualItem<Row, Key>) -> RowContent
@@ -53,13 +49,13 @@
 
     /// The snapshot's rows, as the scroll view draws them.
     private var source: () -> RowsSource {
-      { [list, row, zero] in
+      { [list, row] in
         let snapshot = list.snapshot
         return RowsSource(
           items: snapshot.items.map { item in
             RowsItem(
               key: AnyHashable(item.key), index: item.index, row: item.row,
-              view: { AnyView(row(item).environment(\.zero, zero)) })
+              view: { AnyView(row(item)) })
           },
           spaceBefore: snapshot.spaceBefore, spaceAfter: snapshot.spaceAfter)
       }

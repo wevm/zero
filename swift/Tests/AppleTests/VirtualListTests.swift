@@ -126,6 +126,7 @@
       }
     }
 
+    // Rows are hosted views of their own, which inherit the list's environment.
     @Test func aRowsQueryReadsTheListsClient() async throws {
       let (zero, list) = try makeList()
       let seen = Seen()
