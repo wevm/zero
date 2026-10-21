@@ -74,8 +74,8 @@ apps/zbugs-swift/           dogfood app (iOS + macOS)
   distributed through a mirror repository, `wevm/zero-swift`. CI fills it with a
   `git subtree split` of `swift/` and tags releases there. Nobody commits to the
   mirror directly.
-- The mirror is private until launch, then public. The Swift source is visible
-  in this public monorepo either way.
+- The mirror is public. The Swift source is visible in this public monorepo
+  either way.
 - SwiftPM products: `Zero`, `ZeroUI`, `ZeroTesting`, and `ZeroNIOTesting`
   (test-only; the only product that depends on SwiftNIO).
 - The public API is what apps and the generated code use. The engine (IVM
@@ -87,8 +87,8 @@ apps/zbugs-swift/           dogfood app (iOS + macOS)
   `@rocicorp` scope) with a peer dependency on `@rocicorp/zero` (1.11 or
   later: `drift record` must run the app's own copy). It is versioned with
   the Swift releases. `pnpm --filter zero-swift build` bundles it with
-  esbuild, inlining the workspace sources it imports. The package stays
-  `private` until the first publish is approved.
+  esbuild, inlining the workspace sources it imports. CI publishes it with npm
+  trusted publishing.
 - License: Apache-2.0, like this repository.
 - Docs: a DocC catalog per library product, with a getting-started article
   and a JS→Swift parity matrix (`Zero.docc/JSParity.md`). Oxfmt skips the
@@ -98,8 +98,10 @@ apps/zbugs-swift/           dogfood app (iOS + macOS)
 
 - Independent semver starting at `0.1.0`. `1.0` once zbugs dogfooding shows the
   API is stable.
-- A PR bumps `swift/VERSION`. On merge, CI pushes the subtree split to the
-  mirror and tags it.
+- A PR bumps `swift/VERSION` and the CLI's `package.json` version together. On
+  merge, `swift-release.yml` pushes the subtree split to the mirror, tags it,
+  and publishes the CLI to npm, after approval in the `swift-release`
+  environment.
 - The README carries a compatibility table: Swift version → sync protocol
   version → minimum `zero-cache` version → the Zero JS release whose vectors
   it passes.
