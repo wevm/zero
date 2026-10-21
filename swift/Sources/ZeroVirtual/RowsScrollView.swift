@@ -29,6 +29,28 @@
     var spaceAfter = 0.0
   }
 
+  /// How a row is shown: selected, and whether its highlight is
+  /// emphasized, as while the list has focus on macOS.
+  struct RowState: Equatable {
+    var selected = false
+    var emphasized = false
+  }
+
+  /// A view above or below the rows, laid out with them: a header or a
+  /// footer.
+  @MainActor
+  final class RowsAccessory {
+    let view: PlatformView
+    /// Its height at a width.
+    let measure: (Double) -> Double
+    var height: Double?
+
+    init(view: PlatformView, measure: @escaping (Double) -> Double) {
+      self.view = view
+      self.measure = measure
+    }
+  }
+
   /// How a row's view is made and measured: hosted SwiftUI
   /// (`HostedRowViews`), or the app's own (`AppRowViews`). The rest of the
   /// layout is the same for both.
@@ -36,11 +58,11 @@
   protocol RowViews: AnyObject {
     /// Views of rows that leave are kept, hidden, for rows that come.
     var reusesViews: Bool { get }
-    /// The view showing `item`: `view` shown anew (the row's own when its
-    /// row changed, or, when views are reused, one a row left), or a new
-    /// one when it's nil.
+    /// The view showing `item` in `state`: `view` shown anew (the row's
+    /// own when its row or state changed, or, when views are reused, one a
+    /// row left), or a new one when it's nil.
     func view(
-      for item: RowsItem, reusing view: PlatformView?, in layout: RowsLayout
+      for item: RowsItem, _ state: RowState, reusing view: PlatformView?, in layout: RowsLayout
     )
       -> PlatformView
     /// The view's height at `width`.
@@ -78,12 +100,44 @@
     private(set) var shown = false
     var addView: (PlatformView) -> Void = { _ in }
 
+    /// The views above and below the rows.
+    var header: RowsAccessory? {
+      didSet { replace(oldValue, with: header) }
+    }
+    var footer: RowsAccessory? {
+      didSet { replace(oldValue, with: footer) }
+    }
+
+    /// A tap or a key selects a row.
+    var selectable = false
+    /// The selected row, which the list highlights.
+    var selected: AnyHashable? {
+      didSet {
+        guard selected != oldValue else { return }
+        reshow(oldValue)
+        reshow(selected)
+      }
+    }
+    /// The highlight is emphasized: the list has focus.
+    var emphasized = false {
+      didSet {
+        guard emphasized != oldValue else { return }
+        reshow(selected)
+      }
+    }
+    /// The user selected a row, with a tap or a key: also the selected one.
+    var onSelect: (AnyHashable) -> Void = { _ in }
+    /// Scrolls a loaded row into view.
+    var scrollToRow: (AnyHashable) -> Void = { _ in }
+
     init(views: any RowViews) {
       self.views = views
       host.rows = { [unowned self] in
         (source.items.map { (key: $0.key, index: $0.index) }, source.spaceBefore, source.spaceAfter)
       }
       host.measure = { [unowned self] key in measure(key) }
+      host.header = { [unowned self] in height(of: header) }
+      host.footer = { [unowned self] in height(of: footer) }
     }
 
     /// A new snapshot to draw.
@@ -101,16 +155,39 @@
       host.invalidate()
     }
 
+    /// The header or the footer changed height: it's measured again in the
+    /// next layout pass.
+    func accessoryHeightDidChange(_ view: PlatformView) {
+      for accessory in [header, footer] where accessory?.view === view {
+        accessory?.height = nil
+        host.invalidate()
+      }
+    }
+
+    /// The header's or the footer's height as it laid itself out: when it's
+    /// another than the one measured, it's measured again.
+    func accessory(_ view: PlatformView, laidOutAt height: Double) {
+      for accessory in [header, footer] where accessory?.view === view {
+        guard let old = accessory?.height, abs(old - height) > 0.5 else { return }
+        accessoryHeightDidChange(view)
+      }
+    }
+
     /// One layout pass at `width`: the cells to place, the content's height
-    /// and the offset.
+    /// and the offset; the header's and the footer's frames, and the
+    /// selected row's.
     func layout(
       width: Double, offset: Double, viewport: Double
     ) -> (
-      frames: [(cell: RowCell, minY: Double, maxY: Double)], contentHeight: Double, offset: Double
+      frames: [(cell: RowCell, minY: Double, maxY: Double)], contentHeight: Double, offset: Double,
+      accessories: [(view: PlatformView, minY: Double, maxY: Double)],
+      selected: (minY: Double, maxY: Double)?
     ) {
       if width != self.width {
         self.width = width
         for cell in cells.values { cell.height = nil }
+        header?.height = nil
+        footer?.height = nil
         host.invalidate()
       }
       let r = host.layout(offset: offset, viewport: viewport)
@@ -127,10 +204,78 @@
           views.discard(cell.view)
         }
       }
+      var accessories: [(view: PlatformView, minY: Double, maxY: Double)] = []
+      if let header { accessories.append((header.view, 0, host.headerHeight)) }
+      if let footer {
+        accessories.append((footer.view, r.contentHeight - host.footerHeight, r.contentHeight))
+      }
+      let selected = selected.flatMap { key in r.frames.first { $0.key == key } }
       return (
         r.frames.compactMap { f in cells[f.key].map { ($0, f.minY, f.maxY) } }, r.contentHeight,
-        r.offset
+        r.offset, accessories, selected.map { ($0.minY, $0.maxY) }
       )
+    }
+
+    /// The header and the footer are hidden while the rows are: until the
+    /// list has landed where it opens.
+    var accessoriesHidden: Bool { !shown && host.isLanding() }
+
+    // MARK: Selection
+
+    /// The user selected the row with `key`.
+    func userSelect(_ key: AnyHashable) {
+      selected = key
+      onSelect(key)
+    }
+
+    /// The row a tap at `y`, in content coordinates, selects.
+    func key(at y: Double) -> AnyHashable? {
+      host.rowFrames().first { $0.minY <= y && y < $0.maxY }?.key
+    }
+
+    /// Selects the row `step` rows from the selected one, or the first on
+    /// screen when there's none, and scrolls it into view.
+    func moveSelection(by step: Int) {
+      let items = source.items
+      let next: AnyHashable
+      if let selected, let i = items.firstIndex(where: { $0.key == selected }) {
+        guard items.indices.contains(i + step) else { return }
+        next = items[i + step].key
+      } else {
+        let top = host.scrollOffset
+        guard let first = host.rowFrames().first(where: { $0.maxY > top + 0.5 }) else { return }
+        next = first.key
+      }
+      userSelect(next)
+      scrollToRow(next)
+    }
+
+    private func state(_ key: AnyHashable) -> RowState {
+      let selected = key == selected
+      return RowState(selected: selected, emphasized: selected && emphasized)
+    }
+
+    /// The row with `key` is shown again, in its state now.
+    private func reshow(_ key: AnyHashable?) {
+      guard let key, let cell = cells[key], let item = source.items.first(where: { $0.key == key })
+      else { return }
+      show(item, in: cell)
+      host.invalidate()
+    }
+
+    private func replace(_ old: RowsAccessory?, with new: RowsAccessory?) {
+      guard old !== new else { return }
+      old?.view.removeFromSuperview()
+      if let new { addView(new.view) }
+      host.invalidate()
+    }
+
+    private func height(of accessory: RowsAccessory?) -> Double {
+      guard let accessory else { return 0 }
+      if let height = accessory.height { return height }
+      let h = accessory.measure(width)
+      accessory.height = h
+      return h
     }
 
     private func measure(_ key: AnyHashable) -> Double {
@@ -146,7 +291,7 @@
         return measure(cell)
       }
       let reused = views.reusesViews ? pool.popLast() : nil
-      let view = views.view(for: item, reusing: reused, in: self)
+      let view = views.view(for: item, state(key), reusing: reused, in: self)
       if view !== reused {
         if let reused { pool.append(reused) }
         addView(view)
@@ -161,7 +306,7 @@
     private func show(_ item: RowsItem, in cell: RowCell) {
       cell.row = item.row
       cell.height = nil
-      let view = views.view(for: item, reusing: cell.view, in: self)
+      let view = views.view(for: item, state(item.key), reusing: cell.view, in: self)
       guard view !== cell.view else { return }
       // A new view in place of the row's own.
       cell.view.removeFromSuperview()
@@ -205,34 +350,33 @@
     #else
       typealias Controller = NSHostingController<AnyView>
     #endif
-    var row: (Any) -> AnyView
+    var row: (Any, Bool) -> AnyView
     private var controllers: [ObjectIdentifier: Controller] = [:]
 
-    init(row: @escaping (Any) -> AnyView) { self.row = row }
+    init(row: @escaping (Any, Bool) -> AnyView) { self.row = row }
 
     var reusesViews: Bool { false }
 
     func view(
-      for item: RowsItem, reusing view: PlatformView?, in layout: RowsLayout
+      for item: RowsItem, _ state: RowState, reusing view: PlatformView?, in layout: RowsLayout
     )
       -> PlatformView
     {
-      let controller: Controller
-      if let view, let existing = controllers[ObjectIdentifier(view)] {
-        controller = existing
-      } else {
-        controller = Controller(rootView: AnyView(EmptyView()))
-        #if canImport(UIKit)
-          controller.safeAreaRegions = []
-          controller.view.backgroundColor = .clear
-        #else
-          controller.sizingOptions = []
-        #endif
-        controllers[ObjectIdentifier(controller.view)] = controller
-      }
+      let controller = view.flatMap { controllers[ObjectIdentifier($0)] } ?? makeController()
       let key = item.key
+      // Text in the system's styles takes the highlight's colors, as in a
+      // `List`.
+      let content = row(item.item, state.selected)
+        .environment(\.backgroundProminence, state.emphasized ? .increased : .standard)
+      let shown =
+        layout.selectable
+        ? AnyView(
+          content
+            .accessibilityAddTraits(state.selected ? [.isButton, .isSelected] : .isButton)
+            .accessibilityAction { [weak layout] in layout?.userSelect(key) })
+        : AnyView(content)
       controller.rootView = AnyView(
-        row(item.item)
+        shown
           .fixedSize(horizontal: false, vertical: true)
           .onGeometryChange(for: Double.self) {
             Double($0.size.height)
@@ -241,6 +385,45 @@
             layout?.row(key, laidOutAt: h)
           })
       return controller.view
+    }
+
+    /// A header or a footer showing `content`: `current` showing it anew,
+    /// or a new one.
+    func accessory(
+      _ current: RowsAccessory?, showing content: AnyView, in layout: RowsLayout
+    ) -> RowsAccessory {
+      let controller =
+        current.flatMap { controllers[ObjectIdentifier($0.view)] } ?? makeController()
+      let view: PlatformView = controller.view
+      controller.rootView = AnyView(
+        content
+          .fixedSize(horizontal: false, vertical: true)
+          .onGeometryChange(for: Double.self) {
+            Double($0.size.height)
+          } action: { [weak layout, weak view] h in
+            if let view { layout?.accessory(view, laidOutAt: h) }
+          })
+      if let current, current.view === view {
+        // Measured with its new content in the next pass, before it's
+        // drawn: what it shows can be another height.
+        current.height = nil
+        return current
+      }
+      return RowsAccessory(view: view) { [unowned self, unowned view] width in
+        height(of: view, width: width)
+      }
+    }
+
+    private func makeController() -> Controller {
+      let controller = Controller(rootView: AnyView(EmptyView()))
+      #if canImport(UIKit)
+        controller.safeAreaRegions = []
+        controller.view.backgroundColor = .clear
+      #else
+        controller.sizingOptions = []
+      #endif
+      controllers[ObjectIdentifier(controller.view)] = controller
+      return controller
     }
 
     func height(of view: PlatformView, width: Double) -> Double {
@@ -258,21 +441,39 @@
   /// width, and reused.
   @MainActor
   final class AppRowViews: RowViews {
-    let make: (Any, PlatformView?) -> PlatformView
+    let make: (Any, Bool, PlatformView?) -> PlatformView
 
-    init(make: @escaping (Any, PlatformView?) -> PlatformView) { self.make = make }
+    init(make: @escaping (Any, Bool, PlatformView?) -> PlatformView) { self.make = make }
 
     var reusesViews: Bool { true }
 
     func view(
-      for item: RowsItem, reusing view: PlatformView?, in layout: RowsLayout
+      for item: RowsItem, _ state: RowState, reusing view: PlatformView?, in layout: RowsLayout
     )
       -> PlatformView
     {
-      make(item.item, view)
+      let view = make(item.item, state.selected, view)
+      #if canImport(UIKit)
+        if state.selected {
+          view.accessibilityTraits.insert(.selected)
+        } else {
+          view.accessibilityTraits.remove(.selected)
+        }
+      #else
+        view.setAccessibilitySelected(state.selected)
+        // A table cell view draws its text and images in the highlight's
+        // colors, as in a table.
+        (view as? NSTableCellView)?.backgroundStyle = state.emphasized ? .emphasized : .normal
+      #endif
+      return view
     }
 
     func height(of view: PlatformView, width: Double) -> Double {
+      Self.fittingHeight(of: view, width: width)
+    }
+
+    /// The view's height with Auto Layout at `width`.
+    static func fittingHeight(of view: PlatformView, width: Double) -> Double {
       #if canImport(UIKit)
         let size = view.systemLayoutSizeFitting(
           CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
@@ -294,21 +495,44 @@
   }
 
   #if canImport(UIKit)
-    /// A scroll view that lays out the rows itself: their frames, its
-    /// content size and its offset, all in `layoutSubviews`.
-    final class RowsScrollView: UIScrollView {
+    /// A scroll view that lays out the rows itself: their frames, the
+    /// header's and the footer's, its content size and its offset, all in
+    /// `layoutSubviews`.
+    final class RowsScrollView: UIScrollView, UIGestureRecognizerDelegate {
       let rows: RowsLayout
       private var laying = false
+      /// Behind the selected row.
+      let highlight = UIView()
+      private lazy var tap = UITapGestureRecognizer(target: self, action: #selector(tapped))
 
       init(views: any RowViews) {
         rows = RowsLayout(views: views)
         super.init(frame: .zero)
         alwaysBounceVertical = true
+        highlight.isUserInteractionEnabled = false
+        highlight.isHidden = true
+        addSubview(highlight)
+        styleHighlight()
+        tap.cancelsTouchesInView = false
+        tap.delegate = self
         rows.host.setNeedsLayout = { [weak self] in self?.setNeedsLayout() }
         rows.addView = { [weak self] view in self?.addSubview(view) }
       }
 
       required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+      /// A tap or a key selects a row.
+      var selectable: Bool {
+        get { rows.selectable }
+        set {
+          rows.selectable = newValue
+          if newValue {
+            if tap.view == nil { addGestureRecognizer(tap) }
+          } else {
+            removeGestureRecognizer(tap)
+          }
+        }
+      }
 
       override func layoutSubviews() {
         super.layoutSubviews()
@@ -323,30 +547,99 @@
           viewport: Double(bounds.height - inset.top - inset.bottom))
         let scale = max(1, window?.screen.scale ?? traitCollection.displayScale)
         func align(_ y: Double) -> CGFloat { (CGFloat(y) * scale).rounded() / scale }
+        func frame(_ minY: Double, _ maxY: Double) -> CGRect {
+          CGRect(x: 0, y: align(minY), width: width, height: align(maxY) - align(minY))
+        }
         for f in r.frames {
-          let frame = CGRect(
-            x: 0, y: align(f.minY), width: width, height: align(f.maxY) - align(f.minY))
-          f.cell.view.isHidden = !rows.shown
-          // Set only when it moves: a frame set lays the row's view out again.
-          guard f.cell.view.frame != frame else { continue }
-          f.cell.view.frame = frame
-          f.cell.view.layoutIfNeeded()
+          place(f.cell.view, frame(f.minY, f.maxY), hidden: !rows.shown)
+        }
+        for a in r.accessories {
+          place(a.view, frame(a.minY, a.maxY), hidden: rows.accessoriesHidden)
+        }
+        if let s = r.selected, rows.shown {
+          highlight.frame = frame(s.minY, s.maxY)
+          highlight.isHidden = false
+        } else {
+          highlight.isHidden = true
         }
         let size = CGSize(width: width, height: r.contentHeight)
         if contentSize != size { contentSize = size }
         let y = CGFloat(r.offset) - inset.top
         if contentOffset.y != y { contentOffset.y = y }
       }
+
+      private func place(_ view: UIView, _ frame: CGRect, hidden: Bool) {
+        view.isHidden = hidden
+        // Set only when it moves: a frame set lays the view out again.
+        guard view.frame != frame else { return }
+        view.frame = frame
+        view.layoutIfNeeded()
+      }
+
+      // MARK: Selection
+
+      /// A selected list cell's background, as a plain list draws it.
+      private func styleHighlight() {
+        var state = UICellConfigurationState(traitCollection: traitCollection)
+        state.isSelected = true
+        let background = UIBackgroundConfiguration.listCell().updated(for: state)
+        highlight.backgroundColor = background.resolvedBackgroundColor(for: tintColor)
+        highlight.layer.cornerRadius = background.cornerRadius
+      }
+
+      override func tintColorDidChange() {
+        super.tintColorDidChange()
+        styleHighlight()
+      }
+
+      @objc private func tapped() { select(at: Double(tap.location(in: self).y)) }
+
+      /// A tap at `y`, in content coordinates: the list takes focus, and the
+      /// row there is selected.
+      func select(at y: Double) {
+        guard let key = rows.key(at: y) else { return }
+        becomeFirstResponder()
+        rows.userSelect(key)
+      }
+
+      // The rows' own controls take their taps too.
+      func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
+      ) -> Bool { true }
+
+      override var canBecomeFirstResponder: Bool { rows.selectable }
+
+      override var keyCommands: [UIKeyCommand]? {
+        guard rows.selectable else { return nil }
+        return [
+          (UIKeyCommand.inputDownArrow, #selector(selectNext)),
+          (UIKeyCommand.inputUpArrow, #selector(selectPrevious)),
+          ("j", #selector(selectNext)), ("k", #selector(selectPrevious)),
+        ].map { input, action in
+          let command = UIKeyCommand(input: input, modifierFlags: [], action: action)
+          // Before the scroll view's own arrow keys.
+          command.wantsPriorityOverSystemBehavior = true
+          return command
+        }
+      }
+
+      @objc func selectNext() { rows.moveSelection(by: 1) }
+      @objc func selectPrevious() { rows.moveSelection(by: -1) }
     }
   #else
-    /// A scroll view that lays out the rows itself: their frames, its
-    /// content's size and its offset, all in one pass. The pass runs when
-    /// the clip view moves or resizes (the user's scroll, before it's
-    /// drawn) and in the document view's `layout` (a new snapshot).
+    /// A scroll view that lays out the rows itself: their frames, the
+    /// header's and the footer's, its content's size and its offset, all in
+    /// one pass. The pass runs when the clip view moves or resizes (the
+    /// user's scroll, before it's drawn) and in the document view's
+    /// `layout` (a new snapshot).
     final class RowsScrollView: NSScrollView {
       let rows: RowsLayout
-      private let document = RowsDocumentView()
+      let document = RowsDocumentView()
       private var laying = false
+      /// Behind the selected row.
+      let highlight = RowsHighlightView()
+      private lazy var click = NSClickGestureRecognizer(target: self, action: #selector(clicked))
 
       init(views: any RowViews) {
         rows = RowsLayout(views: views)
@@ -355,6 +648,9 @@
         drawsBackground = false
         documentView = document
         document.owner = self
+        highlight.isHidden = true
+        document.addSubview(highlight)
+        click.delaysPrimaryMouseButtonEvents = false
         contentView.postsBoundsChangedNotifications = true
         contentView.postsFrameChangedNotifications = true
         for name in [NSView.boundsDidChangeNotification, NSView.frameDidChangeNotification] {
@@ -366,6 +662,19 @@
       }
 
       required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+      /// A click or a key selects a row.
+      var selectable: Bool {
+        get { rows.selectable }
+        set {
+          rows.selectable = newValue
+          if newValue {
+            if click.view == nil { document.addGestureRecognizer(click) }
+          } else {
+            document.removeGestureRecognizer(click)
+          }
+        }
+      }
 
       @objc private func clipChanged() { layoutRows() }
 
@@ -385,14 +694,21 @@
         // pixel against the content as it scrolls.
         let scale = max(1, window?.backingScaleFactor ?? 1)
         func align(_ y: Double) -> CGFloat { (CGFloat(y) * scale).rounded() / scale }
+        func frame(_ minY: Double, _ maxY: Double) -> CGRect {
+          CGRect(x: 0, y: align(minY), width: width, height: align(maxY) - align(minY))
+        }
         for f in r.frames {
-          let frame = CGRect(
-            x: 0, y: align(f.minY), width: width, height: align(f.maxY) - align(f.minY))
-          f.cell.view.isHidden = !rows.shown
-          // Set only when it moves: a frame set lays the row's view out again.
-          guard f.cell.view.frame != frame else { continue }
-          f.cell.view.frame = frame
-          f.cell.view.layoutSubtreeIfNeeded()
+          place(f.cell.view, frame(f.minY, f.maxY), hidden: !rows.shown)
+        }
+        for a in r.accessories {
+          place(a.view, frame(a.minY, a.maxY), hidden: rows.accessoriesHidden)
+        }
+        if let s = r.selected, rows.shown {
+          // Inset, with rounded corners, as an inset table draws it.
+          highlight.frame = frame(s.minY, s.maxY).insetBy(dx: 8, dy: 0)
+          highlight.isHidden = false
+        } else {
+          highlight.isHidden = true
         }
         let size = NSSize(width: width, height: r.contentHeight)
         if document.frame.size != size { document.setFrameSize(size) }
@@ -401,6 +717,45 @@
           clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: y))
           reflectScrolledClipView(clip)
         }
+      }
+
+      private func place(_ view: NSView, _ frame: CGRect, hidden: Bool) {
+        view.isHidden = hidden
+        // Set only when it moves: a frame set lays the view out again.
+        guard view.frame != frame else { return }
+        view.frame = frame
+        view.layoutSubtreeIfNeeded()
+      }
+
+      // MARK: Selection
+
+      @objc private func clicked() { select(at: Double(click.location(in: document).y)) }
+
+      /// A click at `y`, in content coordinates: the list takes focus, and
+      /// the row there is selected.
+      func select(at y: Double) {
+        guard let key = rows.key(at: y) else { return }
+        window?.makeFirstResponder(document)
+        rows.userSelect(key)
+      }
+
+      override func viewWillMove(toWindow newWindow: NSWindow?) {
+        super.viewWillMove(toWindow: newWindow)
+        let center = NotificationCenter.default
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
+          center.removeObserver(self, name: name, object: window)
+          if let newWindow {
+            center.addObserver(
+              self, selector: #selector(focusChanged), name: name, object: newWindow)
+          }
+        }
+      }
+
+      /// The highlight is emphasized while the list has focus.
+      @objc fileprivate func focusChanged() {
+        let focused = window.map { $0.isKeyWindow && $0.firstResponder === document } ?? false
+        rows.emphasized = focused
+        highlight.emphasized = focused
       }
     }
 
@@ -413,6 +768,56 @@
         super.layout()
         owner?.layoutRows()
       }
+
+      override var acceptsFirstResponder: Bool { owner?.rows.selectable ?? false }
+
+      override func becomeFirstResponder() -> Bool {
+        defer { owner?.focusChanged() }
+        return super.becomeFirstResponder()
+      }
+
+      override func resignFirstResponder() -> Bool {
+        defer { owner?.focusChanged() }
+        return super.resignFirstResponder()
+      }
+
+      /// The arrow keys, and j and k, move the selection.
+      override func keyDown(with event: NSEvent) {
+        guard let rows = owner?.rows, rows.selectable,
+          event.modifierFlags.isDisjoint(with: [.command, .control, .option])
+        else { return super.keyDown(with: event) }
+        switch (event.keyCode, event.charactersIgnoringModifiers) {
+        case (125, _), (_, "j"): rows.moveSelection(by: 1)
+        case (126, _), (_, "k"): rows.moveSelection(by: -1)
+        default: super.keyDown(with: event)
+        }
+      }
+    }
+
+    /// The selected row's background: the accent color while the list has
+    /// focus, gray when it hasn't, as a table draws it.
+    final class RowsHighlightView: NSView {
+      var emphasized = false {
+        didSet { needsDisplay = true }
+      }
+
+      override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+      }
+
+      required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+      override var wantsUpdateLayer: Bool { true }
+
+      override func updateLayer() {
+        let color: NSColor =
+          emphasized ? .selectedContentBackgroundColor : .unemphasizedSelectedContentBackgroundColor
+        layer?.backgroundColor = color.cgColor
+        layer?.cornerRadius = 5
+      }
+
+      override func hitTest(_ point: NSPoint) -> NSView? { nil }
     }
   #endif
 
@@ -420,21 +825,33 @@
   @MainActor
   struct RowsScrollViewRepresentable {
     let source: () -> RowsSource
-    let row: (Any) -> AnyView
+    let row: (Any, Bool) -> AnyView
+    let header: AnyView?
+    let footer: AnyView?
+    /// The selected row, and what a tap or a key sets it to; nil when rows
+    /// aren't selectable.
+    let selection: (key: AnyHashable?, set: (AnyHashable) -> Void)?
     let model: VirtualListModel
 
     func make() -> RowsScrollView {
       let view = RowsScrollView(views: HostedRowViews(row: row))
       model.source = source
       model.connect(view)
-      view.rows.update(source())
+      update(view)
       return view
     }
 
     func update(_ view: RowsScrollView) {
       model.source = source
-      (view.rows.views as? HostedRowViews)?.row = row
-      view.rows.update(source())
+      let rows = view.rows
+      let views = rows.views as! HostedRowViews
+      views.row = row
+      rows.header = header.map { views.accessory(rows.header, showing: $0, in: rows) }
+      rows.footer = footer.map { views.accessory(rows.footer, showing: $0, in: rows) }
+      view.selectable = selection != nil
+      rows.onSelect = selection?.set ?? { _ in }
+      rows.selected = selection?.key
+      rows.update(source())
     }
   }
 

@@ -136,6 +136,54 @@
       withExtendedLifetime((zero, window)) {}
     }
 
+    @Observable final class Selection {
+      var key: String?
+      /// Each key a tap or a key set it to.
+      var sets: [String] = []
+      /// Whether each row was last shown selected.
+      @ObservationIgnored var shown: [String: Bool] = [:]
+
+      var binding: Binding<String?> {
+        Binding {
+          self.key
+        } set: {
+          self.key = $0
+          if let key = $0 { self.sets.append(key) }
+        }
+      }
+    }
+
+    @Test func selectsByTapAndByKeys() async throws {
+      let (zero, list) = try makeList()
+      let selection = Selection()
+      let window = show(
+        VirtualList(list, selection: selection.binding) { item, isSelected in
+          let _ = selection.shown[item.row.id] = isSelected
+          Text(item.row.text).frame(height: 30)
+        })
+      try await run(30) { list.snapshot.complete && !list.snapshot.items.isEmpty }
+      let view = try #require(rowsScrollView(window))
+      try await RowsSelectionCheck(list: list, view: view, window: window) {
+        (selection.key, selection.sets, selection.shown)
+      }.run(self)
+      withExtendedLifetime((zero, window)) {}
+    }
+
+    /// The `RowsScrollView` in `window`.
+    func rowsScrollView(_ window: AnyObject) -> RowsScrollView? {
+      #if canImport(UIKit)
+        func find(_ v: UIView) -> RowsScrollView? {
+          (v as? RowsScrollView) ?? v.subviews.lazy.compactMap(find).first
+        }
+        return (window as? UIWindow).flatMap(find)
+      #else
+        func find(_ v: NSView) -> RowsScrollView? {
+          (v as? RowsScrollView) ?? v.subviews.lazy.compactMap(find).first
+        }
+        return (window as? NSWindow)?.contentView.flatMap(find)
+      #endif
+    }
+
     @Test func scrollsToARowFarBelow() async throws {
       let (zero, list) = try makeList()
       let window = show(VirtualList(list) { Text($0.row.text).frame(height: 30) })
@@ -156,6 +204,101 @@
       let position = try #require(s.items.firstIndex { $0.key == Self.id(250) })
       #expect(abs(g.offset - (s.spaceBefore + Double(position + 1) * 30 - g.viewport)) <= 1)
       withExtendedLifetime((zero, window)) {}
+    }
+  }
+
+  /// Selecting rows of 30 points, ids `n000`…, in a 400-point list: by a
+  /// tap, twice on the same row, then by the arrow keys and j and k (sent
+  /// through the window on macOS), past the screen's bottom.
+  @MainActor struct RowsSelectionCheck {
+    let list: VirtualListTests.List
+    let view: RowsScrollView
+    let window: AnyObject
+    /// The selection, every key the user set it to, and whether each row
+    /// was last shown selected.
+    let state: () -> (key: String?, sets: [String], shown: [String: Bool])
+
+    func run(_ t: VirtualListTests) async throws {
+      let id = VirtualListTests.id
+      // Laid out: the snapshot can complete before the view's next pass.
+      try await t.run(5) { view.rows.host.rowFrames().count > 5 }
+      try tap(id(5))
+      try await t.run(5) { state().key == id(5) }
+      #expect(state().key == id(5))
+      #expect(state().shown[id(5)] == true)
+      try await t.run(0.2) { false }
+      try expectHighlight(on: id(5))
+
+      // Again: the app hears of it, to open the row again.
+      try tap(id(5))
+      try await t.run(5) { state().sets.count == 2 }
+      #expect(state().sets == [id(5), id(5)])
+
+      for _ in 0..<10 { key(down: true, letter: false) }
+      try await t.run(5) { state().key == id(15) }
+      #expect(state().key == id(15))
+      // Below the screen at first: scrolled into view, its bottom at the
+      // list's.
+      try await t.run(5) { list.lastVisibleItem()?.key == id(15) }
+      #expect(list.lastVisibleItem()?.key == id(15))
+      key(down: false, letter: true)
+      key(down: false, letter: true)
+      key(down: true, letter: true)
+      try await t.run(5) { state().sets.count == 15 }
+      #expect(state().key == id(14))
+      #expect(state().shown[id(15)] == false)
+      #expect(state().shown[id(5)] == false)
+      #expect(state().shown[id(14)] == true)
+      try await t.run(0.2) { false }
+      try expectHighlight(on: id(14))
+    }
+
+    func frame(_ key: String) throws -> VirtualRowFrame {
+      try #require(view.rows.host.rowFrames().first { $0.key == AnyHashable(key) })
+    }
+
+    /// A tap's own handler, at the row's middle: UIKit has no way to send
+    /// a touch, nor AppKit a click to a window that isn't key, as a test's
+    /// isn't.
+    func tap(_ key: String) throws {
+      let f = try frame(key)
+      view.select(at: (f.minY + f.maxY) / 2)
+    }
+
+    /// The down or up arrow, or j or k.
+    func key(down: Bool, letter: Bool) {
+      #if canImport(UIKit)
+        let input =
+          letter
+          ? (down ? "j" : "k") : (down ? UIKeyCommand.inputDownArrow : UIKeyCommand.inputUpArrow)
+        let command = view.keyCommands?.first { $0.input == input }
+        #expect(command != nil, "no key command for \(input)")
+        if let action = command?.action { view.perform(action) }
+      #else
+        let w = window as! NSWindow
+        let (characters, code): (String, UInt16) =
+          letter
+          ? (down ? ("j", 38) : ("k", 40))
+          : (
+            String(UnicodeScalar(down ? NSDownArrowFunctionKey : NSUpArrowFunctionKey)!),
+            down ? 125 : 126
+          )
+        w.sendEvent(
+          NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: letter ? [] : [.numericPad, .function],
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: w.windowNumber,
+            context: nil, characters: characters, charactersIgnoringModifiers: characters,
+            isARepeat: false, keyCode: code)!)
+      #endif
+    }
+
+    /// The highlight stands behind the row's frame.
+    func expectHighlight(on key: String) throws {
+      let f = try frame(key)
+      let h = view.highlight
+      #expect(!h.isHidden)
+      #expect(
+        abs(Double(h.frame.minY) - f.minY) <= 0.5 && abs(Double(h.frame.maxY) - f.maxY) <= 0.5)
     }
   }
 #endif

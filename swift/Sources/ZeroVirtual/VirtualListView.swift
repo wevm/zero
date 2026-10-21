@@ -65,6 +65,18 @@
         _ list: Virtualizer,
         row: @escaping @MainActor (_ item: VirtualItem<Row, Key>, _ reusing: UIView?) -> UIView
       ) {
+        self.init(list, make: { item, _, reusing in row(item, reusing) })
+      }
+
+      /// With whether the row is selected, for a list whose rows can be
+      /// (`onSelect`).
+      public convenience init(
+        _ list: Virtualizer,
+        row:
+          @escaping @MainActor (
+            _ item: VirtualItem<Row, Key>, _ isSelected: Bool, _ reusing: UIView?
+          ) -> UIView
+      ) {
         self.init(list, make: row)
       }
     #else
@@ -72,17 +84,31 @@
         _ list: Virtualizer,
         row: @escaping @MainActor (_ item: VirtualItem<Row, Key>, _ reusing: NSView?) -> NSView
       ) {
+        self.init(list, make: { item, _, reusing in row(item, reusing) })
+      }
+
+      /// With whether the row is selected, for a list whose rows can be
+      /// (`onSelect`).
+      public convenience init(
+        _ list: Virtualizer,
+        row:
+          @escaping @MainActor (
+            _ item: VirtualItem<Row, Key>, _ isSelected: Bool, _ reusing: NSView?
+          ) -> NSView
+      ) {
         self.init(list, make: row)
       }
     #endif
 
     private init(
       _ list: Virtualizer,
-      make row: @escaping @MainActor (VirtualItem<Row, Key>, PlatformView?) -> PlatformView
+      make row: @escaping @MainActor (VirtualItem<Row, Key>, Bool, PlatformView?) -> PlatformView
     ) {
       self.list = list
       rows = RowsScrollView(
-        views: AppRowViews { item, reusing in row(item as! VirtualItem<Row, Key>, reusing) })
+        views: AppRowViews { item, selected, reusing in
+          row(item as! VirtualItem<Row, Key>, selected, reusing)
+        })
       super.init(frame: .zero)
       #if canImport(UIKit)
         rows.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -103,6 +129,71 @@
     /// put.
     public func rowHeightDidChange(_ key: Key) {
       rows.rows.rowHeightDidChange(AnyHashable(key))
+    }
+
+    // MARK: Header and footer
+
+    #if canImport(UIKit)
+      /// A view above the rows, scrolling with them. Its height is its
+      /// Auto Layout height at the list's width, like a row's.
+      public var headerView: UIView? {
+        didSet { rows.rows.header = headerView.map(Self.accessory) }
+      }
+      /// A view below the rows, scrolling with them.
+      public var footerView: UIView? {
+        didSet { rows.rows.footer = footerView.map(Self.accessory) }
+      }
+    #else
+      /// A view above the rows, scrolling with them. Its height is its
+      /// Auto Layout height at the list's width, like a row's.
+      public var headerView: NSView? {
+        didSet { rows.rows.header = headerView.map(Self.accessory) }
+      }
+      /// A view below the rows, scrolling with them.
+      public var footerView: NSView? {
+        didSet { rows.rows.footer = footerView.map(Self.accessory) }
+      }
+    #endif
+
+    /// The header or the footer changed height on its own: it's measured
+    /// again, and the rows move with it, what's on screen staying put
+    /// unless the header is on screen.
+    public func headerOrFooterHeightDidChange() {
+      for view in [headerView, footerView] {
+        if let view { rows.rows.accessoryHeightDidChange(view) }
+      }
+    }
+
+    private static func accessory(_ view: PlatformView) -> RowsAccessory {
+      RowsAccessory(view: view) { [unowned view] width in
+        AppRowViews.fittingHeight(of: view, width: width)
+      }
+    }
+
+    // MARK: Selection
+
+    /// The selected row's key: the list highlights its row. Setting it
+    /// doesn't call `onSelect`.
+    public var selection: Key? {
+      get { rows.rows.selected?.base as? Key }
+      set { rows.rows.selected = newValue.map { AnyHashable($0) } }
+    }
+
+    /// Called with a row the user selects: a tap selects a row (even the
+    /// selected one), and while the list has focus, the arrow keys and j
+    /// and k select the next or the previous one and scroll it into view.
+    /// Rows can be selected while it's set.
+    ///
+    /// The list highlights the selected row with the platform's selection
+    /// color, and marks its view selected for accessibility; on macOS, an
+    /// `NSTableCellView` row draws its text in the highlight's colors.
+    public var onSelect: ((Key) -> Void)? {
+      didSet {
+        rows.selectable = onSelect != nil
+        rows.rows.onSelect = { [weak self] key in
+          if let key = key.base as? Key { self?.onSelect?(key) }
+        }
+      }
     }
 
     #if canImport(UIKit)

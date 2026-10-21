@@ -102,6 +102,42 @@
       withExtendedLifetime((zero, window)) {}
     }
 
+    @Test func selectsByTapAndByKeys() async throws {
+      let t = VirtualListTests()
+      let (zero, list) = try t.makeList()
+      var sets: [String] = []
+      var shown: [String: Bool] = [:]
+      let view = VirtualListView(list) { item, isSelected, reusing in
+        let row = reusing as? NoteView ?? NoteView()
+        row.id = item.row.id
+        shown[item.row.id] = isSelected
+        return row
+      }
+      view.onSelect = { sets.append($0) }
+      let window = show(view)
+      try await t.run(30) { list.snapshot.complete && !list.snapshot.items.isEmpty }
+      let rows = try #require(view.scrollView as? RowsScrollView)
+      try await RowsSelectionCheck(list: list, view: rows, window: window) {
+        (view.selection, sets, shown)
+      }.run(t)
+      // The selected row's view, and no other, is selected for
+      // accessibility.
+      let selected = rowViews(view.scrollView).filter {
+        #if canImport(UIKit)
+          $0.accessibilityTraits.contains(.selected)
+        #else
+          $0.isAccessibilitySelected()
+        #endif
+      }
+      #expect(selected.map(\.id) == [VirtualListTests.id(14)])
+      // Set by the app: highlighted, and not reported back.
+      view.selection = VirtualListTests.id(3)
+      try await t.run(0.2) { false }
+      #expect(shown[VirtualListTests.id(3)] == true && shown[VirtualListTests.id(14)] == false)
+      #expect(sets.count == 15)
+      withExtendedLifetime((zero, window)) {}
+    }
+
     func scroll(_ scrollView: AnyObject, by dy: Double) {
       #if canImport(UIKit)
         let s = scrollView as! UIScrollView

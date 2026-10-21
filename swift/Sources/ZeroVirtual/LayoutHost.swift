@@ -8,7 +8,9 @@
 /// The view calls `layout(offset:viewport:)` from its layout pass, with the
 /// offset it's at (the user's scroll, since the last pass) and its
 /// viewport's height. Rows are measured with `measure` and stacked from the
-/// snapshot's space before them.
+/// snapshot's space before them, after the header: the content is the
+/// header, the space before the rows, the rows, the space after them, and
+/// the footer.
 @MainActor
 package final class LayoutHost: VirtualHost {
   package private(set) var scrollOffset = 0.0
@@ -23,6 +25,13 @@ package final class LayoutHost: VirtualHost {
     { ([], 0, 0) }
   /// A row's height, at the view's width.
   package var measure: (AnyHashable) -> Double = { _ in 0 }
+  /// The heights of the views above and below the rows, at the view's
+  /// width: 0 for none.
+  package var header: () -> Double = { 0 }
+  package var footer: () -> Double = { 0 }
+  /// The header's and the footer's heights, as last laid out.
+  package private(set) var headerHeight = 0.0
+  package private(set) var footerHeight = 0.0
   package var didScroll: () -> Void = {}
   package var viewportDidResize: () -> Void = {}
   package var afterUpdate: () -> Void = {}
@@ -43,7 +52,8 @@ package final class LayoutHost: VirtualHost {
 
   package func rowFrames() -> [VirtualRowFrame] { frames }
 
-  /// A new snapshot, or rows that changed height.
+  /// A new snapshot, or rows (or the header or footer) that changed
+  /// height.
   package func invalidate() {
     stale = true
     if !inPass { setNeedsLayout() }
@@ -94,12 +104,14 @@ package final class LayoutHost: VirtualHost {
 
   private func place() {
     let r = rows()
-    var y = r.before
+    headerHeight = header()
+    var y = headerHeight + r.before
     frames = r.keys.map { item in
       let height = measure(item.key)
       defer { y += height }
       return VirtualRowFrame(index: item.index, key: item.key, minY: y, maxY: y + height)
     }
-    contentHeight = y + r.after
+    footerHeight = footer()
+    contentHeight = y + r.after + footerHeight
   }
 }

@@ -13,6 +13,9 @@ final class LayoutScrollView {
   let h: Harness
   let viewportHeight: Double
   var heights: [String: Double] = [:]
+  /// The heights of the views above and below the rows.
+  var header = 0.0
+  var footer = 0.0
   private var offset = 0.0
   /// Passes that applied an offset other than the user's: the core
   /// scrolled, which can stop a fling.
@@ -31,6 +34,8 @@ final class LayoutScrollView {
     host.measure = { [unowned self] key in
       self.heights[key.base as! String] ?? self.h.view.rowHeight
     }
+    host.header = { [unowned self] in self.header }
+    host.footer = { [unowned self] in self.footer }
     host.didScroll = { [unowned self] in self.h.core.didScroll() }
     host.viewportDidResize = { [unowned self] in self.h.core.viewportDidResize() }
     host.afterUpdate = { [unowned self] in self.h.core.afterUpdate() }
@@ -135,6 +140,66 @@ final class LayoutScrollView {
     // rest: a fling to the top would come to rest with a gap there.
     #expect(h.core.snapshot.spaceBefore == 0)
     #expect(view.rowTop(key) == top)
+  }
+
+  @Test(
+    "a header changing height above the viewport doesn't move the rows; at the top it pushes them")
+  func headerChangesHeight() {
+    let h = Harness(rowCount: 300) { $0.anchoring = .manual }
+    let view = LayoutScrollView(h)
+    view.header = 100
+    view.settle()
+    #expect(view.rowTop("r0") == 100)
+    view.userScroll(2000)
+    view.settle()
+    let key = h.core.firstVisibleItem()!.key
+    let top = view.rowTop(key)
+    for height in [250.0, 40, 0, 180] {
+      view.header = height
+      view.settle(holding: key)
+    }
+    h.scheduler.advance(by: 200)
+    view.settle(holding: key)
+    #expect(view.rowTop(key) == top)
+
+    // At the top, the header is on screen: it grows, and the rows go down
+    // with it.
+    for _ in 0..<40 where view.scrollOffset > 0 {
+      view.userScroll(view.scrollOffset - 300)
+      view.settle()
+    }
+    #expect(view.scrollOffset == 0)
+    view.header = 260
+    view.settle()
+    #expect(view.scrollOffset == 0)
+    #expect(view.rowTop("r0") == 260)
+  }
+
+  @Test("scrolls to rows past the header and up to the footer")
+  func scrollsAroundAHeaderAndAFooter() {
+    let h = Harness(rowCount: 200) { $0.anchoring = .manual }
+    let view = LayoutScrollView(h)
+    view.header = 120
+    view.footer = 80
+    view.settle()
+    #expect(view.rowTop("r0") == 120)
+
+    h.core.scrollToItem("r199", align: .end)
+    view.settle()
+    // The last row's bottom at the viewport's, the footer below it.
+    let last = try! #require(view.rowTop("r199"))
+    #expect(last + (view.heights["r199"] ?? h.view.rowHeight) == view.viewportHeight)
+    #expect(view.bottomGap == 80)
+
+    h.core.scrollToItem("r0", align: .start)
+    view.settle()
+    #expect(view.rowTop("r0") == 0)
+    #expect(view.scrollOffset == 120)
+
+    h.core.scrollToItem("r100", align: .center)
+    view.settle()
+    let middle = try! #require(view.rowTop("r100"))
+    #expect(abs(middle + h.view.rowHeight / 2 - view.viewportHeight / 2) <= 0.5)
   }
 
   @Test("stuck to the bottom, it follows new rows and a last row growing taller")
