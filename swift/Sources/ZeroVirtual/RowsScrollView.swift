@@ -265,7 +265,10 @@
 
     private func replace(_ old: RowsAccessory?, with new: RowsAccessory?) {
       guard old !== new else { return }
-      old?.view.removeFromSuperview()
+      if let old {
+        old.view.removeFromSuperview()
+        views.discard(old.view)
+      }
       if let new { addView(new.view) }
       host.invalidate()
     }
