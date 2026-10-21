@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "description": "Generates the Swift row types and schema of a Zero app for the Zero Swift client.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wevm/zero.git",
+    "directory": "packages/zero-swift-cli"
+  },
   "bin": {
     "zero-swift": "./src/bin.ts"
   },
