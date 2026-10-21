@@ -42,6 +42,19 @@
   /// other, but not its content size or offset; scroll with the
   /// virtualizer (`scrollToItem`). The list follows the virtualizer while
   /// it's in a window.
+  ///
+  /// A `headerView` and a `footerView` scroll with the rows, above and below
+  /// them. With an `onSelect`, a tap or a key selects a row; `row` then
+  /// takes whether its row is selected:
+  ///
+  /// ```swift
+  /// let list = VirtualListView(issues) { item, isSelected, reusing in
+  ///   let row = reusing as? IssueRowView ?? IssueRowView()
+  ///   row.show(item.row, selected: isSelected)
+  ///   return row
+  /// }
+  /// list.onSelect = { id in open(id) }
+  /// ```
   public final class VirtualListView<
     Context: Sendable, Row: ZeroRow, Key: Hashable, StartRow: Equatable & Sendable,
     ListContext: Equatable & Sendable
