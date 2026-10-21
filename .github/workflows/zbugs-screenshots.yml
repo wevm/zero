@@ -159,7 +159,12 @@ jobs:
         # The Native suites run the same tests on the screens' UIKit and
         # AppKit lists (VirtualListView).
         suite:
-          [VirtualListUITests, FrameProbeUITests, NativeVirtualListUITests, NativeFrameProbeUITests]
+          [
+            VirtualListUITests,
+            FrameProbeUITests,
+            NativeVirtualListUITests,
+            NativeFrameProbeUITests,
+          ]
     defaults:
       run:
         working-directory: swift/TestHost
