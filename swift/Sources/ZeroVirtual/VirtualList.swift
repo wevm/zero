@@ -42,23 +42,23 @@
     public var body: some View {
       // Read here, so the list renders each snapshot.
       _ = list.snapshot
-      return RowsScrollViewRepresentable(source: source, model: model)
-        .onAppear { model.attach(list) }
-        .onDisappear { model.detach(list) }
+      return RowsScrollViewRepresentable(
+        source: { [list] in RowsSource(list.snapshot) },
+        row: { [row] in AnyView(row($0 as! VirtualItem<Row, Key>)) }, model: model
+      )
+      .onAppear { model.attach(list) }
+      .onDisappear { model.detach(list) }
     }
+  }
 
+  extension RowsSource {
     /// The snapshot's rows, as the scroll view draws them.
-    private var source: () -> RowsSource {
-      { [list, row] in
-        let snapshot = list.snapshot
-        return RowsSource(
-          items: snapshot.items.map { item in
-            RowsItem(
-              key: AnyHashable(item.key), index: item.index, row: item.row,
-              view: { AnyView(row(item)) })
-          },
-          spaceBefore: snapshot.spaceBefore, spaceAfter: snapshot.spaceAfter)
-      }
+    init<Row, Key>(_ snapshot: VirtualSnapshot<Row, Key>) {
+      self.init(
+        items: snapshot.items.map {
+          RowsItem(key: AnyHashable($0.key), index: $0.index, row: $0.row, item: $0)
+        },
+        spaceBefore: snapshot.spaceBefore, spaceAfter: snapshot.spaceAfter)
     }
   }
 
