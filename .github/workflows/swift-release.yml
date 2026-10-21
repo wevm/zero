@@ -2,7 +2,7 @@ name: Swift Release
 
 # Releases the Swift client, versioned with Changesets (see .changeset/README.md).
 # The zero-swift npm package (packages/zero-swift-cli) and the Swift package
-# (swift/) share one version, kept in step by `pnpm changeset:version`.
+# (swift/) share one version, kept in step by `pnpm --filter zero-swift version-packages`.
 #
 # On each push to main:
 # - With pending changesets, opens or updates the "Version Packages" PR.
@@ -51,7 +51,7 @@ jobs:
       - id: changesets
         uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
         with:
-          version-script: pnpm changeset:version
+          version-script: pnpm --filter zero-swift version-packages
           commit-message: 'chore(zero-swift): version packages'
           pr-title: 'chore(zero-swift): version packages'
 

@@ -7,8 +7,12 @@ version. Upstream Zero's packages are released separately and are ignored here.
 To release a change to either, add a changeset for `zero-swift`:
 
 ```sh
-pnpm changeset
+pnpm dlx @changesets/cli@3.0.3
 ```
+
+Changesets isn't a workspace dependency, so the root `package.json` and
+`pnpm-lock.yaml` stay as upstream has them and syncing upstream doesn't
+conflict there.
 
 On `main`, `.github/workflows/swift-release.yml` keeps a "Version Packages" pull
 request open with the pending version and changelog. Merging it sets the

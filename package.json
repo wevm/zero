@@ -23,11 +23,9 @@
     "api-snapshot:update": "vitest run -u --config tools/tsnapi/vitest.config.ts",
     "bench": "turbo run bench --concurrency=1",
     "bench:bmf": "turbo run bench:bmf --concurrency=1",
-    "bench:bmf:silent": "turbo run bench:bmf:silent --concurrency=1",
-    "changeset:version": "changeset version && node -p \"require('./packages/zero-swift-cli/package.json').version\" > swift/VERSION"
+    "bench:bmf:silent": "turbo run bench:bmf:silent --concurrency=1"
   },
   "devDependencies": {
-    "@changesets/cli": "^3.0.3",
     "@e18e/eslint-plugin": "^0.4.1",
     "@emnapi/core": "1.10.0",
     "@emnapi/runtime": "1.10.0",

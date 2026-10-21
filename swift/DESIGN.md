@@ -100,7 +100,7 @@ apps/zbugs-swift/           dogfood app (iOS + macOS)
   API is stable.
 - Changesets version both (see `.changeset/README.md`): a change to either
   adds a changeset for `zero-swift`. `swift-release.yml` keeps a version PR
-  open, and `pnpm changeset:version` writes the CLI's version to
+  open, and `pnpm --filter zero-swift version-packages` writes the CLI's version to
   `swift/VERSION`. Once that PR merges, the workflow pushes the subtree split
   to the mirror, tags it, and publishes the CLI to npm, after approval in the
   `swift-release` environment.

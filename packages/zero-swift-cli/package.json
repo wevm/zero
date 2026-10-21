@@ -27,7 +27,8 @@
     "check-types": "tsc",
     "lint": "oxlint --quiet --config ../../oxlint.config.ts src/",
     "format": "oxfmt .",
-    "check-format": "oxfmt --check ."
+    "check-format": "oxfmt --check .",
+    "version-packages": "cd ../.. && pnpm dlx @changesets/cli@3.0.3 version && jq -r .version packages/zero-swift-cli/package.json > swift/VERSION"
   },
   "dependencies": {
     "typescript": "6.0.3"
