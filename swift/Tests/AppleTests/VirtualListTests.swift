@@ -3,6 +3,7 @@
   import SwiftUI
   import Testing
   import ZeroTesting
+  import ZeroUI
 
   @testable import Zero
   @testable import ZeroVirtual
@@ -103,6 +104,35 @@
           )
         }
       #endif
+    }
+
+    final class Seen {
+      var texts: Set<String> = []
+    }
+
+    /// A row that runs its own query.
+    struct QueryRow: View {
+      @ZeroQuery<Note, Note?, Void> var note: Note?
+      let seen: Seen
+
+      init(id: String, seen: Seen) {
+        _note = ZeroQuery(VirtualListTests.byID(id))
+        self.seen = seen
+      }
+
+      var body: some View {
+        let _ = note.map { seen.texts.insert($0.text) }
+        Text(note?.text ?? "").frame(height: 30)
+      }
+    }
+
+    @Test func aRowsQueryReadsTheListsClient() async throws {
+      let (zero, list) = try makeList()
+      let seen = Seen()
+      let window = show(VirtualList(list) { QueryRow(id: $0.row.id, seen: seen) }.zero(zero))
+      try await run(30) { seen.texts.contains("note 0") }
+      #expect(seen.texts.contains("note 0"))
+      withExtendedLifetime((zero, window)) {}
     }
 
     @Test func scrollsToARowFarBelow() async throws {
