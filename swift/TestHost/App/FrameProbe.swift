@@ -20,7 +20,7 @@ import SwiftUI
 /// - Driven by the probe itself (`drive`), the scroll is known exactly: the
 ///   rows must move by it, to the half point.
 /// - Flung by a finger (iOS), the momentum is smooth: two frames whose
-///   speed departs from both neighboring pairs' are a jump in it.
+///   speed departs from their neighboring pairs' are a jump in it.
 /// - At rest, nothing moves.
 /// - A jump (Latest) shows the rows as they were, then as they end up, and
 ///   nothing in between.
@@ -39,8 +39,9 @@ final class FrameProbe {
   @ObservationIgnored private var markers: [String: WeakView] = [:]
   @ObservationIgnored private(set) weak var scrollView: PlatformScrollView?
   @ObservationIgnored private var previous: Sample?
-  @ObservationIgnored private var smooth: [(dy: Double, dt: Double, real: Bool, sample: Sample)] =
-    []
+  @ObservationIgnored private var smooth:
+    [(dy: Double, dt: Double, regular: Bool, sample: Sample)] =
+      []
   @ObservationIgnored private var applied: Double?
   @ObservationIgnored private var drive: (velocity: Double, done: CheckedContinuation<Void, Never>)?
   @ObservationIgnored private var jump: [Sample]?
@@ -77,6 +78,8 @@ final class FrameProbe {
     var atEdge = false
     /// The viewport's top in content coordinates: below 0 in a bounce.
     var offset = 0.0
+    /// How long after the display link's timestamp the frame was sampled.
+    var latency = 0.0
 
     /// Top to bottom.
     var ids: [String] { rows.sorted { $0.value.minY < $1.value.minY }.map(\.key) }
@@ -171,6 +174,7 @@ final class FrameProbe {
 
   private func sample(_ t: Double, _ scrollView: PlatformScrollView) -> Sample {
     var s = Sample(t: t, rows: [:])
+    s.latency = CACurrentMediaTime() - t
     #if os(iOS)
       let port = scrollView.convert(scrollView.bounds, to: nil)
         .inset(by: scrollView.adjustedContentInset)
@@ -263,26 +267,29 @@ final class FrameProbe {
     ["chat": "m0000", "issues": "i0000"][UserDefaults.standard.string(forKey: "screen") ?? ""]
   }
 
-  /// Momentum is smooth: two frames whose speed departs from both
-  /// neighboring pairs' is a jump in it. Checked over pairs, as UIKit moves
-  /// a slow fling every other frame; and not across a late frame, after
-  /// which momentum catches up (counted as dropped instead).
+  /// Momentum is smooth: two frames whose speed departs from what their
+  /// neighboring pairs' speeds make it, by more than deceleration does, are
+  /// a jump in it. Checked over pairs, as UIKit moves a slow fling every
+  /// other frame; and not within two frames of a late frame, nor of one
+  /// whose callback came a frame later in its interval than the last (a
+  /// simulator's are irregular): after either, momentum catches up, and the
+  /// frame drawn may not be the one sampled.
   private func smoothCheck(dy: Double, a: Sample, b: Sample) {
     // A bounce past the top springs back at its own pace: not momentum.
     let bouncing = a.offset < -0.5 || b.offset < -0.5
-    smooth.append((dy, b.t - a.t, !(a.tracking || b.tracking || bouncing), b))
-    if smooth.count > 6 { smooth.removeFirst() }
-    guard smooth.count == 6, smooth.allSatisfy(\.real),
-      smooth.allSatisfy({ $0.dt <= 1.5 * Self.frameInterval })
-    else { return }
-    func speed(_ i: Int) -> Double {
-      (smooth[i].dy + smooth[i + 1].dy) / (smooth[i].dt + smooth[i + 1].dt)
-    }
+    let late =
+      b.t - a.t > 1.5 * Self.frameInterval
+      || abs(b.latency - a.latency) > 0.5 * Self.frameInterval
+    smooth.append((dy, b.t - a.t, !(a.tracking || b.tracking || bouncing || late), b))
+    if smooth.count > 8 { smooth.removeFirst() }
+    guard smooth.count == 8, smooth.allSatisfy(\.regular) else { return }
+    let w = smooth.suffix(6).map { $0 }
+    func speed(_ i: Int) -> Double { (w[i].dy + w[i + 1].dy) / (w[i].dt + w[i + 1].dt) }
     let (p, m, n) = (speed(0), speed(2), speed(4))
-    let limit = 300.0
-    let sample = smooth[3].sample
-    let moved = smooth[2].dy + smooth[3].dy
-    if abs(m - p) > limit && abs(m - n) > limit {
+    let expected = (p + n) / 2
+    let sample = w[3].sample
+    let moved = w[2].dy + w[3].dy
+    if abs(m - expected) > max(300, 0.15 * abs(expected)) {
       // Once per jump: the next check starts after it.
       smooth.removeAll()
       flag(
