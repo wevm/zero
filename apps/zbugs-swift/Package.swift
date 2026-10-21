@@ -23,6 +23,7 @@ let package = Package(
         "ZBugs",
         .product(name: "Zero", package: "Zero"),
         .product(name: "ZeroUI", package: "Zero"),
+        .product(name: "ZeroVirtual", package: "Zero"),
       ]),
     .testTarget(
       name: "ZBugsTests",

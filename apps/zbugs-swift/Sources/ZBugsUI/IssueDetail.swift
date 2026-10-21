@@ -4,19 +4,48 @@
   import ZBugs
   import Zero
   import ZeroUI
+  import ZeroVirtual
+
+  /// An issue's comments, paged in as they scroll.
+  typealias CommentVirtualizer = ZeroVirtualizer<
+    AuthData?, Comment, String, CommentsPageArgs.Cursor, String
+  >
+
+  extension CommentVirtualizer {
+    /// The issue's comments, oldest first, as zbugs' issue page sets them
+    /// up: pages of `commentsPage` from a comment's time, its list context
+    /// the issue's id.
+    static func comments(_ zero: Zero<AuthData?>, issueID: String) -> CommentVirtualizer {
+      CommentVirtualizer(
+        zero: zero, listContext: issueID, estimatedRowHeight: 200, rowKey: \.id,
+        toStartRow: { CommentsPageArgs.Cursor(id: $0.id, created: $0.created) },
+        pageQuery: { page, issueID in
+          Queries.commentsPage(
+            CommentsPageArgs(
+              issueID: issueID, limit: page.limit, start: page.start,
+              dir: page.direction == .forward ? .forward : .backward,
+              inclusive: page.start == nil))
+        },
+        rowQuery: { row, _ in Queries.comment(row.id) },
+        // Comments are tall: about three screens of them.
+        minPageSize: 20)
+    }
+  }
 
   /// One issue with its comments, as zbugs' issue page shows it.
   struct IssueDetail: View {
     @ZeroQuery<Issue, Issue?, AuthData?> var issue: Issue?
+    @State private var comments: CommentVirtualizer
     @Environment(AppModel.self) private var model
 
-    init(id: String) {
+    init(id: String, zero: Zero<AuthData?>) {
       _issue = ZeroQuery(Queries.issueDetail(IssueDetailArgs(idField: .id, id: .string(id))))
+      _comments = State(initialValue: .comments(zero, issueID: id))
     }
 
     var body: some View {
       if let issue {
-        IssueContent(issue: issue)
+        IssueContent(issue: issue, comments: comments)
       } else if $issue.resultType == .complete {
         ContentUnavailableView("Issue Not Found", systemImage: "questionmark.circle")
       } else {
@@ -27,23 +56,29 @@
 
   private struct IssueContent: View {
     let issue: Issue
+    let comments: CommentVirtualizer
     @Environment(AppModel.self) private var model
     @State private var comment = ""
     @State private var editing = false
 
     var body: some View {
-      ScrollView {
+      // The header and the description above the comments, the composer
+      // below them, in one list.
+      VirtualList(comments) { item in
+        CommentView(comment: item.row).column().padding(.bottom, 16)
+      } header: {
         VStack(alignment: .leading, spacing: 16) {
           header
           if !issue.description.isEmpty {
             Text(markdown(issue.description)).textSelection(.enabled)
           }
           Divider()
-          ForEach(comments, id: \.id) { CommentView(comment: $0) }
-          composer
         }
-        .padding()
-        .frame(maxWidth: 760, alignment: .leading)
+        .column()
+        .padding(.top)
+        .padding(.bottom, 16)
+      } footer: {
+        composer.column().padding(.bottom)
       }
       // String(_:), or the title formats the number for the locale (3,000).
       .navigationTitle(issue.shortID.map { "Issue #" + String($0) } ?? "Issue")
@@ -116,11 +151,6 @@
       }
     }
 
-    /// The query has the latest 50, newest first.
-    private var comments: [Comment] {
-      (issue.comments ?? []).sorted { ($0.created, $0.id) < ($1.created, $1.id) }
-    }
-
     private var canEdit: Bool {
       guard let auth = model.auth else { return false }
       return auth.role == .crew || auth.sub == issue.creatorID
@@ -146,6 +176,16 @@
       .frame(maxWidth: .infinity, alignment: .leading)
       .padding(12)
       .background(.background.secondary, in: RoundedRectangle(cornerRadius: 8))
+    }
+  }
+
+  extension View {
+    /// In the issue page's column: at most 760 points wide, centered, with
+    /// the standard margins.
+    func column() -> some View {
+      frame(maxWidth: 760, alignment: .leading)
+        .padding(.horizontal)
+        .frame(maxWidth: .infinity)
     }
   }
 

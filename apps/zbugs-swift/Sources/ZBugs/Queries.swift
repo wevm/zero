@@ -84,6 +84,13 @@ public enum IssueKey: Codable, Sendable, Hashable {
     case .number(let n): .number(n)
     }
   }
+
+  /// An issue's id, or its short id when it's all digits
+  /// (`getIDFromString` in `shared/issue-id.ts`).
+  public static func parse(_ s: String) -> (field: IDField, value: IssueKey) {
+    if s.contains(where: { !("0"..."9").contains($0) }) { return (.id, .string(s)) }
+    return (.shortID, .number(Double(s) ?? .nan))
+  }
 }
 
 public struct ProjectArgs: Codable, Sendable, Hashable {
@@ -424,7 +431,9 @@ private func crew(_ user: RowExpression<User>) -> Condition {
   user.and(user.role == .crew, user.not(user.login.like("rocibot%")))
 }
 
-func applyIssuePermissions<Result: QueryResult>(_ q: Query<Issue, Result>, _ role: Role?)
+func applyIssuePermissions<Result: QueryResult>(
+  _ q: Query<Issue, Result>, _ role: Role?
+)
   -> Query<Issue, Result>
 where Result.Row == Issue {
   role == .crew ? q : q.where(\.visibility, .public)

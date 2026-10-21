@@ -3,6 +3,7 @@
   import ZBugs
   import Zero
   import ZeroUI
+  import ZeroVirtual
 
   /// Which UI layer draws the issue list.
   public enum ListLayer: String, CaseIterable, Identifiable, Sendable {
@@ -24,6 +25,13 @@
     let model: AppModel
     @State private var filter = IssueFilter()
     @State private var selection: String?
+    /// The issue list's rows, for the client.
+    @State private var issues: IssueVirtualizer?
+    /// The selected issue and where the list was, kept with the window: a
+    /// relaunch opens the list at the issue, or else where it was.
+    @SceneStorage("selection") private var savedSelection: String?
+    @SceneStorage("issueList") private var savedScroll: Data?
+    @State private var saving = Debouncer()
     @State private var listLayer = ListLayer.swiftUI
     @State private var sheet: Sheet?
     /// All three columns, on an iPad or a Mac: the filters are how you get
@@ -77,16 +85,26 @@
           .toolbar { toolbar }
       } detail: {
         if let selection {
-          IssueDetail(id: selection).id(selection)
+          IssueDetail(id: selection, zero: model.zero)
+            // Its comments' virtualizer is of the client.
+            .id([selection, String(describing: ObjectIdentifier(model.zero))])
         } else {
           ContentUnavailableView("No Issue Selected", systemImage: "list.bullet.rectangle")
         }
       }
-      .onAppear { compactColumn = .content }
+      .onAppear {
+        compactColumn = .content
+        if selection == nil { selection = savedSelection }
+      }
+      // A new client, as the user logs in: the list starts over, at the
+      // selected issue.
+      .onChange(of: ObjectIdentifier(model.zero), initial: true) { makeIssues() }
+      .onChange(of: filter) { _, filter in issues?.listContext = filter.listContext }
       // A new issue is selected outside a List, which a collapsed split
       // view doesn't follow on its own.
       .onChange(of: selection) { _, selection in
         if selection != nil { compactColumn = .detail }
+        savedSelection = selection
       }
       .zero(model.zero)
       .environment(model)
@@ -115,17 +133,49 @@
     }
 
     @ViewBuilder private var list: some View {
-      switch listLayer {
-      case .swiftUI:
-        IssueList(filter: filter, selection: $selection)
-      case .native:
-        IssueTable(zero: model.zero, filter: filter, selection: highlighted) { id in
-          selection = id
-          // Also when it's the issue the detail shows, which doesn't change
-          // the selection.
-          compactColumn = .detail
+      if let issues {
+        switch listLayer {
+        case .swiftUI:
+          IssueList(list: issues, selection: listSelection)
+        case .native:
+          NativeIssueList(list: issues, selection: highlighted) { open($0) }
+            // A view of another virtualizer, for another client.
+            .id(ObjectIdentifier(issues))
         }
       }
+    }
+
+    /// The list's selection: the highlighted issue, which a tap or a key
+    /// opens.
+    private var listSelection: Binding<String?> {
+      Binding {
+        highlighted
+      } set: { id in
+        if let id { open(id) }
+      }
+    }
+
+    private func open(_ id: String) {
+      selection = id
+      // Also when it's the issue the detail shows, which doesn't change
+      // the selection.
+      compactColumn = .detail
+    }
+
+    /// The list for the client, opened at the selected issue, as the web
+    /// app's list permalink opens it, or else where it was.
+    private func makeIssues() {
+      let permalinkID = selection ?? savedSelection
+      let scroll =
+        permalinkID == nil
+        ? savedScroll.flatMap { try? JSONDecoder().decode(IssueScrollState.self, from: $0) } : nil
+      let list = IssueVirtualizer.issues(
+        model.zero, filter: filter, permalinkID: permalinkID, scrollState: scroll)
+      let save = $savedScroll
+      list.onScrollStateChange = { [saving] state in
+        saving.run { save.wrappedValue = try? JSONEncoder().encode(state) }
+      }
+      issues = list
     }
 
     /// The issue the list highlights: the selected one, when the list is
@@ -216,6 +266,21 @@
           } set: {
             filter.assignee = $0 ? login : nil
           })
+      }
+    }
+  }
+
+  /// Runs the last of the actions it's given half a second after it, as
+  /// the list reports where it is on every scroll.
+  @MainActor
+  final class Debouncer {
+    private var task: Task<Void, Never>?
+
+    func run(_ action: @escaping @MainActor () -> Void) {
+      task?.cancel()
+      task = Task {
+        try? await Task.sleep(for: .milliseconds(500))
+        if !Task.isCancelled { action() }
       }
     }
   }

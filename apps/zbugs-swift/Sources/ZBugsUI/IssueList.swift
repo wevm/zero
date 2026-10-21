@@ -4,6 +4,7 @@
   import ZBugs
   import Zero
   import ZeroUI
+  import ZeroVirtual
 
   public enum IssueStatus: String, CaseIterable, Identifiable, Sendable {
     case open, closed, all
@@ -29,32 +30,58 @@
         textFilter: text.isEmpty ? nil : text, sortField: sortField,
         sortDirection: sortDirection)
     }
+  }
 
-    /// The first page of the list.
-    var query: QueryRequest<Issue, [Issue], AuthData?> {
-      Queries.issueListV2(
-        IssueListV2Args(
-          listContext: listContext, limit: 200, start: nil, dir: .forward, inclusive: true))
+  /// The issue list's rows, paged in as it scrolls.
+  typealias IssueVirtualizer = ZeroVirtualizer<
+    AuthData?, Issue, String, IssueRowSort, ListContextParams
+  >
+
+  /// Where the issue list was, to put it back.
+  typealias IssueScrollState = VirtualScrollState<IssueRowSort, ListContextParams>
+
+  extension IssueVirtualizer {
+    /// The issue list, as zbugs' list page sets it up: pages of
+    /// `issueListV2` from a row's sort keys, and an issue looked up by its
+    /// id or short id. Opened at `permalinkID`, or else where
+    /// `scrollState` says.
+    static func issues(
+      _ zero: Zero<AuthData?>, filter: IssueFilter, permalinkID: String?,
+      scrollState: IssueScrollState?
+    ) -> IssueVirtualizer {
+      IssueVirtualizer(
+        zero: zero, listContext: filter.listContext, estimatedRowHeight: 56, rowKey: \.id,
+        toStartRow: { IssueRowSort(id: $0.id, created: $0.created, modified: $0.modified) },
+        pageQuery: { page, listContext in
+          Queries.issueListV2(
+            IssueListV2Args(
+              listContext: listContext, limit: page.limit, start: page.start,
+              dir: page.direction == .forward ? .forward : .backward,
+              inclusive: page.start == nil))
+        },
+        rowQuery: { row, listContext in
+          let (field, value) = IssueKey.parse(row.id)
+          return Queries.listIssueByID(
+            ListIssueByIDArgs(listContext: listContext, idField: field, idValue: value))
+        }, permalinkID: permalinkID, scrollState: scrollState)
     }
   }
 
   /// The issue list in SwiftUI.
   struct IssueList: View {
-    @ZeroQuery<Issue, [Issue], AuthData?> var issues: [Issue]
+    let list: IssueVirtualizer
+    /// The issue the list highlights. A tap or a key sets it, even to the
+    /// highlighted one.
     @Binding var selection: String?
 
-    init(filter: IssueFilter, selection: Binding<String?>) {
-      _issues = ZeroQuery(filter.query)
-      _selection = selection
-    }
-
     var body: some View {
-      List(issues, selection: $selection) { issue in
-        IssueRow(issue: issue).tag(issue.id)
+      VirtualList(list, selection: $selection) { item, isSelected in
+        IssueRow(issue: item.row, isSelected: isSelected)
       }
       .overlay {
-        if issues.isEmpty {
-          if $issues.resultType == .complete {
+        let s = list.snapshot
+        if s.rowsEmpty {
+          if s.complete {
             ContentUnavailableView("No Issues", systemImage: "checkmark.circle")
           } else {
             ProgressView()
@@ -66,6 +93,7 @@
 
   struct IssueRow: View {
     let issue: Issue
+    var isSelected = false
 
     var body: some View {
       VStack(alignment: .leading, spacing: 4) {
@@ -94,7 +122,16 @@
         .font(.caption)
         .foregroundStyle(.secondary)
       }
-      .padding(.vertical, 2)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(.horizontal, 16)
+      .padding(.vertical, 8)
+      #if os(iOS)
+        // A plain list's separator.
+        .overlay(alignment: .bottom) {
+          if !isSelected { Divider().padding(.leading, 16) }
+        }
+      #endif
+      .contentShape(.accessibility, Rectangle())
       .accessibilityElement(children: .combine)
       .accessibilityIdentifier("IssueRow")
     }

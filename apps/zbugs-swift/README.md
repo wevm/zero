@@ -4,8 +4,11 @@
 
 - `ZBugs`: zbugs' schema, queries, and mutators (`apps/zbugs/shared`),
   ported to Swift. Builds on Linux too.
-- `ZBugsUI`: the app's screens in SwiftUI, with the issue list also in UIKit
-  (iOS) and AppKit (macOS) through `DiffableAdapter`.
+- `ZBugsUI`: the app's screens in SwiftUI. The issue list and an issue's
+  comments page in as they scroll, through `ZeroVirtual`'s `VirtualList`, as
+  zbugs' list page and comments do (`useZeroVirtualizer`); the issue list is
+  also in UIKit (iOS) and AppKit (macOS), through `VirtualListView`. A
+  relaunch opens the list at the selected issue, or else where it was.
 - `App/`: the app target, as an [XcodeGen](https://github.com/yonaskolb/XcodeGen)
   project.
 - `server/server.ts`: zbugs' backend from this repository's sources, for the

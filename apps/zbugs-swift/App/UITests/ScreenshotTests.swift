@@ -92,6 +92,66 @@ final class ScreenshotTests: XCTestCase {
     }
   }
 
+  /// All the issues, more than the 200 the list's first page had before it
+  /// paged: scrolled down past 200 of them, they keep coming.
+  @MainActor
+  func testListPagesPastTheFirst200() throws {
+    let environment = ProcessInfo.processInfo.environment
+    let token = try XCTUnwrap(environment["ZBUGS_TOKEN"], "Set TEST_RUNNER_ZBUGS_TOKEN")
+    let app = XCUIApplication()
+    app.launchEnvironment["ZBUGS_TOKEN"] = token
+    for key in ["ZBUGS_CACHE_URL", "ZBUGS_API_URL"] {
+      app.launchEnvironment[key] = environment[key]
+    }
+    app.launch()
+    let rows = app.descendants(matching: .any).matching(identifier: "IssueRow")
+    guard expect(app, rows.firstMatch, "an issue in the list", timeout: 120) else { return }
+
+    // Status: All.
+    if isPhone {
+      back(app)
+    }
+    #if os(macOS)
+      let status = app.popUpButtons.matching(NSPredicate(format: "value == 'Open'")).firstMatch
+      let all = app.menuItems["All"]
+    #else
+      let status = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Status,'"))
+        .firstMatch
+      let all = app.buttons["All"]
+    #endif
+    guard expect(app, status, "the Status picker") else { return }
+    press(status)
+    guard expect(app, all, "the All status") else { return }
+    press(all)
+    if isPhone {
+      let issues = app.buttons["Issues"]
+      if expect(app, issues, "the Issues button") { press(issues) }
+    }
+    guard expect(app, rows.firstMatch, "an issue in the list of all issues") else { return }
+    settle()
+
+    let list = app.scrollViews.containing(NSPredicate(format: "identifier == 'IssueRow'"))
+      .firstMatch
+    var seen: Set<String> = []
+    for _ in 0..<120 where seen.count <= 200 {
+      if let snapshot = try? list.snapshot() {
+        func walk(_ e: any XCUIElementSnapshot) {
+          if e.identifier == "IssueRow" { seen.insert(e.label) }
+          e.children.forEach(walk)
+        }
+        walk(snapshot)
+      }
+      #if os(macOS)
+        list.scroll(byDeltaX: 0, deltaY: -800)
+      #else
+        list.swipeUp(velocity: .fast)
+      #endif
+      Thread.sleep(forTimeInterval: 0.5)
+    }
+    snapshot(app, "6 Issues past 200")
+    XCTAssertGreaterThan(seen.count, 200, "the list stopped at \(seen.count) issues")
+  }
+
   @MainActor
   private var isPhone: Bool {
     #if os(iOS)
