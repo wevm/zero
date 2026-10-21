@@ -89,11 +89,22 @@ jobs:
             xcrun simctl list devices available -j |
               python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for k,v in d.items() if "iOS" in k for x in v if x["name"].startswith(sys.argv[1])))' "$1"
           }
+          # Booted, and done booting, before the test launches the app: a
+          # simulator xcodebuild boots itself can still be starting up when
+          # the first launch times out. One at a time, as the runner is small.
+          boot() {
+            xcrun simctl shutdown all
+            xcrun simctl bootstatus "$1" -b
+          }
           # Every run, even after one fails, so each keeps its screenshots.
           status=0
           screenshots() {
             name="$1"
             shift
+            case "$1 $2" in
+              "-destination id="*) boot "${2#id=}" ;;
+              *) xcrun simctl shutdown all ;;
+            esac
             xcodebuild test -project ZBugs.xcodeproj -scheme ZBugsApp \
               -resultBundlePath "$RUNNER_TEMP/results/$name.xcresult" \
               -skipPackagePluginValidation "$@" || status=1
@@ -167,7 +178,11 @@ jobs:
           if [ "$PLATFORM" = macOS ]; then
             set -- -destination platform=macOS CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=-
           else
-            set -- -destination "id=$(simulator "$PLATFORM")" CODE_SIGNING_ALLOWED=NO
+            device="$(simulator "$PLATFORM")"
+            # Booted, and done booting, before the first test launches the
+            # app, which otherwise can time out on a simulator still starting.
+            xcrun simctl bootstatus "$device" -b
+            set -- -destination "id=$device" CODE_SIGNING_ALLOWED=NO
           fi
           xcodebuild test -project TestHost.xcodeproj -scheme TestHost \
             -only-testing:"TestHostUITests/$SUITE" \
