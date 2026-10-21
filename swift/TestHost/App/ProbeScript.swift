@@ -47,10 +47,24 @@ enum ProbeScript {
     probe.finish()
   }
 
-  static func issues() async {
+  static func issues(growHeader: () -> Void) async {
     probe.setPhase("open")
     await until(10) { probe.visible.contains("i0000") }
     await sleep(1)
+
+    // The header changes height: on screen, at the top, the rows go down
+    // and up with it; above the screen, nothing on screen moves.
+    probe.setPhase("header")
+    for _ in 0..<5 {
+      growHeader()
+      await sleep(0.6)
+    }
+    await probe.drive(velocity: 1500)
+    await sleep(0.6)
+    for _ in 0..<5 {
+      growHeader()
+      await sleep(0.6)
+    }
 
     probe.setPhase("down")
     for _ in 0..<60 where deepest() < 400 {
@@ -58,12 +72,29 @@ enum ProbeScript {
       await sleep(0.5)
     }
     probe.setPhase("up")
-    for _ in 0..<80 where !atTop("i0000") {
+    for _ in 0..<80 where !atStart() {
       await probe.drive(velocity: -2000)
       await sleep(0.5)
     }
     await sleep(1)
+
+    #if os(macOS)
+      // The selection moves down by the arrow key past the screen's
+      // bottom, the list scrolling a row at a time, then back up.
+      probe.setPhase("keys")
+      for down in Array(repeating: true, count: 30) + Array(repeating: false, count: 12) {
+        probe.beginJump()
+        probe.pressArrow(down: down)
+        await sleep(0.15)
+      }
+      await sleep(1)
+    #endif
     probe.finish()
+  }
+
+  /// The list's start is at its top: the header, or the first row.
+  static func atStart() -> Bool {
+    atTop("header") || atTop("i0000")
   }
 
   static func atTop(_ id: String) -> Bool {

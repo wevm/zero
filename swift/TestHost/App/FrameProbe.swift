@@ -22,8 +22,10 @@ import SwiftUI
 /// - Flung by a finger (iOS), the momentum is smooth: two frames whose
 ///   speed departs from their neighboring pairs' are a jump in it.
 /// - At rest, nothing moves.
-/// - A jump (Latest) shows the rows as they were, then as they end up, and
-///   nothing in between.
+/// - A jump (Latest, or a key moving the selection) shows the rows as they
+///   were, then as they end up, and nothing in between.
+/// - The header changing height on screen pushes the rows by as much, its
+///   top holding still; off screen, nothing moves.
 ///
 /// Every frame also checks that the rows move together. The summary is the
 /// `probe` element's value, for the UI tests.
@@ -135,6 +137,27 @@ final class FrameProbe {
     log("JUMP begin top=\(previous?.ids.first ?? "-")")
   }
 
+  #if os(macOS)
+    /// Presses the down arrow (or the up arrow) in the list, as the user
+    /// would: the list takes focus first.
+    func pressArrow(down: Bool) {
+      guard let scrollView, let window = scrollView.window,
+        let event = NSEvent.keyEvent(
+          with: .keyDown, location: .zero, modifierFlags: [.numericPad, .function],
+          timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+          context: nil,
+          characters: String(UnicodeScalar(down ? NSDownArrowFunctionKey : NSUpArrowFunctionKey)!),
+          charactersIgnoringModifiers: String(
+            UnicodeScalar(down ? NSDownArrowFunctionKey : NSUpArrowFunctionKey)!),
+          isARepeat: false, keyCode: down ? 125 : 126)
+      else { return }
+      if window.firstResponder !== scrollView.documentView {
+        window.makeFirstResponder(scrollView.documentView)
+      }
+      window.sendEvent(event)
+    }
+  #endif
+
   /// Scrolls as a fling would: `velocity` points per second toward the
   /// content's end (negative: toward its start), decaying as UIKit's does.
   func drive(velocity: Double) async {
@@ -231,9 +254,12 @@ final class FrameProbe {
       if (jumpMoved && jumpStill >= 0.5) || jumpTime >= 5 { finishJump() }
       return
     }
-    let common = a.rows.keys.filter { b.rows[$0] != nil }
+    // Rows, not the header or the footer, which the checks below place.
+    let common = a.rows.keys.filter { b.rows[$0] != nil && !Self.accessories.contains($0) }
     guard !common.isEmpty else {
-      if !a.rows.isEmpty && !b.rows.isEmpty { flag(b, "no row in both frames", a) }
+      if a.rows.keys.contains(where: Self.isRow) && b.rows.keys.contains(where: Self.isRow) {
+        flag(b, "no row in both frames", a)
+      }
       return
     }
     let deltas = common.map { (id: $0, dy: b.rows[$0]!.minY - a.rows[$0]!.minY) }
@@ -249,17 +275,32 @@ final class FrameProbe {
       }
     } else if real {
       smoothCheck(dy: dy, a: a, b: b)
-    } else if abs(dy) > 0.5 {
+    } else if abs(dy) > 0.5, !pushedByHeader(a, b, dy) {
       flag(b, "\(anchor) moved \(fmt(dy)) at rest", a)
     }
     trackFling(a, b, dy)
     // At rest, the list's first row is at its top or above: space below
     // it is a gap the list shows, not a bounce (which only moves).
+    // Below the header, when it's on screen.
     if !real, driven == nil, drive == nil, let first = Self.firstID,
-      let y = b.rows[first]?.minY, y > 0.5
+      let y = b.rows[first]?.minY, y - (b.rows["header"]?.maxY ?? 0) > 0.5
     {
-      flag(b, "gap of \(fmt(y)) above \(first) at rest (offset \(fmt(b.offset)))")
+      let gap = y - (b.rows["header"]?.maxY ?? 0)
+      flag(b, "gap of \(fmt(gap)) above \(first) at rest (offset \(fmt(b.offset)))")
     }
+  }
+
+  /// The header and the footer: placed with the rows, but not rows.
+  private static let accessories: Set<String> = ["header", "footer"]
+  private static func isRow(_ id: String) -> Bool { !accessories.contains(id) }
+
+  /// At rest, the rows moved because the header, on screen, changed
+  /// height: its top held still, and the rows moved with its bottom.
+  private func pushedByHeader(_ a: Sample, _ b: Sample, _ dy: Double) -> Bool {
+    guard let ha = a.rows["header"], let hb = b.rows["header"],
+      abs((hb.maxY - hb.minY) - (ha.maxY - ha.minY)) > 0.5
+    else { return false }
+    return abs(hb.minY - ha.minY) <= 0.5 && abs(dy - (hb.maxY - ha.maxY)) <= 0.75
   }
 
   /// The list's first row: where its top is the list's.

@@ -73,7 +73,11 @@ class FrameProbeUITests: XCTestCase {
   }
 
   func testIssuesShowNoWrongFrame() {
-    runScript("issues", phases: ["open", "down", "up"])
+    #if os(macOS)
+      runScript("issues", phases: ["open", "header", "down", "up", "keys"])
+    #else
+      runScript("issues", phases: ["open", "header", "down", "up"])
+    #endif
   }
 
   #if os(iOS)
@@ -101,12 +105,14 @@ class FrameProbeUITests: XCTestCase {
     func testChatFlingsUpRunTheirLength() { flingThrough("chat", Array(repeating: true, count: 8)) }
 
     /// Flung back to the top from a few distances at a few speeds: at rest
-    /// the first issue is at the top, with no gap above it.
+    /// the header is at the top, the first issue right below it, with no
+    /// gap above it.
     func testIssuesFlingsToTheTopLeaveNoGap() {
       launch("issues", script: false)
       let list = app.scrollViews.firstMatch
       XCTAssertTrue(list.waitForExistence(timeout: 10))
-      let first = app.descendants(matching: .any)["row-i0000"].firstMatch
+      // The list's start: the header at the top.
+      let first = app.descendants(matching: .any)["header"].firstMatch
       RunLoop.current.run(until: Date().addingTimeInterval(2))
       for (away, speed) in [
         (2, 6000.0), (4, 800.0), (6, 3000.0), (10, 1500.0), (3, 3000.0), (8, 6000.0),

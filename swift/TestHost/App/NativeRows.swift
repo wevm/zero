@@ -29,6 +29,8 @@ final class NativeRowView: PlatformView {
   #endif
   private var marker: Marker?
   private var padding: [NSLayoutConstraint] = []
+  /// The first line's text.
+  private(set) var text = ""
 
   init() {
     #if os(iOS)
@@ -71,8 +73,12 @@ final class NativeRowView: PlatformView {
   required init?(coder: NSCoder) { fatalError() }
 
   /// Shows a row: its id, its two lines (the second hidden when empty) and
-  /// its vertical padding.
-  func show(id: String, first a: String, second b: String, captionFirst: Bool, padding: Double) {
+  /// its vertical padding. Its element's identifier is `row-<id>`, or
+  /// `element`.
+  func show(
+    id: String, first a: String, second b: String, captionFirst: Bool, padding: Double,
+    element: String? = nil
+  ) {
     #if os(iOS)
       first.text = a
       second.text = b
@@ -80,7 +86,7 @@ final class NativeRowView: PlatformView {
       second.font = .preferredFont(forTextStyle: captionFirst ? .body : .caption1)
       first.textColor = captionFirst ? .secondaryLabel : .label
       second.textColor = captionFirst ? .label : .secondaryLabel
-      accessibilityIdentifier = "row-\(id)"
+      accessibilityIdentifier = element ?? "row-\(id)"
       accessibilityLabel = captionFirst ? b : a
     #else
       first.stringValue = a
@@ -89,9 +95,10 @@ final class NativeRowView: PlatformView {
       second.font = .preferredFont(forTextStyle: captionFirst ? .body : .caption1)
       first.textColor = captionFirst ? .secondaryLabelColor : .labelColor
       second.textColor = captionFirst ? .labelColor : .secondaryLabelColor
-      setAccessibilityIdentifier("row-\(id)")
+      setAccessibilityIdentifier(element ?? "row-\(id)")
       setAccessibilityLabel(captionFirst ? b : a)
     #endif
+    text = a
     second.isHidden = b.isEmpty
     for c in self.padding { c.constant = padding }
     if FrameProbe.enabled {
@@ -113,17 +120,32 @@ final class NativeRowView: PlatformView {
 
 }
 
-/// A `VirtualListView` in a SwiftUI screen, its rows `NativeRowView`s. Its
-/// scroll view is the `list` element the UI tests read.
+/// A `VirtualListView` in a SwiftUI screen, its rows `NativeRowView`s,
+/// with a header and a footer of text, and a selection, when they're
+/// given. Its scroll view is the `list` element the UI tests read.
 @MainActor
 struct NativeVirtualList<
   C: Sendable, R: ZeroRow, K: Hashable, S: Equatable & Sendable, L: Equatable & Sendable
 > {
   let list: ZeroVirtualizer<C, R, K, S, L>
+  var selection: Binding<K?>?
+  var header: String?
+  var footer: String?
   let show: (VirtualItem<R, K>, NativeRowView) -> Void
 
+  init(
+    list: ZeroVirtualizer<C, R, K, S, L>, selection: Binding<K?>? = nil, header: String? = nil,
+    footer: String? = nil, show: @escaping (VirtualItem<R, K>, NativeRowView) -> Void
+  ) {
+    self.list = list
+    self.selection = selection
+    self.header = header
+    self.footer = footer
+    self.show = show
+  }
+
   func make() -> VirtualListView<C, R, K, S, L> {
-    let view = VirtualListView(list) { [show] item, reusing in
+    let view = VirtualListView(list) { [show] item, _, reusing in
       let row = reusing as? NativeRowView ?? NativeRowView()
       show(item, row)
       return row
@@ -133,18 +155,37 @@ struct NativeVirtualList<
     #else
       view.scrollView.setAccessibilityIdentifier("list")
     #endif
+    if header != nil { view.headerView = NativeRowView() }
+    if footer != nil { view.footerView = NativeRowView() }
+    update(view)
     return view
+  }
+
+  func update(_ view: VirtualListView<C, R, K, S, L>) {
+    var changed = false
+    for (text, id, accessory) in [
+      (header, "header", view.headerView), (footer, "footer", view.footerView),
+    ] {
+      guard let text, let row = accessory as? NativeRowView, row.text != text else { continue }
+      row.show(id: id, first: text, second: "", captionFirst: false, padding: 12, element: id)
+      changed = true
+    }
+    if changed { view.headerOrFooterHeightDidChange() }
+    if let selection {
+      view.selection = selection.wrappedValue
+      view.onSelect = { selection.wrappedValue = $0 }
+    }
   }
 }
 
 #if os(iOS)
   extension NativeVirtualList: UIViewRepresentable {
     func makeUIView(context: Context) -> VirtualListView<C, R, K, S, L> { make() }
-    func updateUIView(_ view: VirtualListView<C, R, K, S, L>, context: Context) {}
+    func updateUIView(_ view: VirtualListView<C, R, K, S, L>, context: Context) { update(view) }
   }
 #else
   extension NativeVirtualList: NSViewRepresentable {
     func makeNSView(context: Context) -> VirtualListView<C, R, K, S, L> { make() }
-    func updateNSView(_ view: VirtualListView<C, R, K, S, L>, context: Context) {}
+    func updateNSView(_ view: VirtualListView<C, R, K, S, L>, context: Context) { update(view) }
   }
 #endif

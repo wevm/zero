@@ -86,9 +86,13 @@ struct MessageRow: View {
   }
 }
 
-/// A long list to page through, both ways.
+/// A long list to page through, both ways, with a header that grows and a
+/// footer, and rows to select.
 struct IssuesScreen: View {
   @State private var list: IssueList
+  @State private var selection: String?
+  /// The header's lines of text.
+  @State private var headerLines = 2
 
   init(backend: Backend) {
     _list = State(initialValue: backend.issueList())
@@ -99,17 +103,31 @@ struct IssuesScreen: View {
       Divider()
       issues
       Divider()
+      HStack {
+        Button("Grow header") { growHeader() }.accessibilityIdentifier("grow-header")
+        Button("End") { list.scrollToItem(Backend.issueID(1999), align: .end) }
+          .accessibilityIdentifier("end")
+        Text(selection ?? "none").accessibilityIdentifier("selection")
+      }
+      .padding(8)
     }
     .overlay(alignment: .topTrailing) { ProbeSummary() }
     .task {
       guard FrameProbe.script == "issues" else { return }
-      await ProbeScript.issues()
+      await ProbeScript.issues(growHeader: growHeader)
     }
+  }
+
+  /// Taller by two lines, up to 8, then back to 1.
+  private func growHeader() {
+    headerLines = headerLines >= 8 ? 1 : headerLines + 2
   }
 
   @ViewBuilder private var issues: some View {
     if Native.enabled {
-      NativeVirtualList(list: list) { item, row in
+      NativeVirtualList(
+        list: list, selection: $selection, header: Self.header(headerLines), footer: Self.footer
+      ) { item, row in
         let i = item.row
         row.show(
           id: i.id, first: i.title, second: i.description, captionFirst: false, padding: 8)
@@ -119,8 +137,15 @@ struct IssuesScreen: View {
     }
   }
 
+  /// The header's text: `lines` lines.
+  static func header(_ lines: Int) -> String {
+    (1...lines).map { "Header line \($0)" }.joined(separator: "\n")
+  }
+
+  static let footer = "The end of the issues"
+
   private var swiftUIIssues: some View {
-    VirtualList(list) { item in
+    VirtualList(list, selection: $selection) { item, _ in
       VStack(alignment: .leading, spacing: 2) {
         Text(item.row.title)
         if !item.row.description.isEmpty {
@@ -135,7 +160,31 @@ struct IssuesScreen: View {
       .accessibilityLabel(item.row.title)
       .accessibilityIdentifier("row-\(item.row.id)")
       .background(ProbeMarker(id: item.row.id))
+    } header: {
+      Accessory(text: Self.header(headerLines), id: "header")
+    } footer: {
+      Accessory(text: Self.footer, id: "footer")
     }
     .accessibilityIdentifier("list")
+  }
+}
+
+/// The header or the footer: its text, as one element, with a probe
+/// marker.
+struct Accessory: View {
+  let text: String
+  let id: String
+
+  var body: some View {
+    Text(text)
+      .font(.headline)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(12)
+      .background(.quaternary)
+      .contentShape(.accessibility, Rectangle())
+      .accessibilityElement(children: .ignore)
+      .accessibilityLabel(text)
+      .accessibilityIdentifier(id)
+      .background(ProbeMarker(id: id))
   }
 }

@@ -148,11 +148,18 @@ class VirtualListUITests: XCTestCase {
 
   // MARK: A long list
 
+  /// The list's start at its top: the header, and the first issue right
+  /// below it.
+  func issuesAtStart() -> Bool {
+    let header = app.descendants(matching: .any)["header"].firstMatch
+    return header.exists && row("i0000").exists
+      && abs(header.frame.minY - list.frame.minY) <= 1.5
+      && abs(row("i0000").frame.minY - header.frame.maxY) <= 1.5
+  }
+
   func testIssuesPageDownAndBackUp() {
     launch("issues")
-    waitUntil("the first issue is at the top") {
-      row("i0000").exists && abs(row("i0000").frame.minY - list.frame.minY) <= 1.5
-    }
+    waitUntil("the header and the first issue are at the top") { issuesAtStart() }
     // A swipe moves about 14 issue rows; stop at row 400, not a count.
     var deepest = 0
     for _ in 0..<60 where deepest < 400 {
@@ -167,9 +174,77 @@ class VirtualListUITests: XCTestCase {
     for _ in 0..<60 where !top {
       scrollTowardTop()
       rest(1)
-      top = row("i0000").exists && abs(row("i0000").frame.minY - list.frame.minY) <= 1.5
+      top = issuesAtStart()
     }
     XCTAssertTrue(top, "never got back to the first issue")
+  }
+
+  /// The header scrolls with the rows: on screen it pushes them as it
+  /// grows; above the screen, they hold still. The footer follows the last
+  /// row.
+  func testIssuesHeaderAndFooterScrollWithTheRows() {
+    launch("issues")
+    waitUntil("the header and the first issue are at the top") { issuesAtStart() }
+    let header = app.descendants(matching: .any)["header"].firstMatch
+    let height = header.frame.height
+    app.buttons["grow-header"].tap()
+    waitUntil("the header is taller, the first issue below it") {
+      header.frame.height > height + 10 && issuesAtStart()
+    }
+
+    for _ in 0..<3 {
+      scrollTowardBottom()
+      rest(1)
+    }
+    guard let top = visibleRows().first else { return XCTFail("no rows on screen") }
+    XCTAssertFalse(header.isHittable, "the header is still on screen")
+    app.buttons["grow-header"].tap()
+    rest()
+    XCTAssertEqual(row(top.id).frame.minY, top.frame.minY, accuracy: 1, "\(top.id) moved")
+
+    app.buttons["end"].tap()
+    waitUntil("the last issue is at the bottom") { atBottom("i1999") }
+    scrollTowardBottom()
+    rest()
+    let footer = app.descendants(matching: .any)["footer"].firstMatch
+    XCTAssertTrue(footer.exists)
+    XCTAssertEqual(footer.frame.minY, row("i1999").frame.maxY, accuracy: 1.5)
+    XCTAssertEqual(footer.frame.maxY, list.frame.maxY, accuracy: 1.5)
+  }
+
+  /// A tap selects an issue; on macOS, the arrow keys and j and k move the
+  /// selection, scrolling it into view.
+  func testIssuesSelectByTapAndByKeys() {
+    launch("issues")
+    waitUntil("the header and the first issue are at the top") { issuesAtStart() }
+    let selection = app.staticTexts["selection"]
+    // A text's string is its label on iOS, its value on macOS.
+    func selected() -> String {
+      selection.label.isEmpty ? selection.value as? String ?? "" : selection.label
+    }
+    #if os(macOS)
+      row("i0002").click()
+    #else
+      row("i0002").tap()
+    #endif
+    waitUntil("i0002 is selected") { selected() == "i0002" }
+    XCTAssertTrue(row("i0002").isSelected)
+    #if os(macOS)
+      for _ in 0..<3 { app.typeKey(.downArrow, modifierFlags: []) }
+      waitUntil("i0005 is selected") { selected() == "i0005" }
+      app.typeKey("j", modifierFlags: [])
+      waitUntil("i0006 is selected") { selected() == "i0006" }
+      app.typeKey("k", modifierFlags: [])
+      waitUntil("i0005 is selected again") { selected() == "i0005" }
+      // Past the screen's bottom: the list follows the selection.
+      for _ in 0..<25 { app.typeKey(.downArrow, modifierFlags: []) }
+      waitUntil("i0030 is selected") { selected() == "i0030" }
+      rest(0.5)
+      XCTAssertTrue(row("i0030").isSelected)
+      XCTAssertLessThanOrEqual(row("i0030").frame.maxY, list.frame.maxY + 1)
+      XCTAssertGreaterThanOrEqual(row("i0030").frame.minY, list.frame.minY - 1)
+      XCTAssertFalse(row("i0002").exists && row("i0002").isSelected)
+    #endif
   }
 }
 
