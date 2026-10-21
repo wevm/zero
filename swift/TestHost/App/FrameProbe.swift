@@ -75,6 +75,8 @@ final class FrameProbe {
     var t: Double
     /// Rows on screen: top and bottom from the viewport's top.
     var rows: [String: (minY: Double, maxY: Double)]
+    /// Every laid-out row's top in content coordinates, on screen or not.
+    var content: [String: Double] = [:]
     var tracking = false
     var decelerating = false
     var atEdge = false
@@ -201,22 +203,25 @@ final class FrameProbe {
     #if os(iOS)
       let port = scrollView.convert(scrollView.bounds, to: nil)
         .inset(by: scrollView.adjustedContentInset)
+      let y = scrollView.contentOffset.y + scrollView.adjustedContentInset.top
+      s.offset = Double(y)
       for (id, m) in markers {
         guard let v = m.view, v.window != nil, v.bounds.height > 0, !Self.hidden(v) else {
           continue
         }
         let r = v.convert(v.bounds, to: nil)
+        s.content[id] = Double(r.minY - port.minY) + s.offset
         guard r.maxY > port.minY + 0.5, r.minY < port.maxY - 0.5 else { continue }
         s.rows[id] = (Double(r.minY - port.minY), Double(r.maxY - port.minY))
       }
       s.tracking = scrollView.isTracking
       s.decelerating = scrollView.isDecelerating
-      let y = scrollView.contentOffset.y + scrollView.adjustedContentInset.top
-      s.offset = Double(y)
       s.atEdge = y <= 0.5 || y >= scrollView.contentSize.height - viewportHeight - 0.5
     #else
       let clip = scrollView.contentView
       let port = clip.convert(clip.bounds, to: nil)
+      let y = clip.bounds.origin.y
+      s.offset = Double(y)
       for (id, m) in markers {
         guard let v = m.view, v.window != nil, v.bounds.height > 0, !Self.hidden(v) else {
           continue
@@ -225,11 +230,10 @@ final class FrameProbe {
         // Window coordinates count up from the bottom.
         let minY = port.maxY - r.maxY
         let maxY = port.maxY - r.minY
+        s.content[id] = Double(minY) + s.offset
         guard maxY > 0.5, minY < port.height - 0.5 else { continue }
         s.rows[id] = (Double(minY), Double(maxY))
       }
-      let y = clip.bounds.origin.y
-      s.offset = Double(y)
       let height = scrollView.documentView?.frame.height ?? 0
       s.atEdge = y <= 0.5 || y >= height - clip.bounds.height - 0.5
     #endif
@@ -258,7 +262,7 @@ final class FrameProbe {
     let common = a.rows.keys.filter { b.rows[$0] != nil && !Self.accessories.contains($0) }
     guard !common.isEmpty else {
       if a.rows.keys.contains(where: Self.isRow) && b.rows.keys.contains(where: Self.isRow) {
-        flag(b, "no row in both frames", a)
+        noCommonRow(a, b)
       }
       return
     }
@@ -288,6 +292,29 @@ final class FrameProbe {
       let gap = y - (b.rows["header"]?.maxY ?? 0)
       flag(b, "gap of \(fmt(gap)) above \(first) at rest (offset \(fmt(b.offset)))")
     }
+  }
+
+  /// No row on screen in both frames: a jump, unless the offset moved by
+  /// about as much as the rows did, as when a stalled frame (a slow
+  /// simulator's) lets a fling run on, or the scroll view catches up on the
+  /// next frame. Rows laid out in both frames, on screen or not, show it: a
+  /// scroll leaves their content positions where they were, or moves them
+  /// by what the list compensated in the same pass, as when the stalled
+  /// frame brought a page whose rows came out taller than estimated (113 pt
+  /// for 23 rows, against a 1,188 pt scroll). A jump moves them while the
+  /// offset stays. So up to a quarter of the offset's change, or 50 pt, is a
+  /// scroll.
+  private func noCommonRow(_ a: Sample, _ b: Sample) {
+    let laid = a.content.keys.filter { b.content[$0] != nil && Self.isRow($0) }
+    let drift = laid.map { abs(b.content[$0]! - a.content[$0]!) }.min()
+    let detail =
+      "dt \(fmt((b.t - a.t) * 1000)) ms, latency \(fmt(a.latency * 1000))→\(fmt(b.latency * 1000)) ms, offset \(fmt(a.offset))→\(fmt(b.offset))"
+    if let drift, drift <= max(50, abs(b.offset - a.offset) / 4) {
+      log("SCROLLED no row in both frames, rows laid out in both moved \(fmt(drift)) (\(detail))")
+      return
+    }
+    let moved = drift.map { "rows laid out in both moved \(fmt($0))" } ?? "no row laid out in both"
+    flag(b, "no row in both frames, \(moved) (\(detail))", a)
   }
 
   /// The header and the footer: placed with the rows, but not rows.
