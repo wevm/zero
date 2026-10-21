@@ -119,6 +119,9 @@ fastify.get<{
 
   // The Swift app (apps/zbugs-swift) logs in through a web authentication
   // session, which can't read the cookie, so its callback carries the token.
+  // That's safe because the session hands the callback only to the app that
+  // started it, even if another app registers zbugs-swift://. The app doesn't
+  // register the scheme with the system, so the link isn't opened any other way.
   if (request.query.redirect === nativeAppRedirect) {
     reply.redirect(`${nativeAppRedirect}?jwt=${encodeURIComponent(jwt)}`);
     return;
