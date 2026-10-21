@@ -99,7 +99,11 @@
       // A new client, as the user logs in: the list starts over, at the
       // selected issue.
       .onChange(of: ObjectIdentifier(model.zero), initial: true) { makeIssues() }
-      .onChange(of: filter) { _, filter in issues?.listContext = filter.listContext }
+      // Another list: from its top, not the issue it opened at.
+      .onChange(of: filter) { _, filter in
+        issues?.permalinkID = nil
+        issues?.listContext = filter.listContext
+      }
       // A new issue is selected outside a List, which a collapsed split
       // view doesn't follow on its own.
       .onChange(of: selection) { _, selection in

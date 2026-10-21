@@ -22,23 +22,25 @@
         subtitle.font = .preferredFont(forTextStyle: .caption1)
         subtitle.textColor = .secondaryLabel
         icon.preferredSymbolConfiguration = .init(textStyle: .headline)
-        icon.setContentHuggingPriority(.required, for: .horizontal)
+        icon.contentMode = .scaleAspectFit
         separator.backgroundColor = .separator
-        let heading = UIStackView(arrangedSubviews: [icon, title])
-        heading.spacing = 6
-        heading.alignment = .firstBaseline
-        let stack = UIStackView(arrangedSubviews: [heading, subtitle])
-        stack.axis = .vertical
-        stack.spacing = 4
-        for view in [stack, separator] {
+        for view in [icon, title, subtitle, separator] {
           view.translatesAutoresizingMaskIntoConstraints = false
           addSubview(view)
         }
+        // The icon beside the title's first line, the title wrapping beside
+        // it, and the subtitle below them.
         NSLayoutConstraint.activate([
-          stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-          trailingAnchor.constraint(equalTo: stack.trailingAnchor, constant: 16),
-          stack.topAnchor.constraint(equalTo: topAnchor, constant: 10),
-          bottomAnchor.constraint(equalTo: stack.bottomAnchor, constant: 10),
+          icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+          icon.widthAnchor.constraint(equalToConstant: 22),
+          icon.centerYAnchor.constraint(equalTo: title.firstBaselineAnchor, constant: -6),
+          title.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 6),
+          trailingAnchor.constraint(equalTo: title.trailingAnchor, constant: 16),
+          title.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+          subtitle.leadingAnchor.constraint(equalTo: icon.leadingAnchor),
+          trailingAnchor.constraint(equalTo: subtitle.trailingAnchor, constant: 16),
+          subtitle.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 4),
+          bottomAnchor.constraint(equalTo: subtitle.bottomAnchor, constant: 10),
           // A plain list's separator.
           separator.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
           separator.trailingAnchor.constraint(equalTo: trailingAnchor),
