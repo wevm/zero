@@ -134,15 +134,14 @@ import ZeroTesting
 
     let other = Box(try SQLiteDatabase(path: databasePath()))
     try other.value.execute("BEGIN IMMEDIATE")
-    let released = DispatchSemaphore(value: 0)
-    DispatchQueue.global().asyncAfter(deadline: .now() + 5.5) {
+    let release = Task.detached {
+      try? await Task.sleep(for: .seconds(5.5))
       try? other.value.execute("COMMIT")
       other.value.close()
-      released.signal()
     }
     first.mutate(Self.create("i1"))
     first.engine.database.flush()
-    released.wait()
+    await release.value
     try await settle()
     first.mutate(Self.create("i2"))
     first.engine.database.flush()
