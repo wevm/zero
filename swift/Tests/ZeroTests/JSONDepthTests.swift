@@ -52,8 +52,10 @@ struct JSONDepthTests {
         JSONParser.Error(message: "JSON nested too deeply", offset: depth),
         JSONParser.Error(message: "JSON nested too deeply", offset: depth * 5),
       ])
-    // Freeing still recurses, in `Array`'s and `JSONObject`'s deinit, so the
-    // values are freed on a larger stack.
+    // Freeing still recurses, in `Array`'s and `JSONObject`'s deinit. That
+    // fits in 512 KB in a release build, but not for the object in a debug
+    // build (about 1,000 levels fit), so the values are freed on a larger
+    // stack.
     try await onThread(stackSize: 8 << 20) { deep.values = [] }
   }
 

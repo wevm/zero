@@ -9,8 +9,14 @@ package struct JSONParser {
     package var description: String { "\(message) at offset \(offset)" }
   }
 
-  /// Nesting deeper than this is rejected instead of overflowing the stack.
-  package static let maxDepth = 5_000
+  /// Nesting deeper than this is rejected with "JSON nested too deeply".
+  ///
+  /// Parsing, writing, comparing, and hashing don't recurse, but freeing a
+  /// value does (in `Array`'s and `JSONObject`'s storage), so the limit
+  /// keeps freeing within a 512 KB stack (a macOS test or cooperative
+  /// thread) in a release build. JS has no limit short of its own stack
+  /// (zero-cache writes about 4,100 levels); see JSParity.md.
+  package static let maxDepth = 1_500
 
   package static func parse(_ text: String) throws(Error) -> JSONValue {
     var text = text

@@ -69,16 +69,19 @@ struct SweepWireTests {
     #expect(JSONValue.object(["\u{e9}": 1]) != JSONValue.object(["e\u{301}": 1]))
   }
 
-  /// A row value nested 4,000 deep, which `JSON.stringify` on zero-cache
-  /// writes (Node's default stack takes about 4,100 levels) and the parser
-  /// accepts (its limit is 5,000). Parsing, encoding, hashing, and comparing
-  /// it must not overflow the stack of the thread it is on: here one with
-  /// 512 KB, the size of a test or cooperative thread on macOS.
+  /// A row value nested as deep as the parser accepts: the poke takes 5
+  /// levels, the value the rest of `JSONParser.maxDepth`. Parsing, encoding,
+  /// hashing, and comparing it must not overflow the stack of the thread it
+  /// is on: here one with 512 KB, the size of a test or cooperative thread
+  /// on macOS. One level more is rejected. (zero-cache writes about 4,100
+  /// levels; see JSParity.md.)
   @Test func deepRowValue() async throws {
-    let depth = 4_000
-    let text =
+    func poke(_ depth: Int) -> String {
       #"["pokePart",{"pokeID":"p","rowsPatch":[{"op":"put","tableName":"t","value":{"id":"x","j":"#
-      + String(repeating: "[", count: depth) + String(repeating: "]", count: depth) + "}}]}]"
+        + String(repeating: "[", count: depth) + String(repeating: "]", count: depth) + "}}]}]"
+    }
+    let text = poke(JSONParser.maxDepth - 5)
+    #expect(throws: (any Error).self) { try Downstream(text: poke(JSONParser.maxDepth - 4)) }
     let messages = try await onThread(stackSize: 512 << 10) {
       let message = try Downstream(text: text)
       let encoded = JSONSerializer.stringify(message.json)
@@ -90,10 +93,8 @@ struct SweepWireTests {
     }
     #expect(messages.encodedLength == text.utf8.count)
     #expect(messages.all[0] == messages.all[1])
-    // Freeing a value this deep still recurses, in `Array`'s deinit, so the
-    // messages are freed on an 8 MB stack, the size of the macOS main
-    // thread's.
-    try await onThread(stackSize: 8 << 20) { messages.all = [] }
+    // Freeing still recurses, in `Array`'s deinit, and fits as well.
+    try await onThread(stackSize: 512 << 10) { messages.all = [] }
   }
 
   final class Messages: @unchecked Sendable {
