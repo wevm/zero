@@ -88,6 +88,11 @@ three-argument form compares as JS compares `undefined`, so
 | `tx.location`, `tx.reason`, `tx.clientID`, `tx.mutationID`                         | the same                                                                                             |
 | `throw new ApplicationError(message, {details})`                                   | `throw ApplicationError(message, details:)`                                                          |
 
+Calling a mutator that isn't registered with the `Zero` throws in JS. In
+Swift `mutate` returns a ``MutatorResult`` whose `client` and `server` are
+both `.zeroError` with the same message, and logs it as an error. Nothing
+is written or sent.
+
 ## React and SolidJS
 
 `ZeroUI` covers the same ground for SwiftUI, UIKit, and AppKit.

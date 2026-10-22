@@ -196,6 +196,10 @@ public final class Zero<Context: Sendable> {
   }
 
   /// Runs a mutator on the client now and sends it to the server.
+  ///
+  /// A mutator not registered with this `Zero` doesn't run: both outcomes
+  /// are a `.zeroError` saying so, and it is logged as an error. JS throws
+  /// that error instead.
   @discardableResult
   public func mutate(_ request: MutateRequest<Context>) -> MutatorResult {
     engine.loop.call { engine.mutate(name: request.name, args: request.args) }
