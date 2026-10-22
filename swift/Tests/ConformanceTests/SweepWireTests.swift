@@ -36,25 +36,29 @@ struct SweepWireTests {
 
   /// `JSON.parse` acceptance, and `JSON.stringify` of what it parsed, keys
   /// in JS property order, for each input.
-  @Test func json() throws {
-    for c in try Vectors.cases("sweep-json") {
-      let input = c["input"]!.stringValue!
-      let ok = c["ok"]!.boolValue!
-      let value: JSONValue
-      do {
-        value = try JSONParser.parse(input)
-      } catch {
-        #expect(!ok, "rejected \(String(reflecting: input)): \(error)")
-        continue
+  /// On an 8 MB stack, as `deepRowValue`: a vector nests 1,000 deep.
+  @Test func json() async throws {
+    let cases = try Vectors.cases("sweep-json")
+    try await onLargeStack {
+      for c in cases {
+        let input = c["input"]!.stringValue!
+        let ok = c["ok"]!.boolValue!
+        let value: JSONValue
+        do {
+          value = try JSONParser.parse(input)
+        } catch {
+          #expect(!ok, "rejected \(String(reflecting: input)): \(error)")
+          continue
+        }
+        #expect(ok, "accepted \(String(reflecting: input))")
+        guard ok else { continue }
+        let expected = c["stringify"]!.stringValue!
+        let actual = JSONSerializer.stringify(value)
+        #expect(
+          Self.same(actual, expected),
+          "\(String(reflecting: input)): Swift \(actual.debugDescription), JS \(expected.debugDescription)"
+        )
       }
-      #expect(ok, "accepted \(String(reflecting: input))")
-      guard ok else { continue }
-      let expected = c["stringify"]!.stringValue!
-      let actual = JSONSerializer.stringify(value)
-      #expect(
-        Self.same(actual, expected),
-        "\(String(reflecting: input)): Swift \(actual.debugDescription), JS \(expected.debugDescription)"
-      )
     }
   }
 
