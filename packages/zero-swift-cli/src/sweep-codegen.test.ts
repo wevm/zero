@@ -44,9 +44,13 @@ ${targets}
     mkdirSync(join(dir, 'Sources', n), {recursive: true});
     writeFileSync(join(dir, 'Sources', n, 'Schema.swift'), '');
   }
-  spawnSync('swift', ['build', '--scratch-path', scratch, '--product', 'Zero'], {
-    cwd: dir,
-  });
+  spawnSync(
+    'swift',
+    ['build', '--scratch-path', scratch, '--product', 'Zero'],
+    {
+      cwd: dir,
+    },
+  );
 }, 600_000);
 
 for (const name of names) {

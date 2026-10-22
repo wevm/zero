@@ -5,6 +5,7 @@
  * that have no letters, and a recursive JSON type. Each export is one case
  * of `sweep-codegen.test.ts`; every one should generate Swift that compiles.
  */
+import {relationships} from '../../zero-schema/src/builder/relationship-builder.ts';
 import {createSchema} from '../../zero-schema/src/builder/schema-builder.ts';
 import {
   enumeration,
@@ -37,7 +38,7 @@ export const selfTable = createSchema({tables: [one('self')]});
 export const symbolColumns = createSchema({
   tables: [
     table('t')
-      .columns({id: string(), '_': string(), 'é': string(), 'ü': string()})
+      .columns({id: string(), _: string(), é: string(), ü: string()})
       .primaryKey('id'),
   ],
 });
@@ -46,7 +47,7 @@ export const symbolColumns = createSchema({
 export const clashingColumns = createSchema({
   tables: [
     table('t')
-      .columns({id: string(), 'a-b': string(), 'a_b': string()})
+      .columns({'id': string(), 'a-b': string(), 'a_b': string()})
       .primaryKey('id'),
   ],
 });
@@ -64,7 +65,12 @@ export const memberColumns = createSchema({
 export const keywordColumns = createSchema({
   tables: [
     table('t')
-      .columns({id: string(), Type: string(), Protocol: string(), self: string()})
+      .columns({
+        id: string(),
+        Type: string(),
+        Protocol: string(),
+        self: string(),
+      })
       .primaryKey('id'),
   ],
 });
@@ -91,17 +97,79 @@ export const controlCharacterEnum = createSchema({
   ],
 });
 
-type Fields = {zeroValue: number; 'a-b': number; a_b: number};
+type Fields = {'zeroValue': number; 'a-b': number; 'a_b': number};
 
 /** A JSON object type whose fields clash with each other and with
  * `zeroValue`. */
 export const clashingFields = createSchema({
-  tables: [table('t').columns({id: string(), o: json<Fields>()}).primaryKey('id')],
+  tables: [
+    table('t').columns({id: string(), o: json<Fields>()}).primaryKey('id'),
+  ],
 });
 
 type Tree = {name: string; children: Tree[]};
 
 /** A recursive JSON type. */
 export const recursiveJSON = createSchema({
-  tables: [table('t').columns({id: string(), tree: json<Tree>()}).primaryKey('id')],
+  tables: [
+    table('t').columns({id: string(), tree: json<Tree>()}).primaryKey('id'),
+  ],
+});
+
+type Local = {o: number; zeroValue: number};
+
+/** Names of the parameters and locals the generated code assigns from. */
+export const localNames = createSchema({
+  tables: [
+    table('t')
+      .columns({id: string(), entry: string(), o: json<Local>()})
+      .primaryKey('id'),
+  ],
+});
+
+const child = table('child')
+  .columns({
+    id: string(),
+    parentID: string(),
+    _parent: string(),
+    parent_id: string(),
+  })
+  .primaryKey('id');
+const parent = one('parent');
+
+/** A column named as the storage `@Indirect` declares for a relationship,
+ * and a relationship that is a column's identifier. */
+export const wrapperStorage = createSchema({
+  tables: [child, parent],
+  relationships: [
+    relationships(child, ({one}) => ({
+      'parent': one({
+        sourceField: ['parentID'],
+        destField: ['id'],
+        destSchema: parent,
+      }),
+      'parent-id': one({
+        sourceField: ['parentID'],
+        destField: ['id'],
+        destSchema: parent,
+      }),
+    })),
+  ],
+});
+
+/** Enumeration values that are members of every enumeration, or keywords. */
+export const memberEnum = createSchema({
+  tables: [
+    table('t')
+      .columns({
+        id: string(),
+        e: enumeration<'self' | 'Type' | 'rawValue' | 'allCases' | 'default'>(),
+      })
+      .primaryKey('id'),
+  ],
+});
+
+/** Table names that are one identifier in the query builder. */
+export const clashingQueries = createSchema({
+  tables: [one('a-b'), one('a_b'), one('init')],
 });
