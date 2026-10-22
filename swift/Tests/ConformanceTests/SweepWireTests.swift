@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import Zero
@@ -72,21 +73,33 @@ struct SweepWireTests {
   /// writes (Node's default stack takes about 4,100 levels) and the parser
   /// accepts (its limit is 5,000). Parsing, encoding, hashing, comparing,
   /// and freeing it must not overflow the stack of the thread it is on.
-  /// The client runs on the main actor, so a deep value is parsed on the
-  /// main thread's stack. Test threads' stacks are smaller (512 KB on
-  /// macOS) than the 8 MB the main thread has there.
-  @MainActor @Test func deepRowValue() throws {
-    let depth = 4_000
-    let text =
-      #"["pokePart",{"pokeID":"p","rowsPatch":[{"op":"put","tableName":"t","value":{"id":"x","j":"#
-      + String(repeating: "[", count: depth) + String(repeating: "]", count: depth) + "}}]}]"
-    let message = try Downstream(text: text)
-    let encoded = JSONSerializer.stringify(message.json)
-    #expect(encoded.utf8.count == text.utf8.count)
-    #expect(message == (try Downstream(text: encoded)))
-    var hasher = Hasher()
-    message.hash(into: &hasher)
-    _ = hasher.finalize()
+  /// It runs on a thread with an 8 MB stack, the size of the macOS main
+  /// thread's: test threads get 512 KB there, and the debug build's frames
+  /// are larger than release's.
+  @Test func deepRowValue() async throws {
+    try await onLargeStack {
+      let depth = 4_000
+      let text =
+        #"["pokePart",{"pokeID":"p","rowsPatch":[{"op":"put","tableName":"t","value":{"id":"x","j":"#
+        + String(repeating: "[", count: depth) + String(repeating: "]", count: depth) + "}}]}]"
+      let message = try Downstream(text: text)
+      let encoded = JSONSerializer.stringify(message.json)
+      #expect(encoded.utf8.count == text.utf8.count)
+      #expect(message == (try Downstream(text: encoded)))
+      var hasher = Hasher()
+      message.hash(into: &hasher)
+      _ = hasher.finalize()
+    }
+  }
+
+  private func onLargeStack(_ body: @escaping @Sendable () throws -> Void) async throws {
+    try await withCheckedThrowingContinuation { (done: CheckedContinuation<Void, any Error>) in
+      let thread = Thread {
+        done.resume(with: Result { try body() })
+      }
+      thread.stackSize = 8 << 20
+      thread.start()
+    }
   }
 
   // MARK: - Hashes
