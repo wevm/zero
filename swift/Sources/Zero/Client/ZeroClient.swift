@@ -153,6 +153,12 @@ public final class Zero<Context: Sendable> {
   /// preloads, it doesn't move to the new client: run it again. Don't run
   /// queries on a closed `Zero` (in JS a closed instance can no longer
   /// query): here a run waiting for `.complete` or `.cached` never returns.
+  ///
+  /// An unnamed query (a `Query` rather than a `QueryRequest`) only sees
+  /// local data, as in JS without `enableLegacyQueries`: the server never
+  /// confirms it, so waiting for `.complete` or `.cached` never returns
+  /// unless the task is cancelled. The client logs a warning the first time
+  /// for each such query. Use a named query (`defineQuery`) to sync it.
   public func run<R: ZeroRow, S: QueryResult>(
     _ request: QueryRequest<R, S, Context>, type: RunType = .unknown, ttl: TTL? = nil
   ) async throws -> S {
@@ -192,6 +198,12 @@ public final class Zero<Context: Sendable> {
   /// its `cached` and `complete` are the old client's: if still pending,
   /// they throw a `QueryError` saying Zero was closed, as they do on
   /// `close()`. On a closed `Zero` they never settle.
+  ///
+  /// Preloading an unnamed query (a `Query` rather than a `QueryRequest`)
+  /// does nothing, as in JS without `enableLegacyQueries`: it only sees
+  /// local data, and `cached` and `complete` never settle. The client logs a
+  /// warning the first time for each such query. Use a named query
+  /// (`defineQuery`) to sync it.
   public func preload<R: ZeroRow, S: QueryResult>(
     _ request: QueryRequest<R, S, Context>, ttl: TTL = .defaultPreloadTTL
   ) -> Preload {

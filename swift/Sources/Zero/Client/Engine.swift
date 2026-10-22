@@ -223,7 +223,7 @@ final class Engine {
         self?.queryManager.updateCustom(name: id.name, args: id.args, ttl: ttl)
       },
       batchViewUpdates: { $0() },
-      microtask: { loop.microtask($0) })
+      microtask: { loop.microtask($0) }, log: log)
     _ = connectionManager.subscribe { [weak self] state in self?.onConnectionStateChange(state) }
     onConnectionStateChange(connectionManager.state)
     queryManager = QueryManager(

@@ -85,6 +85,14 @@ Comparing with nil differs by form. The two-argument
 three-argument form compares as JS compares `undefined`, so
 `where(\.ownerID, .eq, nil)` matches no row.
 
+An unnamed query, a `Query` such as `zql.issue` rather than a
+``QueryRequest`` from `defineQuery`, only sees local data, as in JS without
+`enableLegacyQueries`. It is for `tx.run` in mutators and for local reads.
+The server never confirms it, so `run(query, type: .complete)` (or
+`.cached`) never returns unless its task is cancelled, and `preload` of it
+does nothing. The client logs a warning the first time it sees each such
+query.
+
 ## Mutators
 
 | JS                                                                                 | Swift                                                                                                |
