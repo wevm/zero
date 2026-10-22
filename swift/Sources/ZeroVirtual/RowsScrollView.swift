@@ -188,7 +188,7 @@
         for cell in cells.values { cell.height = nil }
         header?.height = nil
         footer?.height = nil
-        host.invalidate()
+        host.invalidateHeights()
       }
       let r = host.layout(offset: offset, viewport: viewport)
       if !shown, !r.frames.isEmpty, !host.isLanding() { shown = true }
