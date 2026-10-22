@@ -15,10 +15,26 @@ struct SweepWireTests {
     Array(a.utf16) == Array(b.utf16)
   }
 
+  /// `JSON.stringify` with object keys sorted by UTF-16 code unit, as the
+  /// generator's `sortedStringify` writes it.
+  static func sortedStringify(_ v: JSONValue) -> String {
+    switch v {
+    case .array(let a):
+      return "[" + a.map(sortedStringify).joined(separator: ",") + "]"
+    case .object(let o):
+      let keys = o.keys.sorted { Array($0.utf16).lexicographicallyPrecedes(Array($1.utf16)) }
+      return "{"
+        + keys.map { JSONSerializer.stringify(.string($0)) + ":" + sortedStringify(o[$0]!) }
+        .joined(separator: ",") + "}"
+    default:
+      return JSONSerializer.stringify(v)
+    }
+  }
+
   // MARK: - JSON
 
-  /// `JSON.parse` acceptance, and `JSON.stringify` of what it parsed with
-  /// keys sorted, for each input.
+  /// `JSON.parse` acceptance, and `JSON.stringify` of what it parsed, keys
+  /// in JS property order, for each input.
   @Test func json() throws {
     for c in try Vectors.cases("sweep-json") {
       let input = c["input"]!.stringValue!
@@ -43,9 +59,8 @@ struct SweepWireTests {
 
   /// JSON objects whose keys are canonically equivalent but different
   /// strings have one property per key in JS (`JSON.parse('{"\u00e9":1,
-  /// "e\u0301":2}')` has two). Swift keeps them in a `[String: JSONValue]`,
-  /// which hashes and compares keys by canonical equivalence and so merges
-  /// them.
+  /// "e\u0301":2}')` has two). A `[String: JSONValue]` would merge them:
+  /// it hashes and compares keys by canonical equivalence.
   @Test func canonicallyEquivalentKeysStayApart() throws {
     let value = try JSONParser.parse(#"{"\u00e9":1,"e\u0301":2}"#)
     #expect(value.objectValue?.count == 2, "\(value)")
@@ -168,14 +183,15 @@ struct SweepWireTests {
   // MARK: - Protocol
 
   /// Downstream messages with keys JS keeps apart: rows, primary keys,
-  /// merges, client IDs, and `__proto__`.
+  /// merges, client IDs, and `__proto__`. Compared with keys sorted: Swift
+  /// re-encodes a message from its fields, in an order of its own.
   @Test func downstream() throws {
     for c in try Vectors.cases("sweep-downstream") {
       let text = c["text"]!.stringValue!
       let expected = c["output"]!.stringValue!
       do {
         let message = try Downstream(text: text)
-        let actual = JSONSerializer.stringify(message.json)
+        let actual = Self.sortedStringify(message.json)
         #expect(
           Self.same(actual, expected),
           "\(text): Swift \(actual.debugDescription), JS \(expected.debugDescription)")

@@ -1,27 +1,27 @@
 {
   "formatVersion": 1,
   "kind": "sweep-json",
-  "description": "JSON.parse acceptance of edge cases; accepted inputs carry JSON.stringify of the result with object keys sorted by UTF-16 code unit.",
+  "description": "JSON.parse acceptance of edge cases; accepted inputs carry JSON.stringify of the result.",
   "cases": [
     {
       "input": "{\"\\u00e9\":1,\"e\\u0301\":2}",
       "ok": true,
-      "stringify": "{\"é\":2,\"é\":1}"
+      "stringify": "{\"é\":1,\"é\":2}"
     },
     {
       "input": "{\"é\":1,\"é\":2}",
       "ok": true,
-      "stringify": "{\"é\":2,\"é\":1}"
+      "stringify": "{\"é\":1,\"é\":2}"
     },
     {
       "input": "{\"\\u212b\":1,\"\\u00c5\":2,\"A\\u030a\":3}",
       "ok": true,
-      "stringify": "{\"Å\":3,\"Å\":2,\"Å\":1}"
+      "stringify": "{\"Å\":1,\"Å\":2,\"Å\":3}"
     },
     {
       "input": "{\"\\uac00\":1,\"\\u1100\\u1161\":2}",
       "ok": true,
-      "stringify": "{\"가\":2,\"가\":1}"
+      "stringify": "{\"가\":1,\"가\":2}"
     },
     {
       "input": "[{\"k\":\"\\u00e9\"},{\"k\":\"e\\u0301\"}]",
@@ -31,12 +31,12 @@
     {
       "input": "{\"\\uffff\":1,\"\\ud83d\\ude00\":2,\"\\ue000\":3,\"z\":4,\"\":5}",
       "ok": true,
-      "stringify": "{\"\":5,\"z\":4,\"😀\":2,\"\":3,\"￿\":1}"
+      "stringify": "{\"￿\":1,\"😀\":2,\"\":3,\"z\":4,\"\":5}"
     },
     {
       "input": "{\"b\":1,\"a\":2,\"10\":3,\"9\":4,\"1\":5}",
       "ok": true,
-      "stringify": "{\"1\":5,\"10\":3,\"9\":4,\"a\":2,\"b\":1}"
+      "stringify": "{\"1\":5,\"9\":4,\"10\":3,\"b\":1,\"a\":2}"
     },
     {
       "input": "{\"__proto__\":{\"a\":1},\"constructor\":2,\"toString\":3}",

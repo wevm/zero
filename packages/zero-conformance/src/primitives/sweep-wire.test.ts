@@ -20,8 +20,8 @@ import {Random} from '../random.ts';
 import {emitVectors} from '../vectors.ts';
 
 /**
- * `JSON.stringify` with object keys sorted by UTF-16 code unit, which is how
- * the Swift serializer orders them (`JSONValue` objects are unordered).
+ * `JSON.stringify` with object keys sorted by UTF-16 code unit: a form of a
+ * value that doesn't depend on the order its keys were set in.
  */
 function sortedStringify(v: unknown): string {
   if (Array.isArray(v)) {
@@ -162,12 +162,12 @@ test('sweep-json', () => {
   emitVectors(
     'sweep-json',
     'sweep-json',
-    'JSON.parse acceptance of edge cases; accepted inputs carry JSON.stringify of the result with object keys sorted by UTF-16 code unit.',
+    'JSON.parse acceptance of edge cases; accepted inputs carry JSON.stringify of the result.',
     [
       ...ok.map(input => ({
         input,
         ok: true,
-        stringify: sortedStringify(JSON.parse(input)),
+        stringify: JSON.stringify(JSON.parse(input)),
       })),
       ...bad.map(input => {
         let accepted = false;
@@ -242,7 +242,8 @@ test('sweep-name-args-hash', () => {
 
 test('sweep-downstream', () => {
   // Message texts, as the client receives them; the output is what valita
-  // returns for them, with keys sorted. The client parses in passthrough
+  // returns for them, with keys sorted: the Swift client re-encodes a
+  // message from its fields, in an order of its own. The client parses in passthrough
   // mode, which differs from strip only in keeping unknown keys, and these
   // messages have none.
   const messages = [
