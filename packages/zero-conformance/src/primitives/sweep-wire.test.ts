@@ -8,14 +8,14 @@ import * as v from '../../../shared/src/valita.ts';
 import type {Condition} from '../../../zero-protocol/src/ast.ts';
 import {downstreamSchema} from '../../../zero-protocol/src/down.ts';
 import {hashOfNameAndArgs} from '../../../zero-protocol/src/query-hash.ts';
-import {schema} from '../../../zql/src/query/test/test-schemas.ts';
+import {defaultFormat} from '../../../zql/src/ivm/default-format.ts';
 import {
   newQuery,
   newQueryImpl,
   type QueryImpl,
 } from '../../../zql/src/query/query-impl.ts';
-import {defaultFormat} from '../../../zql/src/ivm/default-format.ts';
 import {newStaticQuery} from '../../../zql/src/query/static-query.ts';
+import {schema} from '../../../zql/src/query/test/test-schemas.ts';
 import {Random} from '../random.ts';
 import {emitVectors} from '../vectors.ts';
 
@@ -227,7 +227,11 @@ test('sweep-name-args-hash', () => {
   const names = ['q', '', '\u00e9', 'e\u0301'];
   const cases = [];
   for (const text of args) {
-    cases.push({name: 'q', args: text, hash: hashOfNameAndArgs('q', JSON.parse(text))});
+    cases.push({
+      name: 'q',
+      args: text,
+      hash: hashOfNameAndArgs('q', JSON.parse(text)),
+    });
   }
   for (const name of names) {
     cases.push({name, args: '[]', hash: hashOfNameAndArgs(name, [])});
@@ -397,12 +401,17 @@ const handQueries: Spec[] = [
   },
   // b2d4e4b30: the junction of a two-hop relationship.
   {table: 'issue', ops: [['related', 'labels', []]]},
-  {table: 'issue', ops: [['related', 'labels', [['where', 'name', '=', 'bug']]]]},
+  {
+    table: 'issue',
+    ops: [['related', 'labels', [['where', 'name', '=', 'bug']]]],
+  },
   {table: 'label', ops: [['related', 'issues', []]]},
   {table: 'issue', ops: [['whereExists', 'labels', null, []]]},
   {
     table: 'issue',
-    ops: [['whereExists', 'labels', {flip: true}, [['where', 'name', '=', 'x']]]],
+    ops: [
+      ['whereExists', 'labels', {flip: true}, [['where', 'name', '=', 'x']]],
+    ],
   },
   {
     table: 'issue',
@@ -445,7 +454,12 @@ const handQueries: Spec[] = [
   },
   {
     table: 'issue',
-    ops: [['whereExpr', {and: [{cmp: ['id', 'IN', ['b', 'a', '\u00e9', 'e\u0301']]}]}]],
+    ops: [
+      [
+        'whereExpr',
+        {and: [{cmp: ['id', 'IN', ['b', 'a', '\u00e9', 'e\u0301']]}]},
+      ],
+    ],
   },
   {table: 'issue', ops: [['whereExpr', {and: []}]]},
   {table: 'issue', ops: [['whereExpr', {or: []}]]},
@@ -455,7 +469,12 @@ const handQueries: Spec[] = [
   },
   {
     table: 'issue',
-    ops: [['whereExpr', {not: {or: [{cmp: ['id', 'IS', null]}, {cmp: ['id', 'IS NOT', null]}]}}]],
+    ops: [
+      [
+        'whereExpr',
+        {not: {or: [{cmp: ['id', 'IS', null]}, {cmp: ['id', 'IS NOT', null]}]}},
+      ],
+    ],
   },
   {table: 'issue', ops: [['whereExpr', {cmpLit: [1, '=', 1]}]]},
   {table: 'issue', ops: [['whereExpr', {cmpLit: [true, '!=', 'a']}]]},
@@ -491,7 +510,10 @@ const handQueries: Spec[] = [
     ],
   },
   {table: 'issue', ops: [['start', {id: 'x'}, true]]},
-  {table: 'issue', ops: [['start', {id: 'x', '\u00e9': 1, 'e\u0301': 2}, true]]},
+  {
+    table: 'issue',
+    ops: [['start', {'id': 'x', '\u00e9': 1, 'e\u0301': 2}, true]],
+  },
   {table: 'issue', ops: [['limit', 0]]},
   {table: 'issue', ops: [['limit', 4106]]},
   {table: 'issue', ops: [['limit', 2147483647]]},
@@ -515,7 +537,11 @@ const handQueries: Spec[] = [
   {
     table: 'issue',
     ops: [
-      ['related', 'comments', [['related', 'revisions', [['related', 'author', []]]]]],
+      [
+        'related',
+        'comments',
+        [['related', 'revisions', [['related', 'author', []]]]],
+      ],
       ['related', 'comments', [['limit', 3]]],
     ],
   },
@@ -542,7 +568,7 @@ function destOf(table: string, rel: string): {dest: string; hops: number} {
       Record<string, {destSchema: string}[]>
     >
   )[table][rel];
-  return {dest: hops[hops.length - 1].destSchema, hops: hops.length};
+  return {dest: hops.at(-1)!.destSchema, hops: hops.length};
 }
 
 const values: unknown[] = [
@@ -558,7 +584,18 @@ const values: unknown[] = [
   '\u{1f600}',
   true,
 ];
-const simpleOps = ['=', '!=', '<', '>', '<=', '>=', 'LIKE', 'ILIKE', 'IS', 'IS NOT'];
+const simpleOps = [
+  '=',
+  '!=',
+  '<',
+  '>',
+  '<=',
+  '>=',
+  'LIKE',
+  'ILIKE',
+  'IS',
+  'IS NOT',
+];
 
 function randomOps(
   r: Random,
@@ -568,9 +605,8 @@ function randomOps(
 ): Op[] {
   const ops: Op[] = [];
   const columns = Object.keys(
-    (schema.tables as Record<string, {columns: Record<string, unknown>}>)[
-      table
-    ].columns,
+    (schema.tables as Record<string, {columns: Record<string, unknown>}>)[table]
+      .columns,
   );
   const n = r.int(depth > 1 ? 2 : 4);
   for (let i = 0; i < n; i++) {

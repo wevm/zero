@@ -72,7 +72,10 @@ struct SweepWireTests {
   /// writes (Node's default stack takes about 4,100 levels) and the parser
   /// accepts (its limit is 5,000). Parsing, encoding, hashing, comparing,
   /// and freeing it must not overflow the stack of the thread it is on.
-  @Test func deepRowValue() throws {
+  /// The client runs on the main actor, so a deep value is parsed on the
+  /// main thread's stack. Test threads' stacks are smaller (512 KB on
+  /// macOS) than the 8 MB the main thread has there.
+  @MainActor @Test func deepRowValue() throws {
     let depth = 4_000
     let text =
       #"["pokePart",{"pokeID":"p","rowsPatch":[{"op":"put","tableName":"t","value":{"id":"x","j":"#
