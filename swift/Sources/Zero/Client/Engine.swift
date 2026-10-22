@@ -1286,7 +1286,12 @@ final class Engine {
         Self.badOrderMessage(
           "cookie", JSONSerializer.stringify(poke.cookie), JSONSerializer.stringify(base.cookie)))
     }
-    if poke.cookie == base.cookie { return }
+    if poke.cookie == base.cookie {
+      // `zero.ts` trusts the got queries once `rep.poke` returns, even for a
+      // poke that changes nothing.
+      markGotQueriesAuthoritative(ifStillOn: socketAtStart)
+      return
+    }
 
     var snapshot = base
     snapshot.lastMutationIDs.merge(poke.lastMutationIDChanges) { $1 }
@@ -1327,6 +1332,13 @@ final class Engine {
     ])
     context.processChanges(diff)
     fireWatchers(diff)
+    markGotQueriesAuthoritative(ifStillOn: socketAtStart)
+  }
+
+  /// The server has caught the client up, unless the connection the poke
+  /// came on went away while it was applied: the disconnect already
+  /// re-gated trust, and the next connection's first poke restores it.
+  private func markGotQueriesAuthoritative(ifStillOn socketAtStart: SocketHandle?) {
     if socketAtStart != nil, socket === socketAtStart {
       queryManager.markGotQueriesAuthoritative()
     }
