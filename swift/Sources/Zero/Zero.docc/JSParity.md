@@ -56,6 +56,13 @@ When the server no longer has the client's state, JS asks the app to
 reload. Swift replaces the client inside the same `Zero` instead: views,
 live queries, and preloads move to the new client and keep their identity.
 
+A pending `run`, and a preload's pending `cached` and `complete`, belong to
+the client that started them. When that client closes, by `close()` or by
+being replaced, they throw a ``QueryError`` saying Zero was closed, as they
+reject in JS. After a replacement, run it again: the same `Zero` now uses
+the new client. As in JS, don't query a closed `Zero`: a `run` that waits
+for `.complete` or `.cached` there never returns.
+
 ## Queries
 
 | JS                                                                   | Swift                                                                                          |
