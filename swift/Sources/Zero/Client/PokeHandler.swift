@@ -20,6 +20,8 @@ final class PokeHandler {
     var pokeStart: PokeStartBody
     var parts: [PokePartBody] = []
     var chunks: [ArraySlice<UInt8>] = []
+    /// The chunks' IDs, nil for a chunk parsed on its own.
+    var chunkIDs: [PokeChunkID?] = []
   }
 
   private struct Received {
@@ -81,7 +83,7 @@ final class PokeHandler {
     return part.lastMutationIDChanges?[JSKey(clientID)]
   }
 
-  func handlePokeChunk(_ chunk: ArraySlice<UInt8>) {
+  func handlePokeChunk(_ chunk: ArraySlice<UInt8>, id: PokeChunkID? = nil) {
     guard receiving != nil else {
       handlePokeError("received a binary poke chunk without pokeStart")
       return
@@ -91,9 +93,15 @@ final class PokeHandler {
       return
     }
     receiving!.chunks.append(chunk)
+    receiving!.chunkIDs.append(id)
   }
 
-  func handlePokeEnd(_ pokeEnd: PokeEndBody) -> PokeEndResult? {
+  /// `decodedChunks` are the poke's chunks decoded where they were read;
+  /// they stand in for decoding them here when they are the chunks this
+  /// poke has.
+  func handlePokeEnd(
+    _ pokeEnd: PokeEndBody, decodedChunks: DecodedPokeChunks? = nil
+  ) -> PokeEndResult? {
     guard let receiving, pokeEnd.pokeID == receiving.pokeStart.pokeID else {
       handlePokeError(
         "pokeEnd for \(pokeEnd.pokeID), when receiving \(receiving?.pokeStart.pokeID ?? "undefined")"
@@ -106,9 +114,16 @@ final class PokeHandler {
     }
     var parts = receiving.parts
     if !receiving.chunks.isEmpty {
-      do {
-        parts = try PokeChunk.decode(receiving.chunks)
-      } catch {
+      let decoded =
+        if let decodedChunks, decodedChunks.chunks.map(Optional.some) == receiving.chunkIDs {
+          decodedChunks.parts
+        } else {
+          Result { () throws(DecodingError) in try PokeChunk.decode(receiving.chunks) }
+        }
+      switch decoded {
+      case .success(let decoded):
+        parts = decoded
+      case .failure(let error):
         // `String(e)` of what `TextDecoder` and valita throw.
         handlePokeError("TypeError: " + valitaMessage(error))
         return nil

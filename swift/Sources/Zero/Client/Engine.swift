@@ -805,7 +805,14 @@ final class Engine {
 
   fileprivate func socketDidReceive(_ handle: SocketHandle, _ message: SocketMessage) {
     guard handle === socket else { return }
-    loop.dispatch { onMessage(message) }
+    loop.dispatch { onMessage(.parse(message)) }
+  }
+
+  /// A frame the socket parsed off the main actor, applied as one parsed
+  /// here would be.
+  fileprivate func socketDidReceive(_ handle: SocketHandle, parsed incoming: Incoming) {
+    guard handle === socket else { return }
+    loop.dispatch { onMessage(incoming) }
   }
 
   fileprivate func socketDidClose(
@@ -843,34 +850,28 @@ final class Engine {
     }
   }
 
-  private func onMessage(_ message: SocketMessage) {
+  private func onMessage(_ incoming: @autoclosure () -> Incoming) {
     if repClosed { return }
-    let text: String
-    switch message {
-    case .binary(let bytes):
-      guard bytes.first == PokeChunk.messageType else {
-        disconnect(
-          .client(
-            .invalidMessage,
-            message: "Unknown binary message type: \(bytes.first.map(String.init) ?? "undefined")"
-          ))
-        return
-      }
-      abortPingTimeout()
-      pokeHandler.handlePokeChunk(bytes.dropFirst())
-      return
-    case .text(let t):
-      text = t
-    }
     let downstream: Downstream
-    do {
-      downstream = try Downstream(text: text)
-    } catch {
+    let decodedChunks: DecodedPokeChunks?
+    switch incoming() {
+    case .unknownBinary(let type):
       disconnect(
         .client(
           .invalidMessage,
-          message: "Invalid message received from server: \(valitaMessage(error, text))\(text)"))
+          message: "Unknown binary message type: \(type.map(String.init) ?? "undefined")"
+        ))
       return
+    case .pokeChunk(let id, let chunk):
+      abortPingTimeout()
+      pokeHandler.handlePokeChunk(chunk, id: id)
+      return
+    case .invalid(let message):
+      disconnect(.client(.invalidMessage, message: message))
+      return
+    case .message(let d, let chunks):
+      downstream = d
+      decodedChunks = chunks
     }
     do {
       switch downstream {
@@ -888,7 +889,9 @@ final class Engine {
         if let lmid = pokeHandler.handlePokePart(body) { lastMutationIDReceived = lmid }
       case .pokeEnd(let body):
         abortPingTimeout()
-        if let lmid = pokeHandler.handlePokeEnd(body)?.lastMutationIDChangeForSelf {
+        if let lmid = pokeHandler.handlePokeEnd(body, decodedChunks: decodedChunks)?
+          .lastMutationIDChangeForSelf
+        {
           lastMutationIDReceived = lmid
         }
       case .pull:
@@ -1473,7 +1476,7 @@ final class ReadyPromise {
 
 /// The engine's end of one socket.
 @MainActor
-final class SocketHandle: SocketEvents {
+final class SocketHandle: ParsingSocketEvents {
   weak var engine: Engine?
   var connection: (any SocketConnection)!
   private var closed = false
@@ -1496,6 +1499,11 @@ final class SocketHandle: SocketEvents {
   func socketDidReceive(_ message: SocketMessage) {
     guard !closed else { return }
     engine?.socketDidReceive(self, message)
+  }
+
+  func socketDidReceive(parsed incoming: Incoming) {
+    guard !closed else { return }
+    engine?.socketDidReceive(self, parsed: incoming)
   }
 
   func socketDidClose(code: Int, reason: String, wasClean: Bool) {
