@@ -1,3 +1,5 @@
+import Dispatch
+
 /// A `VirtualHost` for a scroll view that lays its rows out itself, in one
 /// layout pass: the rows' frames, the content's height and the offset are
 /// worked out together, and the view applies them before it draws. The core
@@ -18,6 +20,12 @@
 /// changing height does, and the core keeps what's on screen in place. While
 /// a jump or a restore is landing every row is measured: where it lands is
 /// worked out from the rows above it.
+///
+/// Rows on screen are measured in the pass that shows them. Off screen, at
+/// most `newRowsPerPass` rows not measured before are, so a pass that
+/// brings a page doesn't make all its views in one frame: the rest stand at
+/// the estimate, and `later` lays out again once the frame is drawn, until
+/// they're all measured.
 @MainActor
 package final class LayoutHost: VirtualHost {
   package private(set) var scrollOffset = 0.0
@@ -48,6 +56,12 @@ package final class LayoutHost: VirtualHost {
   package var isLanding: () -> Bool = { false }
   /// Asks the view for a layout pass.
   package var setNeedsLayout: () -> Void = {}
+  /// Runs work once the frame is drawn: the main queue's next turn.
+  package var later: (@escaping @MainActor () -> Void) -> Void = { work in
+    DispatchQueue.main.async { MainActor.assumeIsolated(work) }
+  }
+  /// How many rows off screen, not measured before, one pass measures.
+  package var newRowsPerPass = 2
 
   private var frames: [VirtualRowFrame] = []
   /// The rows' heights as last measured, for when they're out of reach.
@@ -60,6 +74,11 @@ package final class LayoutHost: VirtualHost {
   /// not the view's.
   private var scrolled = false
   private var inPass = false
+  /// New rows off screen this pass may still measure.
+  private var budget = 0
+  /// A pass left rows near the viewport unmeasured, and `later` will lay
+  /// out again.
+  private var laterPending = false
 
   package init() {}
 
@@ -103,6 +122,7 @@ package final class LayoutHost: VirtualHost {
   ) {
     inPass = true
     defer { inPass = false }
+    budget = newRowsPerPass
     if viewport != viewportHeight {
       viewportHeight = viewport
       viewportDidResize()
@@ -117,10 +137,18 @@ package final class LayoutHost: VirtualHost {
     }
     // What the core does about the update can be a new snapshot, or a
     // scroll to rows not measured yet; they're laid out in this pass too.
-    for _ in 0..<8 where stale || !nearRowsMeasured() {
+    for _ in 0..<8 where stale || !rowsOnScreenMeasured() {
       stale = false
       place()
       afterUpdate()
+    }
+    if !laterPending, !nearRowsMeasured() {
+      laterPending = true
+      later { [weak self] in
+        guard let self else { return }
+        self.laterPending = false
+        self.invalidate()
+      }
     }
     return (frames, contentHeight, scrollOffset)
   }
@@ -135,10 +163,20 @@ package final class LayoutHost: VirtualHost {
     return (scrollOffset - viewportHeight)...(scrollOffset + 2 * viewportHeight)
   }
 
-  private func nearRowsMeasured() -> Bool {
-    let reach = reach
-    return frames.allSatisfy {
-      $0.minY > reach.upperBound || $0.maxY < reach.lowerBound || measured.contains($0.key)
+  /// Where rows are measured in the pass that draws them, however many are
+  /// new: the viewport, or all of them while a jump or a restore lands.
+  private var screen: ClosedRange<Double> {
+    if isLanding() { return reach }
+    return scrollOffset...(scrollOffset + viewportHeight)
+  }
+
+  private func nearRowsMeasured() -> Bool { allMeasured(in: reach) }
+
+  private func rowsOnScreenMeasured() -> Bool { allMeasured(in: screen) }
+
+  private func allMeasured(in range: ClosedRange<Double>) -> Bool {
+    frames.allSatisfy {
+      $0.minY > range.upperBound || $0.maxY < range.lowerBound || measured.contains($0.key)
     }
   }
 
@@ -146,6 +184,7 @@ package final class LayoutHost: VirtualHost {
     let r = rows()
     headerHeight = header()
     let reach = reach
+    let screen = screen
     let estimate = estimatedRowHeight()
     var known: [AnyHashable: Double] = [:]
     measured = []
@@ -153,8 +192,12 @@ package final class LayoutHost: VirtualHost {
     frames = r.keys.map { item in
       var height = heights[item.key] ?? estimate
       if y <= reach.upperBound && y + height >= reach.lowerBound {
-        height = measure(item.key)
-        measured.insert(item.key)
+        let onScreen = y <= screen.upperBound && y + height >= screen.lowerBound
+        if heights[item.key] != nil || onScreen || budget > 0 {
+          if heights[item.key] == nil && !onScreen { budget -= 1 }
+          height = measure(item.key)
+          measured.insert(item.key)
+        }
       }
       if measured.contains(item.key) || heights[item.key] != nil { known[item.key] = height }
       defer { y += height }

@@ -25,6 +25,8 @@ final class LayoutScrollView {
   /// Each drawn row's top, from the viewport's top, as of the last pass.
   private var drawn: [AnyHashable: Double] = [:]
   private var unsubscribe: (() -> Void)?
+  /// What the host asked to run once the frame is drawn.
+  var later: [@MainActor () -> Void] = []
 
   init(_ h: Harness, viewportHeight: Double = 400) {
     self.h = h
@@ -45,6 +47,7 @@ final class LayoutScrollView {
     host.viewportDidResize = { [unowned self] in self.h.core.viewportDidResize() }
     host.afterUpdate = { [unowned self] in self.h.core.afterUpdate() }
     host.isLanding = { [unowned self] in self.h.core.isLanding }
+    host.later = { [unowned self] in self.later.append($0) }
     unsubscribe = h.core.subscribe { [unowned self] in self.host.invalidate() }
     h.core.attach(host)
   }
@@ -62,7 +65,18 @@ final class LayoutScrollView {
     for f in r.frames { drawn[f.key] = f.minY - r.offset }
   }
 
-  /// Passes until the query and the layout stop changing. With `holding`,
+  /// Runs what the host asked to run once the frame was drawn; whether
+  /// there was any.
+  @discardableResult
+  func frameDrawn() -> Bool {
+    let work = later
+    later = []
+    for w in work { w() }
+    return !work.isEmpty
+  }
+
+  /// Passes, the frames drawn between them, until the query and the layout
+  /// stop changing. With `holding`,
   /// that row, while drawn, is drawn in the same place on every pass.
   func settle(holding key: String? = nil, sourceLocation: SourceLocation = #_sourceLocation) {
     let top = key.flatMap(rowTop)
@@ -72,7 +86,8 @@ final class LayoutScrollView {
       if let key, let top, let now = rowTop(key) {
         #expect(now == top, "\(key) drawn moved", sourceLocation: sourceLocation)
       }
-      if (h.queryKey(h.core.queryInputs), offset, h.core.snapshot.spaceBefore) == before,
+      if !frameDrawn(),
+        (h.queryKey(h.core.queryInputs), offset, h.core.snapshot.spaceBefore) == before,
         h.core.snapshot.complete
       {
         return
@@ -471,6 +486,46 @@ final class LayoutScrollView {
         #expect(abs(top - expected) <= 1, "\(align) by id: \(byID)")
         h.scheduler.advance(by: 200)
         view.settle(holding: "r80")
+      }
+    }
+  }
+}
+
+@MainActor
+@Suite("Layout host, rows made over frames") struct LayoutHostBudgetTests {
+  @Test(
+    "a page's rows off screen are measured a few per frame, the rows on screen in the pass that shows them"
+  )
+  func spreadsNewRows() {
+    let h = Harness(rowCount: 1000) { $0.anchoring = .manual }
+    let view = LayoutScrollView(h)
+    for i in 0..<1000 { view.heights["r\(i)"] = i % 3 == 0 ? 50 : 30 }
+    view.settle()
+    for _ in 0..<40 {
+      let key = h.core.firstVisibleItem()!.key
+      let top = try! #require(view.rowTop(key))
+      let known = Set(view.measures.keys)
+      view.userScroll(view.scrollOffset + 150)
+      #expect(view.rowTop(key) == top - 150)
+      let offset = view.scrollOffset
+      var newOff = 0
+      for f in view.host.rowFrames() {
+        let k = f.key.base as! String
+        let onScreen = f.maxY > offset && f.minY < offset + 400
+        if onScreen { #expect(view.measures[k] != nil, "\(k) on screen and not measured") }
+        if !onScreen, view.measures[k] != nil, !known.contains(k) { newOff += 1 }
+      }
+      #expect(newOff <= 2, "\(newOff) new rows off screen in one pass")
+      // The frames drawn after it measure the rest within reach, nothing
+      // on screen moving.
+      let held = h.core.firstVisibleItem()!.key
+      let heldTop = try! #require(view.rowTop(held))
+      for _ in 0..<40 where view.frameDrawn() {
+        view.pass()
+        #expect(view.rowTop(held) == heldTop, "\(held) moved as rows off screen were measured")
+      }
+      for f in view.host.rowFrames() where f.maxY >= offset - 400 && f.minY <= offset + 800 {
+        #expect(view.measures[f.key.base as! String] != nil, "\(f.key) near and never measured")
       }
     }
   }
