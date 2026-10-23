@@ -25,8 +25,10 @@ final class LayoutScrollView {
   /// Each drawn row's top, from the viewport's top, as of the last pass.
   private var drawn: [AnyHashable: Double] = [:]
   private var unsubscribe: (() -> Void)?
-  /// What the host asked to run once the frame is drawn.
-  var later: [@MainActor () -> Void] = []
+  /// What the host asked to run at the start of the next frame.
+  var nextFrame: [@MainActor () -> Void] = []
+  /// The time: a frame takes 1/60 s, making a row 1 ms.
+  var clock = 0.0
 
   init(_ h: Harness, viewportHeight: Double = 400) {
     self.h = h
@@ -37,6 +39,8 @@ final class LayoutScrollView {
     }
     host.measure = { [unowned self] key in
       let key = key.base as! String
+      // Making a row's view takes the time; its height is kept.
+      if self.measures[key] == nil { self.clock += 0.001 }
       self.measures[key, default: 0] += 1
       return self.heights[key] ?? self.h.view.rowHeight
     }
@@ -47,7 +51,8 @@ final class LayoutScrollView {
     host.viewportDidResize = { [unowned self] in self.h.core.viewportDidResize() }
     host.afterUpdate = { [unowned self] in self.h.core.afterUpdate() }
     host.isLanding = { [unowned self] in self.h.core.isLanding }
-    host.later = { [unowned self] in self.later.append($0) }
+    host.nextFrame = { [unowned self] in self.nextFrame.append($0) }
+    host.now = { [unowned self] in self.clock }
     unsubscribe = h.core.subscribe { [unowned self] in self.host.invalidate() }
     h.core.attach(host)
   }
@@ -65,12 +70,13 @@ final class LayoutScrollView {
     for f in r.frames { drawn[f.key] = f.minY - r.offset }
   }
 
-  /// Runs what the host asked to run once the frame was drawn; whether
+  /// The next frame starts: runs what the host asked to run then; whether
   /// there was any.
   @discardableResult
   func frameDrawn() -> Bool {
-    let work = later
-    later = []
+    clock += 1.0 / 60
+    let work = nextFrame
+    nextFrame = []
     for w in work { w() }
     return !work.isEmpty
   }
@@ -98,6 +104,7 @@ final class LayoutScrollView {
 
   /// The user scrolls to `y`, within the content, and the view lays out.
   func userScroll(_ y: Double) {
+    clock += 1.0 / 60
     offset = max(0, min(y, host.contentHeight - viewportHeight))
     pass()
   }
@@ -494,7 +501,7 @@ final class LayoutScrollView {
 @MainActor
 @Suite("Layout host, rows made over frames") struct LayoutHostBudgetTests {
   @Test(
-    "a page's rows off screen are measured a few per frame, the rows on screen in the pass that shows them"
+    "a page's rows off screen are measured in later frames, the rows on screen in the pass that shows them"
   )
   func spreadsNewRows() {
     let h = Harness(rowCount: 1000) { $0.anchoring = .manual }
@@ -515,13 +522,17 @@ final class LayoutScrollView {
         if onScreen { #expect(view.measures[k] != nil, "\(k) on screen and not measured") }
         if !onScreen, view.measures[k] != nil, !known.contains(k) { newOff += 1 }
       }
-      #expect(newOff <= 2, "\(newOff) new rows off screen in one pass")
-      // The frames drawn after it measure the rest within reach, nothing
-      // on screen moving.
+      #expect(newOff == 0, "\(newOff) new rows off screen in the scroll's pass")
+      // The frames after it measure the rest within reach, as many as the
+      // frame's budget (4 ms, a row taking 1 ms) starts, nothing on screen
+      // moving.
       let held = h.core.firstVisibleItem()!.key
       let heldTop = try! #require(view.rowTop(held))
       for _ in 0..<40 where view.frameDrawn() {
+        let before = view.measures.count
         view.pass()
+        let made = view.measures.count - before
+        #expect(made <= 5, "\(made) rows in a frame")
         #expect(view.rowTop(held) == heldTop, "\(held) moved as rows off screen were measured")
       }
       for f in view.host.rowFrames() where f.maxY >= offset - 400 && f.minY <= offset + 800 {

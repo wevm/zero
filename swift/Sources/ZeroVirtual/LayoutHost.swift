@@ -21,12 +21,12 @@ import Dispatch
 /// a jump or a restore is landing every row is measured: where it lands is
 /// worked out from the rows above it.
 ///
-/// Rows on screen are measured in the pass that shows them. Off screen, at
-/// most `newRowsPerPass` rows not measured before are, those nearest the
-/// screen first (the next a scroll shows, either way), so a pass that
-/// brings a page doesn't make all its views in one frame: the rest stand at
-/// the estimate, and `later` lays out again once the frame is drawn, until
-/// they're all measured.
+/// Rows on screen are measured in the pass that shows them. Rows off screen
+/// not measured before are measured in the frames after, nearest the screen
+/// first (the next a scroll shows, either way): at the start of each frame
+/// (`nextFrame`), its pass measures them for up to `frameBudget`, so a pass
+/// that brings a page doesn't make all its views in one frame. Until then
+/// they stand at the estimate.
 @MainActor
 package final class LayoutHost: VirtualHost {
   package private(set) var scrollOffset = 0.0
@@ -57,12 +57,15 @@ package final class LayoutHost: VirtualHost {
   package var isLanding: () -> Bool = { false }
   /// Asks the view for a layout pass.
   package var setNeedsLayout: () -> Void = {}
-  /// Runs work once the frame is drawn: the main queue's next turn.
-  package var later: (@escaping @MainActor () -> Void) -> Void = { work in
+  /// Runs work at the start of the next frame: the view's display link.
+  package var nextFrame: (@escaping @MainActor () -> Void) -> Void = { work in
     DispatchQueue.main.async { MainActor.assumeIsolated(work) }
   }
-  /// How many rows off screen, not measured before, one pass measures.
-  package var newRowsPerPass = 2
+  /// The time, in seconds.
+  package var now: () -> Double = { Double(DispatchTime.now().uptimeNanoseconds) / 1e9 }
+  /// How long, from a frame's first pass, its passes may spend measuring
+  /// rows off screen not measured before, in seconds.
+  package var frameBudget = 0.004
 
   private var frames: [VirtualRowFrame] = []
   /// The rows' heights as last measured, for when they're out of reach.
@@ -75,11 +78,13 @@ package final class LayoutHost: VirtualHost {
   /// not the view's.
   private var scrolled = false
   private var inPass = false
-  /// New rows off screen this pass may still measure.
-  private var budget = 0
-  /// A pass left rows near the viewport unmeasured, and `later` will lay
-  /// out again.
-  private var laterPending = false
+  /// Until when rows off screen not measured before are measured: the
+  /// frame's budget, from its first pass.
+  private var deadline = -Double.infinity
+  private var frameStarted = false
+  /// A pass left rows near the viewport unmeasured, and the next frame will
+  /// lay out again.
+  private var framePending = false
 
   package init() {}
 
@@ -123,7 +128,10 @@ package final class LayoutHost: VirtualHost {
   ) {
     inPass = true
     defer { inPass = false }
-    budget = newRowsPerPass
+    if frameStarted {
+      frameStarted = false
+      deadline = now() + frameBudget
+    }
     if viewport != viewportHeight {
       viewportHeight = viewport
       viewportDidResize()
@@ -143,12 +151,13 @@ package final class LayoutHost: VirtualHost {
       place()
       afterUpdate()
     }
-    if !laterPending, !nearRowsMeasured() {
-      laterPending = true
-      later { [weak self] in
+    if !framePending, !nearRowsMeasured() {
+      framePending = true
+      nextFrame { [weak self] in
         guard let self else { return }
-        self.laterPending = false
-        self.invalidate()
+        framePending = false
+        frameStarted = true
+        invalidate()
       }
     }
     return (frames, contentHeight, scrollOffset)
@@ -184,31 +193,46 @@ package final class LayoutHost: VirtualHost {
   private func place() {
     let r = rows()
     headerHeight = header()
+    measured = []
+    stack(r)
+    // Rows off screen not measured before, while the frame's budget lasts:
+    // those nearest the screen first, which a scroll shows next, either way
+    // it goes, each stacked where the rows measured before it put it.
+    let reach = reach
+    let screen = screen
+    while now() < deadline {
+      let new = frames.filter {
+        !measured.contains($0.key) && $0.minY <= reach.upperBound && $0.maxY >= reach.lowerBound
+      }
+      guard
+        let row = new.min(by: {
+          max($0.minY - screen.upperBound, screen.lowerBound - $0.maxY)
+            < max($1.minY - screen.upperBound, screen.lowerBound - $1.maxY)
+        })
+      else { break }
+      heights[row.key] = measure(row.key)
+      stack(r)
+    }
+    footerHeight = footer()
+    contentHeight = (frames.last?.maxY ?? headerHeight + r.before) + r.after + footerHeight
+  }
+
+  /// The rows stacked from the top: those within reach measured if they
+  /// were before or are on screen, the rest at their last height or the
+  /// estimate.
+  private func stack(
+    _ r: (keys: [(key: AnyHashable, index: Int)], before: Double, after: Double)
+  ) {
     let reach = reach
     let screen = screen
     let estimate = estimatedRowHeight()
     var known: [AnyHashable: Double] = [:]
-    measured = []
-    // The new rows off screen this pass measures: those nearest the screen,
-    // which a scroll shows next, either way it goes.
-    var ahead: [(key: AnyHashable, distance: Double)] = []
     var y = headerHeight + r.before
-    for item in r.keys where budget > 0 {
-      let height = heights[item.key] ?? estimate
-      defer { y += height }
-      guard heights[item.key] == nil, y <= reach.upperBound, y + height >= reach.lowerBound,
-        y > screen.upperBound || y + height < screen.lowerBound
-      else { continue }
-      ahead.append((item.key, max(y - screen.upperBound, screen.lowerBound - y - height)))
-    }
-    let next = Set(ahead.sorted { $0.distance < $1.distance }.prefix(budget).map(\.key))
-    budget -= next.count
-    y = headerHeight + r.before
     frames = r.keys.map { item in
       var height = heights[item.key] ?? estimate
       if y <= reach.upperBound && y + height >= reach.lowerBound {
         let onScreen = y <= screen.upperBound && y + height >= screen.lowerBound
-        if heights[item.key] != nil || onScreen || next.contains(item.key) {
+        if heights[item.key] != nil || onScreen {
           height = measure(item.key)
           measured.insert(item.key)
         }
@@ -218,7 +242,5 @@ package final class LayoutHost: VirtualHost {
       return VirtualRowFrame(index: item.index, key: item.key, minY: y, maxY: y + height)
     }
     heights = known
-    footerHeight = footer()
-    contentHeight = y + r.after + footerHeight
   }
 }
