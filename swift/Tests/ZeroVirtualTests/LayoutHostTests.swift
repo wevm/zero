@@ -529,4 +529,31 @@ final class LayoutScrollView {
       }
     }
   }
+
+  @Test("scrolling up, the new rows measured off screen are the ones just above it")
+  func measuresNearestRowsFirst() {
+    let h = Harness(rowCount: 1000) { $0.anchoring = .manual }
+    let view = LayoutScrollView(h)
+    for i in 0..<1000 { view.heights["r\(i)"] = i % 3 == 0 ? 50 : 30 }
+    view.settle()
+    for _ in 0..<30 {
+      view.userScroll(view.scrollOffset + 300)
+      view.settle()
+    }
+    for _ in 0..<10 {
+      // Up by more than the reach above the screen: every row above the
+      // screen, within reach, is new.
+      view.measures = [:]
+      view.userScroll(view.scrollOffset - 600)
+      let offset = view.scrollOffset
+      let above = view.host.rowFrames().filter { $0.maxY <= offset && $0.maxY >= offset - 400 }
+        .map { (key: $0.key.base as! String, distance: offset - $0.maxY) }
+      let made = above.filter { view.measures[$0.key] != nil }.map(\.distance)
+      let waiting = above.filter { view.measures[$0.key] == nil }.map(\.distance)
+      if let farthest = made.max(), let nearest = waiting.min() {
+        #expect(farthest <= nearest, "a row \(farthest) above measured before one \(nearest) above")
+      }
+      view.settle()
+    }
+  }
 }

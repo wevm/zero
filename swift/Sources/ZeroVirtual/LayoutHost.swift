@@ -22,7 +22,8 @@ import Dispatch
 /// worked out from the rows above it.
 ///
 /// Rows on screen are measured in the pass that shows them. Off screen, at
-/// most `newRowsPerPass` rows not measured before are, so a pass that
+/// most `newRowsPerPass` rows not measured before are, those nearest the
+/// screen first (the next a scroll shows, either way), so a pass that
 /// brings a page doesn't make all its views in one frame: the rest stand at
 /// the estimate, and `later` lays out again once the frame is drawn, until
 /// they're all measured.
@@ -188,13 +189,26 @@ package final class LayoutHost: VirtualHost {
     let estimate = estimatedRowHeight()
     var known: [AnyHashable: Double] = [:]
     measured = []
+    // The new rows off screen this pass measures: those nearest the screen,
+    // which a scroll shows next, either way it goes.
+    var ahead: [(key: AnyHashable, distance: Double)] = []
     var y = headerHeight + r.before
+    for item in r.keys where budget > 0 {
+      let height = heights[item.key] ?? estimate
+      defer { y += height }
+      guard heights[item.key] == nil, y <= reach.upperBound, y + height >= reach.lowerBound,
+        y > screen.upperBound || y + height < screen.lowerBound
+      else { continue }
+      ahead.append((item.key, max(y - screen.upperBound, screen.lowerBound - y - height)))
+    }
+    let next = Set(ahead.sorted { $0.distance < $1.distance }.prefix(budget).map(\.key))
+    budget -= next.count
+    y = headerHeight + r.before
     frames = r.keys.map { item in
       var height = heights[item.key] ?? estimate
       if y <= reach.upperBound && y + height >= reach.lowerBound {
         let onScreen = y <= screen.upperBound && y + height >= screen.lowerBound
-        if heights[item.key] != nil || onScreen || budget > 0 {
-          if heights[item.key] == nil && !onScreen { budget -= 1 }
+        if heights[item.key] != nil || onScreen || next.contains(item.key) {
           height = measure(item.key)
           measured.insert(item.key)
         }
