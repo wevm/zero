@@ -71,7 +71,7 @@ enum IssueMutators {
   static let create = defineMutator("issue.create") { (tx, args: Create, auth: AuthData?) in
     guard let auth else { throw ApplicationError("Not logged in") }
     try tx.mutate.issue.insert(
-      Issue(id: args.id, title: args.title, creatorID: auth.sub, created: args.created))
+      .init(id: args.id, title: args.title, creatorID: auth.sub, created: args.created))
   }
 
   static let rename = defineMutator("issue.rename") { (tx, args: Rename, _: AuthData?) in

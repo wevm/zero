@@ -101,7 +101,7 @@ query.
 | JS                                                                                 | Swift                                                                                                |
 | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | `defineMutators({issue: {create: defineMutator(async ({tx, args, ctx}) => ...)}})` | `defineMutator("issue.create") { (tx, args: Args, ctx: Context) in ... }`, a plain `throws` function |
-| `await tx.mutate.issue.insert(row)`, `.upsert(row)`                                | `try tx.mutate.issue.insert(Issue(...))`, `.upsert(...)`                                             |
+| `await tx.mutate.issue.insert(row)`, `.upsert(row)`                                | `try tx.mutate.issue.insert(.init(...))`, `.upsert(...)`                                             |
 | `await tx.mutate.issue.update({id, title})`                                        | `try tx.mutate.issue.update(.init(id: id, title: title))`                                            |
 | `await tx.mutate.issue.delete({id})`                                               | `try tx.mutate.issue.delete(.init(id: id))`                                                          |
 | `await tx.run(query)`                                                              | `try tx.run(query)`                                                                                  |
@@ -111,6 +111,11 @@ query.
 `upsert` takes the whole row struct, so it writes every column: an
 optional column left nil sets null on an existing row, where JS keeps a
 column the value leaves out.
+
+Each takes a value of a generated type, which `.init(...)` builds inline.
+Like a JS object, it can also be built first, changed, and passed later:
+`var change = Issue.Update(id: id)`, then `change.title = title`, then
+`try tx.mutate.issue.update(change)`.
 
 `update` takes the row struct's generated `Update`: the primary key, and
 the columns to set. A column left nil keeps its value, as an `undefined`

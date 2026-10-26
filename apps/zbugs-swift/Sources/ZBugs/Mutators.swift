@@ -201,7 +201,7 @@ public enum Mutators {
     (tx, args: CreateIssueArgs, auth: AuthData?) in
     let auth = try assertIsLoggedIn(auth)
     try tx.mutate.issue.insert(
-      Issue(
+      .init(
         id: args.id, title: args.title, open: true, modified: args.modified,
         created: args.created, projectID: args.projectID, creatorID: auth.sub,
         description: args.description ?? "", visibility: .public))
@@ -265,7 +265,7 @@ public enum Mutators {
     (tx, args: IssueLabelArgs, auth: AuthData?) in
     try assertIsCreatorOrAdmin(tx, auth, zql.issue, args.issueID)
     try tx.mutate.issueLabel.insert(
-      IssueLabel(
+      .init(
         issueID: args.issueID, labelID: args.labelID,
         projectID: issueProjectID(tx, args.issueID)))
   }
@@ -305,7 +305,7 @@ public enum Mutators {
     let creatorID = try assertIsLoggedIn(auth).sub
     try assertUserCanSeeIssue(tx, creatorID, args.issueID)
     try tx.mutate.comment.insert(
-      Comment(
+      .init(
         id: args.id, issueID: args.issueID, created: args.created, body: args.body,
         creatorID: creatorID))
     try updateIssueNotification(
@@ -330,7 +330,7 @@ public enum Mutators {
     guard try isAdmin(auth) else {
       throw mutationError("Only admins can create labels", .notAuthorized, args.id)
     }
-    try tx.mutate.label.insert(Label(id: args.id, name: args.name, projectID: args.projectID))
+    try tx.mutate.label.insert(.init(id: args.id, name: args.name, projectID: args.projectID))
   }
 
   public static let createAndAddLabel = defineMutator("label.createAndAddToIssue") {
@@ -339,22 +339,22 @@ public enum Mutators {
       throw mutationError("Only admins can create labels", .notAuthorized, args.labelID)
     }
     let projectID = try issueProjectID(tx, args.issueID)
-    try tx.mutate.label.insert(Label(id: args.labelID, name: args.labelName, projectID: projectID))
+    try tx.mutate.label.insert(.init(id: args.labelID, name: args.labelName, projectID: projectID))
     try tx.mutate.issueLabel.insert(
-      IssueLabel(issueID: args.issueID, labelID: args.labelID, projectID: projectID))
+      .init(issueID: args.issueID, labelID: args.labelID, projectID: projectID))
   }
 
   public static let setViewState = defineMutator("viewState.set") {
     (tx, args: ViewStateArgs, auth: AuthData?) in
     let userID = try assertIsLoggedIn(auth).sub
     try tx.mutate.viewState.upsert(
-      ViewState(issueID: args.issueID, userID: userID, viewed: args.viewed))
+      .init(issueID: args.issueID, userID: userID, viewed: args.viewed))
   }
 
   public static let setUserPref = defineMutator("userPref.set") {
     (tx, args: UserPrefArgs, auth: AuthData?) in
     let userID = try assertIsLoggedIn(auth).sub
-    try tx.mutate.userPref.upsert(UserPref(key: args.key, userID: userID, value: args.value))
+    try tx.mutate.userPref.upsert(.init(key: args.key, userID: userID, value: args.value))
   }
 
   /// Every mutator, for the client and the drift test.
@@ -388,7 +388,7 @@ func addEmoji(_ tx: Transaction, _ subject: EmojiSubject, _ args: AddEmojiArgs, 
   case .comment: try assertUserCanSeeComment(tx, creatorID, args.subjectID)
   }
   try tx.mutate.emoji.insert(
-    Emoji(
+    .init(
       id: args.id, value: args.unicode, annotation: args.annotation, subjectID: args.subjectID,
       creatorID: creatorID, created: args.created))
   // An emoji on the issue itself follows the issue.
@@ -411,9 +411,9 @@ func updateIssueNotification(
     zql.issueNotifications.where(\.userID, userID).where(\.issueID, issueID).one())
   if subscribed == .subscribe && (existing == nil || forceUpdate) {
     try tx.mutate.issueNotifications.upsert(
-      IssueNotifications(userID: userID, issueID: issueID, subscribed: true, created: created))
+      .init(userID: userID, issueID: issueID, subscribed: true, created: created))
   } else if subscribed == .unsubscribe {
     try tx.mutate.issueNotifications.upsert(
-      IssueNotifications(userID: userID, issueID: issueID, subscribed: false, created: created))
+      .init(userID: userID, issueID: issueID, subscribed: false, created: created))
   }
 }
