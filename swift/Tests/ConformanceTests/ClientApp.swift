@@ -19,6 +19,12 @@ enum ClientApp {
     "issues.byOwner": { args in zql("issue").where("ownerId", args ?? .null).orderBy("id", .asc) },
     "issues.byID": { args in zql("issue").where("id", args ?? .null).related("owner").one() },
     "issues.firstTwo": { _ in zql("issue").orderBy("title", .asc).limit(2) },
+    "issues.withAuthoredComments": { _ in
+      zql("issue")
+        .whereExists("comments") { $0.whereExists("author", flip: true) { $0.limit(3) } }
+        .orderBy("id", .asc)
+    },
+    "issues.withOneComment": { _ in zql("issue").related("oneComment").orderBy("id", .asc) },
     "issues.withFirstComment": { _ in
       zql("issue")
         .whereExists("comments", flip: true) { $0.orderBy("id", .asc).limit(1) }

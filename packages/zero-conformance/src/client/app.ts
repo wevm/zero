@@ -36,6 +36,19 @@ export const queries = defineQueries({
     firstTwo: defineQuery(() => zql.issue.orderBy('title', 'asc').limit(2)),
     // A flipped EXISTS over a limited subquery: fetching it throws
     // `Partitioned take does not allow unpartitioned fetches`.
+    // Hydrates, but adding an issue then fetches the limited flipped
+    // subquery without a constraint, which throws from the push.
+    withAuthoredComments: defineQuery(() =>
+      zql.issue
+        .whereExists('comments', q =>
+          q.whereExists('author', a => a.limit(3), {flip: true}),
+        )
+        .orderBy('id', 'asc'),
+    ),
+    // `oneComment` is a `one` relationship that several comments can match.
+    withOneComment: defineQuery(() =>
+      zql.issue.related('oneComment').orderBy('id', 'asc'),
+    ),
     withFirstComment: defineQuery(() =>
       zql.issue
         .whereExists('comments', q => q.orderBy('id', 'asc').limit(1), {

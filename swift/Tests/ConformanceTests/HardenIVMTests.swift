@@ -12,9 +12,18 @@ import Testing
 @Suite(.enabled(if: Vectors.available))
 struct HardenIVMTests {
   /// Errors JS throws that Swift throws too, rather than trapping on.
+  /// Errors JS throws from a push that Swift reports rather than trapping.
+  static let pushErrors = [
+    "Partitioned take does not allow unpartitioned fetches",
+    "Singular relationship",
+    "node does not exist",
+    "old node does not exist",
+  ]
+
   static let comparableErrors = [
     "not(exists()) is not supported on the client",
     "Partitioned take does not allow unpartitioned fetches",
+    "Singular relationship",
   ]
 
   static func decode(_ v: JSONValue) -> JSONValue {
@@ -60,12 +69,14 @@ struct HardenIVMTests {
   static func run(_ c: JSONValue, schema: ZeroSchema, datasets: [JSONValue]) throws -> Outcome {
     let result = c["result"]!
     if let error = result["error"]?.stringValue,
-      result["batch"] != nil || !comparableErrors.contains(where: { error.hasPrefix($0) })
+      !comparableErrors.contains(where: { error.hasPrefix($0) })
+        && !(result["batch"] != nil && pushErrors.contains(where: { error.hasPrefix($0) }))
     {
-      // JS threw from a push, or from an assertion where Swift has a
-      // precondition: not compared.
+      // A JS assertion where Swift has a precondition: not compared.
       return .skipped
     }
+    // JS threw from this batch's push: no steps were recorded.
+    let failingBatch = result["batch"]?.numberValue.map { Int($0) }
     let dataset = datasets[Int(c["dataset"]!.numberValue!)]
     var sources: [String: MemorySource] = [:]
     for name in schema.tableNames {
@@ -99,7 +110,7 @@ struct HardenIVMTests {
       }
       return .failed("unexpected error \(error)")
     }
-    if let expected = result["error"] {
+    if let expected = result["error"], failingBatch == nil {
       return .failed("expected error \(expected)")
     }
     func viewJSON() -> JSONValue { encode(view.data.json ?? .null) }
@@ -124,18 +135,30 @@ struct HardenIVMTests {
       return updated == next.updated
         ? nil : "snapshot updated: \(next.updated) != \(updated)"
     }
-    if viewJSON() != result["initial"]! {
+    if failingBatch == nil, viewJSON() != result["initial"]! {
       return .failed("initial view\n  swift: \(viewJSON())\n  js:    \(result["initial"]!)")
     }
-    let steps = result["steps"]!.arrayValue!
+    let steps = result["steps"]?.arrayValue ?? []
     for (i, batch) in dataset["batches"]!.arrayValue!.enumerated() {
       recorder.changes.removeAll()
       notified = 0
-      for push in batch.arrayValue! {
-        let (table, change) = IVMConformanceTests.sourceChange(decode(push))
-        sources[table]!.push(change)
+      do {
+        // As `QueryContext.processChanges` pushes.
+        try PipelineFailure.capture {
+          // As `IVMBranch.apply`, which stops at a failed push.
+          for push in batch.arrayValue! where !PipelineFailure.hasFailed {
+            let (table, change) = IVMConformanceTests.sourceChange(decode(push))
+            sources[table]!.push(change)
+          }
+        }
+      } catch {
+        if i == failingBatch, "\(error)" == result["error"]!.stringValue! { return .passed }
+        return .failed("batch \(i): unexpected error \(error); js: \(result)")
       }
+      if i == failingBatch { return .failed("batch \(i): expected error \(result["error"]!)") }
       view.flush()
+      // Steps were recorded only when no push threw.
+      if failingBatch != nil { continue }
       let step = steps[i]
       let changes = encode(.array(recorder.changes))
       if changes != step["changes"]! {

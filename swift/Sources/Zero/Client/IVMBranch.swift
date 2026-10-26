@@ -37,7 +37,8 @@ final class IVMBranch {
   func apply(_ diff: KVDiff, rows written: [String: Row] = [:]) {
     let prefix = Keys.entitiesPrefix
     var i = 0
-    while i < diff.count {
+    // JS's throw ends `applyDiffs` at the change an operator failed on.
+    while i < diff.count, !PipelineFailure.hasFailed {
       let op = diff[i]
       guard op.key.utf8.starts(with: prefix.utf8) else {
         i += 1

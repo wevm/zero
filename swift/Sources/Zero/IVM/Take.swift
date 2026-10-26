@@ -66,8 +66,7 @@ final class Take: Operator, TakeBoundProvider {
       if let partitionKey,
         req.constraint == nil || !constraintContainsPartitionKey(req.constraint, partitionKey)
       {
-        let message = "Partitioned take does not allow unpartitioned fetches"
-        precondition(PipelineFailure.report(message), message)
+        PipelineFailure.report("Partitioned take does not allow unpartitioned fetches")
         return AnyIterator { nil }
       }
       let key = takeStateKey(req.constraint)

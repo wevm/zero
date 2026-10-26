@@ -26,12 +26,19 @@ package final class PipelineFailure: @unchecked Sendable {
     return result
   }
 
-  /// Reports `message`. Returns false when no `capture` is running, where
-  /// the caller can't recover.
-  static func report(_ message: String) -> Bool {
-    guard let current else { return false }
+  /// Whether an operator reported an error to the running `capture`. Where
+  /// JS's throw would unwind, the source stops pushing.
+  static var hasFailed: Bool { current?.error != nil }
+
+  /// Reports `message` to the running `capture`. The client fetches and
+  /// pushes only inside one; anything else (a pipeline driven directly)
+  /// gets the error logged, and the operator yields nothing.
+  static func report(_ message: String) {
+    guard let current else {
+      DefaultLogSink().log(level: .error, message: message, context: [:])
+      return
+    }
     if current.error == nil { current.error = PipelineError(message) }
-    return true
   }
 }
 

@@ -1304,6 +1304,9 @@ final class Engine {
       write: write, branch: branch, schema: schema)
     let result: JSONValue?
     do {
+      // JS forks the views' branch for the transaction, which throws once
+      // that branch has failed.
+      if let failure = context.branchFailure { throw failure }
       result = try mutator(tx, args)
     } catch {
       mutationTracker.rejectMutation(ephemeralID, error)
@@ -1323,7 +1326,17 @@ final class Engine {
           clientID: clientID, id: mutationID, name: name, args: pending.args,
           timestamp: pending.timestamp))
     ])
-    context.processChanges(diff, rows: tx.rows)
+    do {
+      try context.processChanges(diff, rows: tx.rows)
+    } catch {
+      // As in JS, the mutation stays committed and pending, but isn't
+      // pushed now, and its client outcome is the error.
+      fireWatchers(diff)
+      let outcome = Self.outcome(error)
+      Self.logFailure(log, name, outcome, on: "client")
+      client.resolve(outcome)
+      return
+    }
     requestPush(now: false)
     fireWatchers(diff)
     client.resolve(.success(data: result))
@@ -1487,7 +1500,8 @@ final class Engine {
         cleared: patchWrite.cleared, cookie: snapshot.cookie,
         lastMutationIDs: snapshot.lastMutationIDs)
     ])
-    context.processChanges(diff)
+    // A push that fails is a poke error: the client disconnects.
+    try context.processChanges(diff)
     fireWatchers(diff)
     markGotQueriesAuthoritative(ifStillOn: socketAtStart)
   }

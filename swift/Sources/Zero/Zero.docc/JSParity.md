@@ -136,6 +136,14 @@ is written or sent.
   materialized, such as a flipped `whereExists` over a subquery with a
   `limit`, makes `materialize` and `liveQuery` throw and `run` reject with
   the same message. Unlike JS, nothing stays registered with the server.
+- **Updates a query can't take.** When applying a change makes a view's
+  pipeline fail where JS throws (such as a `one` relationship that two rows
+  match, or a flipped `whereExists` over a `limit` that a new row reaches),
+  the views keep what they got of the change, and from then on, as in JS,
+  the client's views can't be updated: a poke that fails puts the
+  connection in the `error` state, a mutation that fails is committed and
+  its `client` outcome is the error, and later mutations, `materialize`,
+  and `run` fail with the same message.
 - **Nulls in columns that can't be null.** When the server sends null for
   a column the schema says isn't optional, a `String`, `Double`, `Int`, or
   `Bool` property reads as `""`, `0`, or `false`. JS hands the null

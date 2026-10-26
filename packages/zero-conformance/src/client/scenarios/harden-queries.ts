@@ -18,6 +18,8 @@ import {
   queryHash,
   start,
   syncPoke,
+  user,
+  comment,
 } from './helpers.ts';
 
 const allHash = queryHash('issues.all');
@@ -480,6 +482,72 @@ export const hardenQueryScenarios: Scenario[] = [
       {op: 'run', run: 'c', query: 'issues.withFirstComment', type: 'complete'},
       advance(10),
       ...syncPoke('p1', '00', '01', [], [put('issues', issue('i1'))]),
+    ],
+  },
+  {
+    name: 'error: a poke whose push throws',
+    steps: [
+      ...allView,
+      // Already registered, so the materialize that fails below sends
+      // nothing (JS registers it before failing; Swift doesn't).
+      {op: 'materialize', view: 'u', query: 'users.all'},
+      {op: 'materialize', view: 'w', query: 'issues.withAuthoredComments'},
+      advance(10),
+      ...syncPoke(
+        'p1',
+        '00',
+        '01',
+        [],
+        [
+          put('users', user('u1', 'A')),
+          put('comments', comment('c1', 'i1')),
+          put('issues', issue('i1')),
+        ],
+      ),
+      advance(10),
+      {op: 'materialize', view: 'x', query: 'users.all'},
+      mutate('m1', 'issue.create', {id: 'i2'}),
+      advance(5000),
+      connected,
+      advance(10),
+    ],
+  },
+  {
+    name: 'error: a mutation whose push throws',
+    steps: [
+      ...allView,
+      // Already registered, so the materialize that fails below sends
+      // nothing (JS registers it before failing; Swift doesn't).
+      {op: 'materialize', view: 'u', query: 'users.all'},
+      {op: 'materialize', view: 'w', query: 'issues.withAuthoredComments'},
+      advance(10),
+      ...syncPoke(
+        'p1',
+        '00',
+        '01',
+        [],
+        [put('users', user('u1', 'A')), put('comments', comment('c1', 'i1'))],
+      ),
+      mutate('m1', 'issue.create', {id: 'i1'}),
+      advance(10),
+      mutate('m2', 'issue.create', {id: 'i2'}),
+      {op: 'materialize', view: 'x', query: 'users.all'},
+      {op: 'run', run: 'r', query: 'issues.all'},
+      advance(10),
+      ...poke('p2', '01', '02', {lastMutationIDChanges: {$clientID: 2}}),
+      advance(10),
+    ],
+  },
+  {
+    name: 'error: a poke with two rows for a one relationship',
+    steps: [
+      ...allView,
+      {op: 'materialize', view: 'w', query: 'issues.withOneComment'},
+      advance(10),
+      ...syncPoke('p1', '00', '01', [], [put('issues', issue('i1'))]),
+      ...syncPoke('p2', '01', '02', [], [put('comments', comment('c1', 'i1'))]),
+      ...syncPoke('p3', '02', '03', [], [put('comments', comment('c2', 'i1'))]),
+      advance(10),
     ],
   },
   {
