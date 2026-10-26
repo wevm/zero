@@ -192,9 +192,7 @@ final class PokeHandler {
           for (clientID, lmid) in changes { merged.lastMutationIDChanges[clientID] = lmid }
         }
         if let patches = part.desiredQueriesPatches {
-          for (clientID, patch) in patches.sorted(by: {
-            StringCompare.utf16Less($0.key.string, $1.key.string)
-          }) {
+          for (clientID, patch) in patches.map({ ($0.clientID, $0.patch) }) {
             for op in patch {
               merged.patch.append(
                 Self.queryPatchOp(op) {

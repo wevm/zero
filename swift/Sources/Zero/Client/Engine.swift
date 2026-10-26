@@ -500,7 +500,8 @@ final class Engine {
 
   private func ping(_ token: Int, _ end: @escaping () -> Void) {
     let token = nextLoopToken()
-    send(.ping)
+    // Before the send, as JS sets `#onPong` first: a transport may deliver
+    // the pong from inside `send`.
     onPong = { [weak self] in
       self?.loop.microtask {
         guard let self, self.loopToken == token else { return }
@@ -508,6 +509,7 @@ final class Engine {
         self.iterate()
       }
     }
+    send(.ping)
     _ = scheduler.schedule(after: options.pingTimeoutMs) { [weak self] in
       guard let self, self.loopToken == token else { return }
       let error = ConnectionError.client(.pingTimeout, message: "Server ping request failed")
