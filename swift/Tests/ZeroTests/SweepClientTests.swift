@@ -9,16 +9,12 @@ import ZeroTesting
 @Suite @MainActor struct SweepClientTests {
   static let all = defineQuery("issues.all") { () in zql.issue.orderBy(\.id, .asc) }
   static let create = defineMutator("issue.create") { (tx, id: String) in
-    try tx.mutate.issue.insert([
-      "id": .string(id), "title": "", "description": "", "closed": false, "ownerId": .null,
-      "createdAt": 1,
-    ])
+    try tx.mutate.issue.insert(
+      Issue(id: id, title: "", description: "", closed: false, createdAt: 1))
   }
   static let createThenThrow = defineMutator("issue.createThenThrow") { (tx, id: String) in
-    try tx.mutate.issue.insert([
-      "id": .string(id), "title": "", "description": "", "closed": false, "ownerId": .null,
-      "createdAt": 1,
-    ])
+    try tx.mutate.issue.insert(
+      Issue(id: id, title: "", description: "", closed: false, createdAt: 1))
     throw ApplicationError("midway")
   }
 

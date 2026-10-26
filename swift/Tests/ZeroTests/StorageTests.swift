@@ -26,10 +26,8 @@ import ZeroTesting
   }
 
   let create = defineMutator("issue.create") { (tx, id: String) in
-    try tx.mutate.issue.insert([
-      "id": .string(id), "title": "", "description": "", "closed": false, "ownerId": .null,
-      "createdAt": 1,
-    ])
+    try tx.mutate.issue.insert(
+      Issue(id: id, title: "", description: "", closed: false, createdAt: 1))
   }
 
   func fileName(_ storageKey: String) -> String {

@@ -78,30 +78,30 @@ enum ClientApp {
 
   static let mutators: [JSONMutator] = [
     JSONMutator(name: "issue.create") { tx, args in
-      try tx.mutate.issue.insert(issueRow(args))
+      try tx.mutate.table("issue").insert(issueRow(args))
       return nil
     },
     JSONMutator(name: "issue.upsert") { tx, args in
-      try tx.mutate.issue.upsert(issueRow(args))
+      try tx.mutate.table("issue").upsert(issueRow(args))
       return nil
     },
     JSONMutator(name: "issue.update") { tx, args in
-      try tx.mutate.issue.update(Row(args?.objectValue ?? [:]))
+      try tx.mutate.table("issue").update(Row(args?.objectValue ?? [:]))
       return nil
     },
     JSONMutator(name: "issue.delete") { tx, args in
-      try tx.mutate.issue.delete(["id": args ?? .null])
+      try tx.mutate.table("issue").delete(["id": args ?? .null])
       return nil
     },
     JSONMutator(name: "issue.close") { tx, args in
-      try tx.mutate.issue.update(["id": args ?? .null, "closed": true])
+      try tx.mutate.table("issue").update(["id": args ?? .null, "closed": true])
       return nil
     },
     // Reads through the transaction, so a rebase can change what it writes.
     JSONMutator(name: "issue.closeAllOpen") { tx, _ in
       let open = try tx.run(zql("issue").where("closed", false))
       for issue in open.entries {
-        try tx.mutate.issue.update(["id": issue.row["id"] ?? .null, "closed": true])
+        try tx.mutate.table("issue").update(["id": issue.row["id"] ?? .null, "closed": true])
       }
       return nil
     },
@@ -111,12 +111,12 @@ enum ClientApp {
       if !existing.entries.isEmpty {
         throw ApplicationError("issue exists", details: ["id": field(args, "id", .null)])
       }
-      try tx.mutate.issue.insert(issueRow(args))
+      try tx.mutate.table("issue").insert(issueRow(args))
       return nil
     },
     // Returns data to the caller of the optimistic run.
     JSONMutator(name: "issue.createReturning") { tx, args in
-      try tx.mutate.issue.insert(issueRow(args))
+      try tx.mutate.table("issue").insert(issueRow(args))
       return ["created": field(args, "id", .null)]
     },
     JSONMutator(name: "issue.fail") { _, args in
@@ -124,7 +124,7 @@ enum ClientApp {
     },
     // Writes and then throws, so nothing it wrote may stay.
     JSONMutator(name: "issue.createThenFail") { tx, args in
-      try tx.mutate.issue.insert(issueRow(args))
+      try tx.mutate.table("issue").insert(issueRow(args))
       throw ApplicationError("failed after writing")
     },
     // Runs CRUD operations on any table, then throws, reads tables back, or
@@ -162,7 +162,7 @@ enum ClientApp {
       ]
       if let id = args?["id"] { row["id"] = id }
       if let issueID = args?["issueId"] { row["issueId"] = issueID }
-      try tx.mutate.comment.insert(row)
+      try tx.mutate.table("comment").insert(row)
       return nil
     },
   ]

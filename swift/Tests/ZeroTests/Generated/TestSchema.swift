@@ -3,7 +3,7 @@
 
 import Zero
 
-public struct Issue: ZeroRow, Codable, Hashable, Identifiable {
+public struct Issue: ZeroTable, Codable, Hashable, Identifiable {
   public var id: String
   public var title: String
   public var description: String
@@ -87,9 +87,63 @@ public struct Issue: ZeroRow, Codable, Hashable, Identifiable {
       "createdAt": createdAt.zeroValue,
     ]
   }
+
+  /// What `tx.mutate.issue.update` takes: the primary key, and the other columns to set. A column that is nil, or `.unchanged`, keeps its value.
+  public struct Update: ZeroColumnValues, Hashable {
+    public var id: String
+    public var title: String?
+    public var description: String?
+    public var closed: Bool?
+    public var ownerId: ColumnUpdate<String>
+    public var createdAt: Double?
+
+    public init(
+      id: String,
+      title: String? = nil,
+      description: String? = nil,
+      closed: Bool? = nil,
+      ownerId: ColumnUpdate<String> = .unchanged,
+      createdAt: Double? = nil
+    ) {
+      self.id = id
+      self.title = title
+      self.description = description
+      self.closed = closed
+      self.ownerId = ownerId
+      self.createdAt = createdAt
+    }
+
+    public var columnValues: Row {
+      var row = Row()
+      row["id"] = self.id.zeroValue
+      if let value = self.title { row["title"] = value.zeroValue }
+      if let value = self.description { row["description"] = value.zeroValue }
+      if let value = self.closed { row["closed"] = value.zeroValue }
+      if let value = self.ownerId.zeroValue { row["ownerId"] = value }
+      if let value = self.createdAt { row["createdAt"] = value.zeroValue }
+      return row
+    }
+  }
+
+  /// What `tx.mutate.issue.delete` takes: the primary key.
+  public struct Key: ZeroColumnValues, Hashable {
+    public var id: String
+
+    public init(
+      id: String
+    ) {
+      self.id = id
+    }
+
+    public var columnValues: Row {
+      var row = Row()
+      row["id"] = self.id.zeroValue
+      return row
+    }
+  }
 }
 
-public struct User: ZeroRow, Codable, Hashable, Identifiable {
+public struct User: ZeroTable, Codable, Hashable, Identifiable {
   public var id: String
   public var name: String
   public var metadata: UserMetadata?
@@ -135,9 +189,51 @@ public struct User: ZeroRow, Codable, Hashable, Identifiable {
       "metadata": metadata.zeroValue,
     ]
   }
+
+  /// What `tx.mutate.user.update` takes: the primary key, and the other columns to set. A column that is nil, or `.unchanged`, keeps its value.
+  public struct Update: ZeroColumnValues, Hashable {
+    public var id: String
+    public var name: String?
+    public var metadata: ColumnUpdate<UserMetadata>
+
+    public init(
+      id: String,
+      name: String? = nil,
+      metadata: ColumnUpdate<UserMetadata> = .unchanged
+    ) {
+      self.id = id
+      self.name = name
+      self.metadata = metadata
+    }
+
+    public var columnValues: Row {
+      var row = Row()
+      row["id"] = self.id.zeroValue
+      if let value = self.name { row["name"] = value.zeroValue }
+      if let value = self.metadata.zeroValue { row["metadata"] = value }
+      return row
+    }
+  }
+
+  /// What `tx.mutate.user.delete` takes: the primary key.
+  public struct Key: ZeroColumnValues, Hashable {
+    public var id: String
+
+    public init(
+      id: String
+    ) {
+      self.id = id
+    }
+
+    public var columnValues: Row {
+      var row = Row()
+      row["id"] = self.id.zeroValue
+      return row
+    }
+  }
 }
 
-public struct Comment: ZeroRow, Codable, Hashable, Identifiable {
+public struct Comment: ZeroTable, Codable, Hashable, Identifiable {
   public var id: String
   public var authorId: String
   public var issueId: String
@@ -205,9 +301,59 @@ public struct Comment: ZeroRow, Codable, Hashable, Identifiable {
       "createdAt": createdAt.zeroValue,
     ]
   }
+
+  /// What `tx.mutate.comment.update` takes: the primary key, and the other columns to set. A column that is nil, or `.unchanged`, keeps its value.
+  public struct Update: ZeroColumnValues, Hashable {
+    public var id: String
+    public var authorId: String?
+    public var issueId: String?
+    public var text: String?
+    public var createdAt: Double?
+
+    public init(
+      id: String,
+      authorId: String? = nil,
+      issueId: String? = nil,
+      text: String? = nil,
+      createdAt: Double? = nil
+    ) {
+      self.id = id
+      self.authorId = authorId
+      self.issueId = issueId
+      self.text = text
+      self.createdAt = createdAt
+    }
+
+    public var columnValues: Row {
+      var row = Row()
+      row["id"] = self.id.zeroValue
+      if let value = self.authorId { row["authorId"] = value.zeroValue }
+      if let value = self.issueId { row["issueId"] = value.zeroValue }
+      if let value = self.text { row["text"] = value.zeroValue }
+      if let value = self.createdAt { row["createdAt"] = value.zeroValue }
+      return row
+    }
+  }
+
+  /// What `tx.mutate.comment.delete` takes: the primary key.
+  public struct Key: ZeroColumnValues, Hashable {
+    public var id: String
+
+    public init(
+      id: String
+    ) {
+      self.id = id
+    }
+
+    public var columnValues: Row {
+      var row = Row()
+      row["id"] = self.id.zeroValue
+      return row
+    }
+  }
 }
 
-public struct Revision: ZeroRow, Codable, Hashable, Identifiable {
+public struct Revision: ZeroTable, Codable, Hashable, Identifiable {
   public var id: String
   public var authorId: String
   public var commentId: String
@@ -264,9 +410,55 @@ public struct Revision: ZeroRow, Codable, Hashable, Identifiable {
       "text": text.zeroValue,
     ]
   }
+
+  /// What `tx.mutate.revision.update` takes: the primary key, and the other columns to set. A column that is nil, or `.unchanged`, keeps its value.
+  public struct Update: ZeroColumnValues, Hashable {
+    public var id: String
+    public var authorId: String?
+    public var commentId: String?
+    public var text: String?
+
+    public init(
+      id: String,
+      authorId: String? = nil,
+      commentId: String? = nil,
+      text: String? = nil
+    ) {
+      self.id = id
+      self.authorId = authorId
+      self.commentId = commentId
+      self.text = text
+    }
+
+    public var columnValues: Row {
+      var row = Row()
+      row["id"] = self.id.zeroValue
+      if let value = self.authorId { row["authorId"] = value.zeroValue }
+      if let value = self.commentId { row["commentId"] = value.zeroValue }
+      if let value = self.text { row["text"] = value.zeroValue }
+      return row
+    }
+  }
+
+  /// What `tx.mutate.revision.delete` takes: the primary key.
+  public struct Key: ZeroColumnValues, Hashable {
+    public var id: String
+
+    public init(
+      id: String
+    ) {
+      self.id = id
+    }
+
+    public var columnValues: Row {
+      var row = Row()
+      row["id"] = self.id.zeroValue
+      return row
+    }
+  }
 }
 
-public struct Label: ZeroRow, Codable, Hashable, Identifiable {
+public struct Label: ZeroTable, Codable, Hashable, Identifiable {
   public var id: String
   public var name: String
 
@@ -306,9 +498,47 @@ public struct Label: ZeroRow, Codable, Hashable, Identifiable {
       "name": name.zeroValue,
     ]
   }
+
+  /// What `tx.mutate.label.update` takes: the primary key, and the other columns to set. A column that is nil, or `.unchanged`, keeps its value.
+  public struct Update: ZeroColumnValues, Hashable {
+    public var id: String
+    public var name: String?
+
+    public init(
+      id: String,
+      name: String? = nil
+    ) {
+      self.id = id
+      self.name = name
+    }
+
+    public var columnValues: Row {
+      var row = Row()
+      row["id"] = self.id.zeroValue
+      if let value = self.name { row["name"] = value.zeroValue }
+      return row
+    }
+  }
+
+  /// What `tx.mutate.label.delete` takes: the primary key.
+  public struct Key: ZeroColumnValues, Hashable {
+    public var id: String
+
+    public init(
+      id: String
+    ) {
+      self.id = id
+    }
+
+    public var columnValues: Row {
+      var row = Row()
+      row["id"] = self.id.zeroValue
+      return row
+    }
+  }
 }
 
-public struct IssueLabel: ZeroRow, Codable, Hashable {
+public struct IssueLabel: ZeroTable, Codable, Hashable {
   public var issueId: String
   public var labelId: String
 
@@ -339,6 +569,48 @@ public struct IssueLabel: ZeroRow, Codable, Hashable {
       "issueId": issueId.zeroValue,
       "labelId": labelId.zeroValue,
     ]
+  }
+
+  /// What `tx.mutate.issueLabel.update` takes: the primary key, and the other columns to set. A column that is nil, or `.unchanged`, keeps its value.
+  public struct Update: ZeroColumnValues, Hashable {
+    public var issueId: String
+    public var labelId: String
+
+    public init(
+      issueId: String,
+      labelId: String
+    ) {
+      self.issueId = issueId
+      self.labelId = labelId
+    }
+
+    public var columnValues: Row {
+      var row = Row()
+      row["issueId"] = self.issueId.zeroValue
+      row["labelId"] = self.labelId.zeroValue
+      return row
+    }
+  }
+
+  /// What `tx.mutate.issueLabel.delete` takes: the primary key.
+  public struct Key: ZeroColumnValues, Hashable {
+    public var issueId: String
+    public var labelId: String
+
+    public init(
+      issueId: String,
+      labelId: String
+    ) {
+      self.issueId = issueId
+      self.labelId = labelId
+    }
+
+    public var columnValues: Row {
+      var row = Row()
+      row["issueId"] = self.issueId.zeroValue
+      row["labelId"] = self.labelId.zeroValue
+      return row
+    }
   }
 }
 
@@ -505,3 +777,13 @@ public struct ZQL: Sendable {
 }
 
 public let zql = ZQL()
+
+/// The typed CRUD operations in a mutator, one per table: `tx.mutate.issue.insert(…)`.
+extension TransactionMutate {
+  public var issue: TypedTableMutator<Issue> { TypedTableMutator(self) }
+  public var user: TypedTableMutator<User> { TypedTableMutator(self) }
+  public var comment: TypedTableMutator<Comment> { TypedTableMutator(self) }
+  public var revision: TypedTableMutator<Revision> { TypedTableMutator(self) }
+  public var label: TypedTableMutator<Label> { TypedTableMutator(self) }
+  public var issueLabel: TypedTableMutator<IssueLabel> { TypedTableMutator(self) }
+}

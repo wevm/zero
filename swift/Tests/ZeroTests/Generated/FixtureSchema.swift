@@ -3,7 +3,7 @@
 
 import Zero
 
-public struct FxProject: ZeroRow, Codable, Hashable, Identifiable {
+public struct FxProject: ZeroTable, Codable, Hashable, Identifiable {
   public var id: String
   public var name: String
   public var `default`: Bool
@@ -78,9 +78,67 @@ public struct FxProject: ZeroRow, Codable, Hashable, Identifiable {
       "archivedStatus": archivedStatus.zeroValue,
     ]
   }
+
+  /// What `tx.mutate.project.update` takes: the primary key, and the other columns to set. A column that is nil, or `.unchanged`, keeps its value.
+  public struct Update: ZeroColumnValues, Hashable {
+    public var id: String
+    public var name: String?
+    public var `default`: Bool?
+    public var status: FxStatus?
+    public var settings: FxSettings?
+    public var position: Int?
+    public var archivedStatus: ColumnUpdate<FxStatus>
+
+    public init(
+      id: String,
+      name: String? = nil,
+      `default`: Bool? = nil,
+      status: FxStatus? = nil,
+      settings: FxSettings? = nil,
+      position: Int? = nil,
+      archivedStatus: ColumnUpdate<FxStatus> = .unchanged
+    ) {
+      self.id = id
+      self.name = name
+      self.`default` = `default`
+      self.status = status
+      self.settings = settings
+      self.position = position
+      self.archivedStatus = archivedStatus
+    }
+
+    public var columnValues: Row {
+      var row = Row()
+      row["id"] = self.id.zeroValue
+      if let value = self.name { row["name"] = value.zeroValue }
+      if let value = self.`default` { row["default"] = value.zeroValue }
+      if let value = self.status { row["status"] = value.zeroValue }
+      if let value = self.settings { row["settings"] = value.zeroValue }
+      if let value = self.position { row["position"] = value.zeroValue }
+      if let value = self.archivedStatus.zeroValue { row["archivedStatus"] = value }
+      return row
+    }
+  }
+
+  /// What `tx.mutate.project.delete` takes: the primary key.
+  public struct Key: ZeroColumnValues, Hashable {
+    public var id: String
+
+    public init(
+      id: String
+    ) {
+      self.id = id
+    }
+
+    public var columnValues: Row {
+      var row = Row()
+      row["id"] = self.id.zeroValue
+      return row
+    }
+  }
 }
 
-public struct FxQuery: ZeroRow, Codable, Hashable, Identifiable {
+public struct FxQuery: ZeroTable, Codable, Hashable, Identifiable {
   public var id: String
   public var projectID: String
   public var text: String
@@ -132,9 +190,55 @@ public struct FxQuery: ZeroRow, Codable, Hashable, Identifiable {
       "class": `class`.zeroValue,
     ]
   }
+
+  /// What `tx.mutate.query.update` takes: the primary key, and the other columns to set. A column that is nil, or `.unchanged`, keeps its value.
+  public struct Update: ZeroColumnValues, Hashable {
+    public var id: String
+    public var projectID: String?
+    public var text: String?
+    public var `class`: ColumnUpdate<String>
+
+    public init(
+      id: String,
+      projectID: String? = nil,
+      text: String? = nil,
+      `class`: ColumnUpdate<String> = .unchanged
+    ) {
+      self.id = id
+      self.projectID = projectID
+      self.text = text
+      self.`class` = `class`
+    }
+
+    public var columnValues: Row {
+      var row = Row()
+      row["id"] = self.id.zeroValue
+      if let value = self.projectID { row["projectID"] = value.zeroValue }
+      if let value = self.text { row["text"] = value.zeroValue }
+      if let value = self.`class`.zeroValue { row["class"] = value }
+      return row
+    }
+  }
+
+  /// What `tx.mutate.query.delete` takes: the primary key.
+  public struct Key: ZeroColumnValues, Hashable {
+    public var id: String
+
+    public init(
+      id: String
+    ) {
+      self.id = id
+    }
+
+    public var columnValues: Row {
+      var row = Row()
+      row["id"] = self.id.zeroValue
+      return row
+    }
+  }
 }
 
-public struct FxMember: ZeroRow, Codable, Hashable {
+public struct FxMember: ZeroTable, Codable, Hashable {
   public var projectID: String
   public var userID: String
   public var role: FxMemberRole
@@ -172,9 +276,55 @@ public struct FxMember: ZeroRow, Codable, Hashable {
       "role": role.zeroValue,
     ]
   }
+
+  /// What `tx.mutate.member.update` takes: the primary key, and the other columns to set. A column that is nil, or `.unchanged`, keeps its value.
+  public struct Update: ZeroColumnValues, Hashable {
+    public var projectID: String
+    public var userID: String
+    public var role: FxMemberRole?
+
+    public init(
+      projectID: String,
+      userID: String,
+      role: FxMemberRole? = nil
+    ) {
+      self.projectID = projectID
+      self.userID = userID
+      self.role = role
+    }
+
+    public var columnValues: Row {
+      var row = Row()
+      row["projectID"] = self.projectID.zeroValue
+      row["userID"] = self.userID.zeroValue
+      if let value = self.role { row["role"] = value.zeroValue }
+      return row
+    }
+  }
+
+  /// What `tx.mutate.member.delete` takes: the primary key.
+  public struct Key: ZeroColumnValues, Hashable {
+    public var projectID: String
+    public var userID: String
+
+    public init(
+      projectID: String,
+      userID: String
+    ) {
+      self.projectID = projectID
+      self.userID = userID
+    }
+
+    public var columnValues: Row {
+      var row = Row()
+      row["projectID"] = self.projectID.zeroValue
+      row["userID"] = self.userID.zeroValue
+      return row
+    }
+  }
 }
 
-public struct FxPerson: ZeroRow, Codable, Hashable, Identifiable {
+public struct FxPerson: ZeroTable, Codable, Hashable, Identifiable {
   public var id: String
   public var name: String
   public var nickname: String?
@@ -211,6 +361,48 @@ public struct FxPerson: ZeroRow, Codable, Hashable, Identifiable {
       "name": name.zeroValue,
       "nickname": nickname.zeroValue,
     ]
+  }
+
+  /// What `tx.mutate.person.update` takes: the primary key, and the other columns to set. A column that is nil, or `.unchanged`, keeps its value.
+  public struct Update: ZeroColumnValues, Hashable {
+    public var id: String
+    public var name: String?
+    public var nickname: ColumnUpdate<String>
+
+    public init(
+      id: String,
+      name: String? = nil,
+      nickname: ColumnUpdate<String> = .unchanged
+    ) {
+      self.id = id
+      self.name = name
+      self.nickname = nickname
+    }
+
+    public var columnValues: Row {
+      var row = Row()
+      row["id"] = self.id.zeroValue
+      if let value = self.name { row["name"] = value.zeroValue }
+      if let value = self.nickname.zeroValue { row["nickname"] = value }
+      return row
+    }
+  }
+
+  /// What `tx.mutate.person.delete` takes: the primary key.
+  public struct Key: ZeroColumnValues, Hashable {
+    public var id: String
+
+    public init(
+      id: String
+    ) {
+      self.id = id
+    }
+
+    public var columnValues: Row {
+      var row = Row()
+      row["id"] = self.id.zeroValue
+      return row
+    }
   }
 }
 
@@ -372,3 +564,11 @@ public struct FixtureZQL: Sendable {
 }
 
 public let fixtureZQL = FixtureZQL()
+
+/// The typed CRUD operations in a mutator, one per table: `tx.mutate.project.insert(…)`.
+extension TransactionMutate {
+  public var project: TypedTableMutator<FxProject> { TypedTableMutator(self) }
+  public var query: TypedTableMutator<FxQuery> { TypedTableMutator(self) }
+  public var member: TypedTableMutator<FxMember> { TypedTableMutator(self) }
+  public var person: TypedTableMutator<FxPerson> { TypedTableMutator(self) }
+}

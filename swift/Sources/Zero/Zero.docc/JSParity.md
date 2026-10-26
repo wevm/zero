@@ -101,10 +101,20 @@ query.
 | JS                                                                                 | Swift                                                                                                |
 | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | `defineMutators({issue: {create: defineMutator(async ({tx, args, ctx}) => ...)}})` | `defineMutator("issue.create") { (tx, args: Args, ctx: Context) in ... }`, a plain `throws` function |
-| `await tx.mutate.issue.insert(row)`                                                | `try tx.mutate.issue.insert(row)`                                                                    |
+| `await tx.mutate.issue.insert(row)`, `.upsert(row)`                                | `try tx.mutate.issue.insert(Issue(...))`, `.upsert(...)`                                             |
+| `await tx.mutate.issue.update({id, title})`                                        | `try tx.mutate.issue.update(.init(id: id, title: title))`                                            |
+| `await tx.mutate.issue.delete({id})`                                               | `try tx.mutate.issue.delete(.init(id: id))`                                                          |
 | `await tx.run(query)`                                                              | `try tx.run(query)`                                                                                  |
 | `tx.location`, `tx.reason`, `tx.clientID`, `tx.mutationID`                         | the same                                                                                             |
 | `throw new ApplicationError(message, {details})`                                   | `throw ApplicationError(message, details:)`                                                          |
+
+`update` takes the row struct's generated `Update`: the primary key, and
+the columns to set. A column left nil keeps its value, as an `undefined`
+one does in JS. An optional column is a ``ColumnUpdate``, so leaving it
+(`.unchanged`, the default) differs from setting it to null (`.null`):
+`.init(id: id, assigneeID: .null)` unassigns, and a literal or `.set(x)`
+sets it. `tx.mutate.table("issue")` is the untyped ``TableMutator``, with
+values keyed by column name.
 
 Calling a mutator that isn't registered with the `Zero` throws in JS. In
 Swift `mutate` returns a ``MutatorResult`` whose `client` and `server` are

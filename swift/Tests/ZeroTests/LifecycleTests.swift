@@ -10,10 +10,8 @@ import ZeroTesting
   static let all = defineQuery("issues.all") { () in zql.issue.orderBy(\.id, .asc) }
   static let closed = defineQuery("issues.closed") { () in zql.issue.where(\.closed, true) }
   static let create = defineMutator("issue.create") { (tx, id: String) in
-    try tx.mutate.issue.insert([
-      "id": .string(id), "title": "", "description": "", "closed": false, "ownerId": .null,
-      "createdAt": 1,
-    ])
+    try tx.mutate.issue.insert(
+      Issue(id: id, title: "", description: "", closed: false, createdAt: 1))
   }
 
   let scheduler = ManualScheduler(now: 1_700_000_000_000)

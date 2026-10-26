@@ -173,3 +173,28 @@ export const memberEnum = createSchema({
 export const clashingQueries = createSchema({
   tables: [one('a-b'), one('a_b'), one('init')],
 });
+
+/** Tables named after the members `TransactionMutate` already has. */
+export const mutateTables = createSchema({
+  tables: [one('table'), one('insert'), one('upsert'), one('tx')],
+});
+
+/**
+ * Columns named after a row's `Update` and `Key` and the locals of their
+ * `columnValues`, with optional and nullable columns and a compound key.
+ */
+export const updateColumns = createSchema({
+  tables: [
+    table('t')
+      .columns({
+        Update: string(),
+        Key: string(),
+        row: string(),
+        value: string().optional(),
+        kind: enumeration<'a' | 'b'>().optional(),
+        doc: json<{n: number} | null>(),
+        tags: json<string[]>().optional(),
+      })
+      .primaryKey('Update', 'Key'),
+  ],
+});

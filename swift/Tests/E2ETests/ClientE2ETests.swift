@@ -26,7 +26,7 @@ enum E2EApp {
         createdAt: 100))
   }
   static let close = defineMutator("issue.close") { (tx, id: String) in
-    try tx.mutate.issue.update(["id": .string(id), "closed": true])
+    try tx.mutate.issue.update(.init(id: id, closed: true))
   }
 }
 
