@@ -170,42 +170,6 @@ export const hardenMutationScenarios: Scenario[] = [
     ],
   },
   {
-    name: 'harden crud: a number primary key and a string one',
-    steps: [
-      viewAll,
-      connected,
-      ops('m1', [['insert', 'issue', row('5')]]),
-      ops('m2', [['insert', 'issue', row('x', {id: 5, title: 'number'})]]),
-      ops('m3', [['upsert', 'issue', {id: 5, title: 'upsert by number'}]], {
-        read: ['issue'],
-      }),
-      ops('m4', [['delete', 'issue', {id: 5}]], {read: ['issue']}),
-    ],
-  },
-  {
-    name: 'harden crud: a number primary key among string ones',
-    steps: [
-      viewAll,
-      connected,
-      ops('m1', [['insert', 'issue', row('a')]]),
-      ops('m2', [['insert', 'issue', row('x', {id: 7})]]),
-      ops('m3', [['insert', 'issue', row('b')]], {read: ['issue']}),
-    ],
-  },
-  {
-    name: 'harden crud: a value of the wrong type in a sorted column',
-    steps: [
-      {op: 'materialize', view: 'open', query: 'issues.open'},
-      connected,
-      ops('m1', [['insert', 'issue', row('a', {createdAt: 2})]]),
-      ops('m2', [['insert', 'issue', row('b', {createdAt: 'soon'})]]),
-      ops('m3', [['update', 'issue', {id: 'a', createdAt: true}]]),
-      ops('m4', [['insert', 'issue', row('c', {closed: 'no'})]], {
-        read: ['issue'],
-      }),
-    ],
-  },
-  {
     name: 'harden throw: a mutator that throws after updating and deleting leaves the rows alone',
     steps: [
       viewAll,

@@ -148,6 +148,18 @@ is written or sent.
   a column the schema says isn't optional, a `String`, `Double`, `Int`, or
   `Bool` property reads as `""`, `0`, or `false`. JS hands the null
   through. An enum or JSON column still fails to read.
+- **Values of the wrong type for their column.** JS can't compare values
+  of different types, such as a number in a column of strings: a mutation
+  that writes one to a column a view sorts by fails, and so does every
+  mutation after it, and a poke that brings one disconnects the client
+  again after every reconnect. Swift sorts such a value with the others
+  (by type, then by its JSON) and keeps working. A mutator can only write
+  one through the untyped `tx.mutate.<table>` calls; the server rejects
+  such a mutation, and its row goes when the next poke comes.
+- **Error messages.** Messages about data the client can't read follow
+  valita's wording, as JS's do. A server frame that isn't JSON is the
+  exception: JS shows the engine's `JSON.parse` message, and Swift its
+  own.
 - **JSON objects.** A `JSONValue` object is a ``JSONObject``, which keeps
   its keys as a JS object does: integer-like keys first in ascending order,
   then the others in the order they were set. Keys are compared by UTF-16

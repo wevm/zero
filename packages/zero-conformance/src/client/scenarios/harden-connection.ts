@@ -477,28 +477,6 @@ export const hardenConnectionScenarios: Scenario[] = [
     ],
   },
   {
-    name: 'poke: a row with a column of the wrong type',
-    steps: [
-      {op: 'materialize', view: 'v', query: 'issues.open'},
-      connected,
-      ...syncPoke(
-        'p1',
-        null,
-        '01',
-        [queryHash('issues.open')],
-        [
-          put('issues', issue('i1', {createdAt: 5})),
-          {
-            op: 'put',
-            tableName: 'issues',
-            value: {...issue('i2'), createdAt: 'yesterday'},
-          },
-        ],
-      ),
-      advance(10),
-    ],
-  },
-  {
     name: 'poke: a row with a numeric primary key in a string column',
     steps: [
       {op: 'materialize', view: 'v', query: 'issues.all'},
@@ -662,10 +640,6 @@ export const hardenConnectionScenarios: Scenario[] = [
       {op: 'socketClose', code: 1006},
       connected,
     ],
-  },
-  {
-    name: 'message: malformed JSON text',
-    steps: [start, connected, {op: 'receiveText', text: '{not json'}],
   },
   {
     name: 'message: a binary frame of an unknown type',
