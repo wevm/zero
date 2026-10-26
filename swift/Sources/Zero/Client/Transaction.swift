@@ -195,7 +195,9 @@ public struct TypedTableMutator<R: ZeroTable> {
 
   /// Inserts a row unless one with its primary key exists.
   public func insert(_ row: R) throws { try tx.insert(R.tableName, row.columnValues) }
-  /// Inserts a row, or replaces the columns of the existing one.
+  /// Inserts a row, or replaces the columns of the existing one. Every
+  /// column is written, so an optional one left nil sets null; JS keeps a
+  /// column the value leaves out. Use `update` to set only some columns.
   public func upsert(_ row: R) throws { try tx.upsert(R.tableName, row.columnValues) }
   /// Sets the columns of the row with the primary key in `value` that
   /// `value` sets, if the row exists.

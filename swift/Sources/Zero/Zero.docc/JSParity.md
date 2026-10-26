@@ -108,6 +108,10 @@ query.
 | `tx.location`, `tx.reason`, `tx.clientID`, `tx.mutationID`                         | the same                                                                                             |
 | `throw new ApplicationError(message, {details})`                                   | `throw ApplicationError(message, details:)`                                                          |
 
+`upsert` takes the whole row struct, so it writes every column: an
+optional column left nil sets null on an existing row, where JS keeps a
+column the value leaves out.
+
 `update` takes the row struct's generated `Update`: the primary key, and
 the columns to set. A column left nil keeps its value, as an `undefined`
 one does in JS. An optional column is a ``ColumnUpdate``, so leaving it
