@@ -73,7 +73,7 @@ jobs:
           name: generated-vectors
           path: packages/zero-conformance/generated/
       - name: Install system libraries
-        run: apt-get update && apt-get install -y --no-install-recommends libsqlite3-dev
+        run: apt-get update && apt-get install -y --no-install-recommends libsqlite3-dev jq
       - name: Format
         run: swift format lint --strict --recursive Sources Tests Package.swift
       - name: Build
@@ -84,6 +84,12 @@ jobs:
       # Apple-only; swift-macos.yml checks it.
       - name: Docs
         run: scripts/docs.sh Zero ZeroTesting
+      # Fails on a public API break since the last release that no changeset
+      # declares. The checkout belongs to another user in the container.
+      - name: API breaks
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          scripts/api-breaks.sh
       # zbugs' Swift port, checked against zbugs' TS queries and mutators on
       # the samples in drift-samples.ts (the vectors job checks the record is
       # current).
