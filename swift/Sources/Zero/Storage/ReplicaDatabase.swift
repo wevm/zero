@@ -1,5 +1,6 @@
 import CSQLite
 import Dispatch
+import Synchronization
 
 /// Where a client keeps its replica between launches.
 public enum ZeroStorage: Sendable, Hashable {
@@ -175,8 +176,18 @@ final class ReplicaDatabase {
   private static var open: [String: ReplicaDatabase] = [:]
   /// The profile ID of memory databases, one per process as in JS.
   private static var memoryProfileID: String?
+  /// When each SQLite file was last opened or closed in this process, as a
+  /// count of such events, so the collector skips a file used after it
+  /// started reading the directory.
+  private static var lastUsed: [String: Int] = [:]
+  private static var uses = 0
   /// The cookie of each client group's stored snapshot.
   private var snapshotCookies: [String: JSONValue] = [:]
+
+  private static func markUsed(_ path: String) {
+    lastUsed[path] = uses
+    uses += 1
+  }
 
   private init(name: String, key: String, sqlite: SQLiteStore?) {
     self.name = name
@@ -211,6 +222,7 @@ final class ReplicaDatabase {
         }
         db.users = 1
         open[path] = db
+        markUsed(path)
         return (db, nil)
       } catch {
         return (memory(name: name), StorageFailure(error))
@@ -245,7 +257,10 @@ final class ReplicaDatabase {
   func release() {
     users -= 1
     guard users == 0, let sqlite else { return }
-    if Self.open[key] === self { Self.open[key] = nil }
+    if Self.open[key] === self {
+      Self.open[key] = nil
+      Self.markUsed(key)
+    }
     if let error = sqlite.close() { fail(StorageFailure(error)) }
   }
 
@@ -278,6 +293,7 @@ final class ReplicaDatabase {
   func flush() {
     guard let sqlite else { return }
     if let error = sqlite.flush() { fail(StorageFailure(error)) }
+    Self.finishCollections(of: sqlite)
   }
 
   private func load(from db: SQLiteDatabase) throws {
@@ -540,13 +556,25 @@ final class ReplicaDatabase {
     return result
   }
 
-  /// Deletes, in the background, the other databases in this database's
-  /// directory whose clients all last ran more than `maxAge` ago. A
-  /// database open in this process is kept.
+  /// Deletes the other databases in this database's directory whose
+  /// clients all last ran more than `maxAge` ago (`collectIDBDatabases`).
+  /// They are found in the background; then, on the main actor, those
+  /// opened or closed in this process since are kept, and the others moved
+  /// out of the way before the background deletes them, so a client that
+  /// opens one meanwhile starts a new file rather than writing to a deleted
+  /// one.
   func collectDatabases(now: Double, maxAge: Double) {
     guard let sqlite, failure == nil, !dropped else { return }
-    let keep = Set(Self.open.keys)
-    sqlite.collectDatabases(keeping: keep, now: now, maxAge: maxAge)
+    sqlite.findCollectable(now: now, maxAge: maxAge, since: Self.uses)
+  }
+
+  /// Deletes the databases `store`'s collections found.
+  static func finishCollections(of store: SQLiteStore) {
+    for found in store.takeCollectable() {
+      for path in found.paths where open[path] == nil && lastUsed[path, default: -1] < found.since {
+        SQLiteStore.retire(path)
+      }
+    }
   }
 
   // MARK: - Names and places
@@ -589,10 +617,18 @@ final class SQLiteStore: @unchecked Sendable {
   private var failed = false
   /// The writes that found the database busy, written with the next.
   private var retrying: [StorageOp] = []
+  /// The databases collections found, for the main actor to delete.
+  private let collectable = Mutex<[Collectable]>([])
   /// How many times `flush()` and `close()` try the writes kept because
   /// the database was busy, each waiting out the busy timeout.
   static let busyRetries = 1
 
+  /// Databases a collection found unused, and when it started, in
+  /// `ReplicaDatabase`'s count of opens and closes.
+  struct Collectable: Sendable {
+    let paths: [String]
+    let since: Int
+  }
   let path: String
   let directory: String
 
@@ -775,16 +811,30 @@ final class SQLiteStore: @unchecked Sendable {
     return result
   }
 
-  /// See `ReplicaDatabase.collectDatabases`.
-  func collectDatabases(keeping: Set<String>, now: Double, maxAge: Double) {
+  /// Finds, in the background, the other databases of the directory no
+  /// client used for `maxAge`, for `ReplicaDatabase.finishCollections`.
+  /// Only databases of ours are considered: of this layout version or an
+  /// older one, with the name they hold, and of a format this client knows
+  /// (`gatherDatabaseInfoForCollect` never collects a newer format).
+  func findCollectable(now: Double, maxAge: Double, since: Int) {
     let directory = self.directory
-    queue.async {
-      for path in Self.databaseFiles(in: directory) {
-        guard !keeping.contains(path) else { continue }
+    let own = path
+    queue.async { [self] in
+      Self.deleteRetired(in: directory)
+      var paths: [String] = []
+      for path in Self.databaseFiles(in: directory) where path != own {
+        guard let layout = Self.layoutVersion(ofFile: path),
+          layout <= ReplicaDatabase.sqliteLayoutVersion
+        else { continue }
+        var name: String?
         var recent = false
         do {
           let db = try SQLiteDatabase(path: path)
           defer { db.close() }
+          try db.query("SELECT value FROM meta WHERE key = 'name'") { name = $0.text(0) }
+          guard let name, let format = Self.formatVersion(ofName: name),
+            format <= ReplicaDatabase.formatVersion
+          else { continue }
           try db.query("SELECT max(heartbeat) FROM clients") { row in
             recent = now - row.real(0) < maxAge
           }
@@ -792,9 +842,63 @@ final class SQLiteStore: @unchecked Sendable {
           // Not a database of ours, or busy: leave it.
           continue
         }
-        if !recent { _ = Self.unlinkDatabase(path) }
+        if !recent { paths.append(path) }
+      }
+      guard !paths.isEmpty else { return }
+      collectable.withLock { $0.append(Collectable(paths: paths, since: since)) }
+      Task { @MainActor [self] in ReplicaDatabase.finishCollections(of: self) }
+    }
+  }
+
+  /// What the collections found since the last call.
+  func takeCollectable() -> [Collectable] {
+    collectable.withLock { found in
+      defer { found = [] }
+      return found
+    }
+  }
+
+  /// The layout version in a file name `zero-v<version>-<hash>.sqlite`.
+  static func layoutVersion(ofFile path: String) -> Int? {
+    let name = path.split(separator: "/").last.map(String.init) ?? path
+    guard name.hasPrefix("zero-v") else { return nil }
+    return Int(name.dropFirst("zero-v".count).prefix { $0 != "-" })
+  }
+
+  /// The Replicache format version in `rep:<name>:<format>:<schemaVersion>`.
+  static func formatVersion(ofName name: String) -> Int? {
+    let parts = name.split(separator: ":", omittingEmptySubsequences: false)
+    guard name.hasPrefix("rep:"), parts.count >= 4 else { return nil }
+    return Int(parts[parts.count - 2])
+  }
+
+  private static let retiredMarker = ".collected-"
+
+  /// Moves the database at `path` out of the way and deletes it in the
+  /// background. A rename, so a client opening `path` from now on starts a
+  /// new file, and cheap enough for the main actor.
+  static func retire(_ path: String) {
+    let retired = path + retiredMarker + randomID()
+    // The WAL first: a database without its WAL loses the latest commits,
+    // a new one with an old WAL would be worse.
+    for suffix in ["-wal", "-shm", ""] { _ = rename(path + suffix, retired + suffix) }
+    DispatchQueue.global(qos: .utility).async { _ = unlinkDatabase(retired) }
+  }
+
+  /// Deletes the databases retired before the app last stopped.
+  private static func deleteRetired(in directory: String) {
+    guard let dir = opendir(directory) else { return }
+    var files: [String] = []
+    while let entry = readdir(dir) {
+      let name = withUnsafeBytes(of: entry.pointee.d_name) { raw in
+        String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
+      }
+      if name.hasPrefix("zero-"), name.contains(retiredMarker) {
+        files.append(directory + "/" + name)
       }
     }
+    closedir(dir)
+    for file in files { _ = unlink(file) }
   }
 
   private static func json(_ v: JSONValue) -> SQLiteDatabase.Value {

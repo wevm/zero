@@ -198,10 +198,15 @@ Rationale:
   minutes, clients inactive for a day are deleted (and the server told with
   `deleteClients`, and in `initConnection` until it confirms) and client
   groups without clients are dropped; five minutes after launch and then every
-  12 hours, databases no client used for two days are deleted. A group is
-  disabled after `ClientNotFound`, `SchemaVersionNotSupported`, or a 1009
-  close, and the database dropped after `InvalidConnectionRequestBaseCookie`
-  or `InvalidConnectionRequestLastMutationID`.
+  12 hours, databases no client used for two days are deleted. Only our
+  databases are: of this layout version or an older one, holding their name,
+  and of a format the client knows. The collector reads the files in the
+  background; the main actor then keeps any opened or closed since and renames
+  the others away before they are deleted, so a client opening one meanwhile
+  starts a new file. A group is disabled after `ClientNotFound`,
+  `SchemaVersionNotSupported`, or a 1009 close, and the database dropped after
+  `InvalidConnectionRequestBaseCookie` or
+  `InvalidConnectionRequestLastMutationID`.
 - `ZeroStorage.memory` keeps databases for the life of the process, keyed by
   name, like JS `kvStore: 'mem'`. The client scenarios run on both storages.
 - Default location `Library/Application Support/Zero` on Apple platforms and
