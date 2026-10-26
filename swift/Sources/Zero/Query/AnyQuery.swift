@@ -37,9 +37,11 @@ public struct StaticParameter: Sendable, Hashable {
 /// named by string; the typed builder wraps this one.
 ///
 /// The AST is always normalized: each step builds its part of the AST in
-/// normalized form. Misuse that JS reports by throwing, such as an unknown
-/// relationship or a `limit` inside a junction relationship, is a
-/// programming error here and stops the program.
+/// normalized form. Misuse that JS reports by throwing from the builder,
+/// such as a negative `limit` or a `limit` inside a junction relationship,
+/// leaves that step out and makes the query invalid: materializing,
+/// running, or preloading it throws JS's message. An unknown relationship
+/// is a programming error and stops the program.
 public struct AnyQuery: Sendable {
   public let schema: ZeroSchema
   public let table: String
@@ -49,6 +51,8 @@ public struct AnyQuery: Sendable {
   public let customQueryID: CustomQueryID?
   /// The two-hop relationship this query is the destination of, if any.
   let currentJunction: String?
+  /// Why the query is invalid: the first misuse JS's builder throws for.
+  let invalid: String?
 
   public init(_ schema: ZeroSchema, _ table: String, system: AST.System = .client) {
     self.init(
@@ -58,7 +62,7 @@ public struct AnyQuery: Sendable {
 
   init(
     schema: ZeroSchema, table: String, ast: AST, format: Format, system: AST.System,
-    customQueryID: CustomQueryID?, currentJunction: String?
+    customQueryID: CustomQueryID?, currentJunction: String?, invalid: String? = nil
   ) {
     self.schema = schema
     self.table = table
@@ -67,13 +71,20 @@ public struct AnyQuery: Sendable {
     self.system = system
     self.customQueryID = customQueryID
     self.currentJunction = currentJunction
+    self.invalid = invalid
   }
 
-  private func with(ast: AST? = nil, format: Format? = nil) -> AnyQuery {
+  private func with(
+    ast: AST? = nil, format: Format? = nil, invalid: String? = nil
+  ) -> AnyQuery {
     AnyQuery(
       schema: schema, table: table, ast: ast ?? self.ast, format: format ?? self.format,
-      system: system, customQueryID: customQueryID, currentJunction: currentJunction)
+      system: system, customQueryID: customQueryID, currentJunction: currentJunction,
+      invalid: self.invalid ?? invalid)
   }
+
+  /// This query, unchanged but invalid: a builder step JS throws for.
+  private func invalidated(_ message: String) -> AnyQuery { with(invalid: message) }
 
   private func base(_ table: String, alias: String, format: Format, junction: String?) -> AnyQuery {
     AnyQuery(
@@ -91,7 +102,8 @@ public struct AnyQuery: Sendable {
   public func nameAndArgs(_ name: String, _ args: [JSONValue]) -> AnyQuery {
     AnyQuery(
       schema: schema, table: table, ast: ast, format: format, system: system,
-      customQueryID: CustomQueryID(name: name, args: args), currentJunction: currentJunction)
+      customQueryID: CustomQueryID(name: name, args: args), currentJunction: currentJunction,
+      invalid: invalid)
   }
 
   /// At most one row; the view holds the row or nothing rather than a list.
@@ -120,7 +132,9 @@ public struct AnyQuery: Sendable {
   }
 
   public func `where`(_ factory: (ExpressionBuilder) -> AST.Condition) -> AnyQuery {
-    `where`(factory(ExpressionBuilder(self)))
+    let builder = ExpressionBuilder(self)
+    let condition = factory(builder)
+    return `where`(condition).with(invalid: builder.invalid.message)
   }
 
   public func `where`(_ condition: AST.Condition) -> AnyQuery {
@@ -153,10 +167,10 @@ public struct AnyQuery: Sendable {
   }
 
   public func limit(_ limit: Int) -> AnyQuery {
-    precondition(limit >= 0, "Limit must be non-negative")
-    precondition(Int32(exactly: limit) != nil, "Limit must be an integer")
+    if limit < 0 { return invalidated("Limit must be non-negative") }
+    if Int32(exactly: limit) == nil { return invalidated("Limit must be an integer") }
     if let currentJunction {
-      preconditionFailure(
+      return invalidated(
         "Limit is not supported in junction relationships yet. Junction relationship being limited: \(currentJunction)"
       )
     }
@@ -167,7 +181,7 @@ public struct AnyQuery: Sendable {
 
   public func orderBy(_ field: String, _ direction: AST.Direction) -> AnyQuery {
     if let currentJunction {
-      preconditionFailure(
+      return invalidated(
         "Order by is not supported in junction relationships yet. Junction relationship being ordered: \(currentJunction)"
       )
     }
@@ -185,6 +199,7 @@ public struct AnyQuery: Sendable {
     let hops = relationshipHops(relationship)
     var ast = self.ast
     var format = self.format
+    var invalid: String?
     switch hops.count {
     case 1:
       let hop = hops[0]
@@ -197,6 +212,7 @@ public struct AnyQuery: Sendable {
         AST.CorrelatedSubquery(
           correlation: correlation(hop), subquery: q.ast, system: system))
       format.relationships[relationship] = q.format
+      invalid = q.invalid
     case 2:
       let (first, second) = (hops[0], hops[1])
       let q = sub(
@@ -214,16 +230,18 @@ public struct AnyQuery: Sendable {
         AST.CorrelatedSubquery(
           correlation: correlation(first), subquery: junction, system: system, hidden: true))
       format.relationships[relationship] = q.format
+      invalid = q.invalid
     default:
       preconditionFailure("Invalid relationship \(relationship)")
     }
-    return with(ast: ast, format: format)
+    return with(ast: ast, format: format, invalid: invalid)
   }
 
   /// `#exists`: the condition `exists(relationship)` adds.
+  /// Also returns why the subquery is invalid, if it is.
   func existsCondition(
     _ relationship: String, flip: Bool?, scalar: Bool?, _ sub: ((AnyQuery) -> AnyQuery)?
-  ) -> AST.Condition {
+  ) -> (AST.Condition, invalid: String?) {
     let sub = sub ?? { $0 }
     let hops = relationshipHops(relationship)
     switch hops.count {
@@ -233,10 +251,12 @@ public struct AnyQuery: Sendable {
         base(
           hop.destSchema, alias: subqueryAliasPrefix + relationship, format: Format(),
           junction: nil))
-      return .correlatedSubquery(
-        related: AST.CorrelatedSubquery(
-          correlation: correlation(hop), subquery: q.ast, system: system),
-        op: .exists, flip: flip, scalar: scalar)
+      return (
+        .correlatedSubquery(
+          related: AST.CorrelatedSubquery(
+            correlation: correlation(hop), subquery: q.ast, system: system),
+          op: .exists, flip: flip, scalar: scalar), q.invalid
+      )
     case 2:
       let (first, second) = (hops[0], hops[1])
       let q = sub(
@@ -251,10 +271,12 @@ public struct AnyQuery: Sendable {
         table: first.destSchema, alias: subqueryAliasPrefix + relationship,
         where: AST.normalizeCondition(inner))
       // The junction hop carries `flip` but not `scalar`, as in JS.
-      return .correlatedSubquery(
-        related: AST.CorrelatedSubquery(
-          correlation: correlation(first), subquery: junction, system: system),
-        op: .exists, flip: flip, scalar: nil)
+      return (
+        .correlatedSubquery(
+          related: AST.CorrelatedSubquery(
+            correlation: correlation(first), subquery: junction, system: system),
+          op: .exists, flip: flip, scalar: nil), q.invalid
+      )
     default:
       preconditionFailure("Invalid relationship \(relationship)")
     }
@@ -294,7 +316,13 @@ func insertRelated(
 /// Builds the conditions of a `where` (`ExpressionBuilder` in
 /// `packages/zql/src/query/expression.ts`).
 public struct ExpressionBuilder: Sendable {
+  /// Why a subquery of the conditions built is invalid, for `where`.
+  final class Invalid: @unchecked Sendable {
+    var message: String?
+  }
+
   let query: AnyQuery
+  let invalid = Invalid()
 
   init(_ query: AnyQuery) { self.query = query }
 
@@ -349,7 +377,9 @@ public struct ExpressionBuilder: Sendable {
     _ relationship: String, flip: Bool? = nil, scalar: Bool? = nil,
     _ sub: ((AnyQuery) -> AnyQuery)? = nil
   ) -> AST.Condition {
-    query.existsCondition(relationship, flip: flip, scalar: scalar, sub)
+    let (condition, message) = query.existsCondition(relationship, flip: flip, scalar: scalar, sub)
+    if invalid.message == nil { invalid.message = message }
+    return condition
   }
 }
 

@@ -155,6 +155,7 @@ final class QueryContext {
   }
 
   func materialize(_ query: AnyQuery, ttl: TTL = .defaultTTL) throws -> MaterializedView {
+    if let message = query.invalid { throw PipelineError(message) }
     let customQueryID = query.customQueryID
     let ast = query.ast
     let queryID =
@@ -350,6 +351,12 @@ final class QueryContext {
     if let error = closedError(query) {
       cached.reject(error)
       complete.reject(error)
+      return Preload(cleanup: {}, cached: cached, complete: complete)
+    }
+    if let message = query.invalid {
+      log?.error(message)
+      cached.reject(PipelineError(message))
+      complete.reject(PipelineError(message))
       return Preload(cleanup: {}, cached: cached, complete: complete)
     }
     guard let id = query.customQueryID else {

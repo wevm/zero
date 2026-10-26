@@ -149,8 +149,9 @@ func buildPipelineInternal(
     for key in csq.correlation.parentField { splitEditKeys.insert(key) }
   }
   if isNonFlippedExistsChild {
-    precondition(ast.start == nil, "EXISTS subqueries must not have start")
-    precondition(ast.related == nil, "EXISTS subqueries must not have related")
+    // JS asserts these, which throws.
+    if ast.start != nil { throw PipelineError("EXISTS subqueries must not have start") }
+    if ast.related != nil { throw PipelineError("EXISTS subqueries must not have related") }
   }
 
   // Cap needs an unordered connection, but a flipped subquery in the where
@@ -198,7 +199,9 @@ func buildPipelineInternal(
   }
 
   if let limitValue = ast.limit {
-    let limit = Int(limitValue)
+    guard let limit = Int(exactly: limitValue), limit >= 0 else {
+      throw PipelineError("Invalid limit \(JSNumber.format(limitValue))")
+    }
     if useCap {
       let cap = Cap(end, limit: limit, partitionKey: partitionKey)
       delegate.addEdge(end, cap)

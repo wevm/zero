@@ -4,10 +4,11 @@ import ZeroTesting
 
 @testable import Zero
 
-/// Bad input that traps the process. The JS client throws, logs, or
+/// Bad input that used to trap the process. The JS client throws, logs, or
 /// disconnects on each of these; a trap in Swift kills the app. Each
 /// scenario runs in a child process (an exit test), so a trap fails only
-/// its own test.
+/// its own test, and checks what the client does instead with
+/// `precondition`, which fails the child.
 @Suite @MainActor struct HardenCrashTests {
   static let create = defineMutator("issue.create") { (tx, id: String) in
     try tx.mutate.insert(
@@ -33,6 +34,17 @@ import ZeroTesting
 
     func poke(_ socket: MockSocket, from base: String?, to cookie: String, _ part: String) {
       Self.poke(socket, scheduler, from: base, to: cookie, part)
+    }
+
+    /// The message `query` fails to materialize with, as JS's builder
+    /// throws it.
+    func invalidMessage(_ query: AnyQuery) -> String? {
+      do {
+        try zero.materialize(query).destroy()
+        return nil
+      } catch {
+        return String(describing: error)
+      }
     }
 
     /// Opens the newest socket and acknowledges it.
@@ -77,8 +89,9 @@ import ZeroTesting
   // MARK: - Last mutation IDs the server sends
 
   /// The server's last mutation ID for this client is any JSON number. JS
-  /// gives the next mutation the ID `lmid + 1`, a number. Swift traps
-  /// converting it to `Transaction.mutationID`, an `Int`.
+  /// gives the next mutation the ID `lmid + 1`, a number. Swift converts
+  /// it to `Transaction.mutationID`, an `Int`, so it rejects a poke whose
+  /// last mutation ID isn't a safe integer and disconnects.
   @Test func hugeLastMutationIDThenMutate() async {
     await #expect(processExitsWith: .success) {
       try await HardenCrashTests.hugeLastMutationIDThenMutateScenario()
@@ -89,13 +102,17 @@ import ZeroTesting
     let h = try Harness()
     let socket = try h.connect()
     h.poke(socket, from: nil, to: "1", #""lastMutationIDChanges":{"\#(h.zero.clientID)":1e300}"#)
-    _ = h.zero.mutate(Self.create("a"))
+    precondition(socket.closed)
+    precondition(h.zero.connection.state.status == .error)
+    // Rejected, as every mutation is while the connection is in error.
+    let result = h.zero.mutate(Self.create("a"))
+    precondition(h.zero.engine.store.pending.isEmpty && result.client.isSettled)
   }
 
   /// The same through storage: a pending mutation whose stored ID is huge
   /// (a tampered or corrupt file). Opening the client replays it. JS
-  /// replays it with that ID. Swift traps converting it to an `Int`, on
-  /// every launch.
+  /// replays it with that ID; Swift drops it and logs an error, rather than
+  /// trap on every launch.
   @Test func hugeStoredMutationIDReplayed() async {
     await #expect(processExitsWith: .success) {
       try await HardenCrashTests.hugeStoredMutationIDReplayedScenario()
@@ -127,7 +144,9 @@ import ZeroTesting
     var ids: [Double] = []
     try db.query("SELECT id FROM mutations") { ids.append($0.real(0)) }
     precondition(ids == [1e300])
-    try open().close()
+    let second = try open()
+    precondition(second.engine.store.pending.isEmpty)
+    second.close()
   }
 
   // MARK: - Row patches the server sends
@@ -136,7 +155,7 @@ import ZeroTesting
   /// (no row existed, so the merge is the whole row). Both rows have a null
   /// key, so to the table's source they are one row. JS: `MemorySource`'s
   /// `assert` throws "Row already exists", the poke fails, and the client
-  /// disconnects. Swift: the same check is a `precondition`.
+  /// disconnects. Swift rejects the poke before the sources see it.
   @Test func updateOpsLeavingRowsWithoutPrimaryKey() async {
     await #expect(processExitsWith: .success) {
       try await HardenCrashTests.updateOpsLeavingRowsWithoutPrimaryKeyScenario()
@@ -152,11 +171,13 @@ import ZeroTesting
       socket, from: nil, to: "1",
       #""rowsPatch":[{"op":"update","tableName":"issues","id":{"id":"a"},"merge":{"title":"x"}},{"op":"update","tableName":"issues","id":{"id":"b"},"merge":{"title":"y"}}]"#
     )
+    precondition(socket.closed)
+    precondition(view.data.entries.isEmpty)
   }
 
   /// An `update` that moves a row to the primary key of another, then
-  /// deletes of both. JS: `MemorySource` throws "Row not found". Swift
-  /// traps.
+  /// deletes of both. JS: `MemorySource` throws "Row not found" and the
+  /// client disconnects. Swift rejects the update, leaving both rows.
   @Test func updateOpChangingPrimaryKeyThenDeletes() async {
     await #expect(processExitsWith: .success) {
       try await HardenCrashTests.updateOpChangingPrimaryKeyThenDeletesScenario()
@@ -175,10 +196,17 @@ import ZeroTesting
     h.poke(
       socket, from: "1", to: "2",
       #""rowsPatch":[{"op":"update","tableName":"issues","id":{"id":"a"},"merge":{"id":"b"}}]"#)
+    precondition(socket.closed)
+    precondition(view.data.entries.map { $0.row["id"] } == ["a", "b"])
+    h.zero.connection.connect()
+    let next = try h.connect()
+    precondition(next !== socket)
     h.poke(
-      socket, from: "2", to: "3",
+      next, from: "1", to: "3",
       #""rowsPatch":[{"op":"del","tableName":"issues","id":{"id":"a"}},{"op":"del","tableName":"issues","id":{"id":"b"}}]"#
     )
+    precondition(!next.closed)
+    precondition(view.data.entries.isEmpty)
   }
 
   /// Rows that don't match the schema: wrong types, missing and extra
@@ -216,8 +244,9 @@ import ZeroTesting
   // MARK: - Timers
 
   /// A backoff error from zero-cache with a huge `minBackoffMs`. JS passes
-  /// it to `setTimeout`, which fires at once for a delay past 2^31 - 1 ms.
-  /// Swift: `SystemScheduler` makes a `Duration` of it, which traps.
+  /// it to `setTimeout`, which fires at once for a delay past 2^31 - 1 ms;
+  /// so does `SystemScheduler`, which used to trap making a `Duration` of
+  /// it.
   @Test(.timeLimit(.minutes(1))) func hugeServerBackoff() async {
     await #expect(processExitsWith: .success) {
       try await HardenCrashTests.hugeServerBackoffScenario()
@@ -241,7 +270,7 @@ import ZeroTesting
   }
 
   /// `pingTimeoutMs: .infinity`. JS: `setTimeout(f, Infinity)` fires at
-  /// once. Swift traps making a `Duration` of it.
+  /// once, and so does `SystemScheduler`.
   @Test(.timeLimit(.minutes(1))) func infinitePingTimeout() async {
     await #expect(processExitsWith: .success) {
       try await HardenCrashTests.infinitePingTimeoutScenario()
@@ -265,25 +294,45 @@ import ZeroTesting
   // MARK: - Query arguments the app passes
 
   /// `limit(-1)`. JS throws "Limit must be non-negative" from `limit`.
-  /// Swift: a `precondition`.
+  /// Swift: the query is invalid, and materializing, running, or
+  /// preloading it throws that message.
   @Test func negativeLimit() async {
     await #expect(processExitsWith: .success) {
-      _ = await MainActor.run { zql.issue.limit(-1) }
+      try await HardenCrashTests.invalidQueryScenario(
+        zql.issue.limit(-1).any, "Limit must be non-negative")
+    }
+  }
+
+  static func invalidQueryScenario(_ query: AnyQuery, _ message: String) async throws {
+    let h = try Harness()
+    precondition(h.invalidMessage(query) == message)
+    do {
+      _ = try h.zero.run(query)
+      preconditionFailure("run succeeded")
+    } catch {
+      precondition(String(describing: error) == message)
+    }
+    let preload = h.zero.preload(query.nameAndArgs("q", []))
+    do {
+      try await preload.complete.value
+      preconditionFailure("preload completed")
+    } catch {
+      precondition(String(describing: error) == message)
     }
   }
 
   /// A limit past 2^31 - 1, such as `Int.max` for "no limit". JS throws
-  /// "Limit must be an integer" (`(limit | 0) !== limit`). Swift: a
-  /// `precondition`.
+  /// "Limit must be an integer" (`(limit | 0) !== limit`).
   @Test func limitPastInt32() async {
     await #expect(processExitsWith: .success) {
-      _ = await MainActor.run { zql.issue.limit(Int.max) }
+      try await HardenCrashTests.invalidQueryScenario(
+        zql.issue.limit(Int.max).any, "Limit must be an integer")
     }
   }
 
   /// `whereExists` whose subquery asks for `related` rows. JS: the
   /// builder's `assert` throws "EXISTS subqueries must not have related"
-  /// when the query is materialized. Swift: a `precondition`.
+  /// when the query is materialized, and so does Swift.
   @Test func existsSubqueryWithRelated() async {
     await #expect(processExitsWith: .success) {
       try await HardenCrashTests.existsSubqueryWithRelatedScenario()
@@ -292,17 +341,24 @@ import ZeroTesting
 
   static func existsSubqueryWithRelatedScenario() throws {
     let h = try Harness()
-    let view = try? h.zero.materialize(zql.issue.whereExists(\.comments) { $0.related(\.author) })
-    view?.destroy()
+    precondition(
+      h.invalidMessage(zql.issue.whereExists(\.comments) { $0.related(\.author) }.any)
+        == "EXISTS subqueries must not have related")
   }
 
   /// `limit` on a many-to-many relationship (through a junction table),
   /// such as the first label of each issue. JS throws `NotImplementedError`
   /// ("Limit is not supported in junction relationships yet") from the
-  /// query builder. Swift: a `preconditionFailure`.
+  /// query builder; Swift's query is invalid, even when the limit is in an
+  /// `exists` inside a `related`.
   @Test func limitOnAJunctionRelationship() async {
     await #expect(processExitsWith: .success) {
-      _ = await MainActor.run { zql.issue.related(\.labels) { $0.limit(1) } }
+      let message =
+        "Limit is not supported in junction relationships yet. Junction relationship being limited: labels"
+      try await HardenCrashTests.invalidQueryScenario(
+        zql.issue.related(\.labels) { $0.limit(1) }.any, message)
+      try await HardenCrashTests.invalidQueryScenario(
+        zql.comment.related(\.issue) { $0.whereExists(\.labels) { $0.limit(1) } }.any, message)
     }
   }
 }
