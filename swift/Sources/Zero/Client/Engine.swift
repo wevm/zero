@@ -173,19 +173,29 @@ final class Engine {
       userID: options.userID, storageKey: options.storageKey ?? "",
       mutateURL: options.mutateURL, queryURL: options.queryURL,
       schemaHash: clientSchema.hash)
-    var (database, openFailure) = ReplicaDatabase.open(options.storage, name: name)
+    let mutatorNames = mutators.keys.sorted()
+    var (database, openFailure, corrupt) = ReplicaDatabase.open(options.storage, name: name)
     var joined: (clientGroupID: String, group: StoredGroup)
     do {
-      joined = try database.initClient(
-        clientID, mutatorNames: mutators.keys.sorted(), now: base.now)
+      do {
+        joined = try database.initClient(clientID, mutatorNames: mutatorNames, now: base.now)
+      } catch is ReplicaDatabase.CorruptData {
+        // What the client group holds doesn't decode, so the client state
+        // is lost: drop the database and start a new one
+        // (`#handleInvalidRefCount`).
+        corrupt = true
+        database.drop()
+        database.release()
+        (database, openFailure, _) = ReplicaDatabase.open(options.storage, name: name)
+        joined = try database.initClient(clientID, mutatorNames: mutatorNames, now: base.now)
+      }
     } catch {
       // The client group can't be read: run on memory, as when the open
       // fails.
       database.release()
-      database = ReplicaDatabase.memory(name: name)
-      openFailure = error
-      joined = try database.initClient(
-        clientID, mutatorNames: mutators.keys.sorted(), now: base.now)
+      database = ReplicaDatabase.fallback(name: name, storage: options.storage)
+      openFailure = StorageFailure(error)
+      joined = try database.initClient(clientID, mutatorNames: mutatorNames, now: base.now)
     }
     let (clientGroupID, group) = joined
     self.database = database
@@ -285,6 +295,12 @@ final class Engine {
       self.loop.dispatch {
         self.sendIfConnected(.deleteClients(DeleteClientsBody(clientIDs: [id])))
       }
+    }
+    if corrupt {
+      // This client already starts on the new database, which is what
+      // replacing it would do; the app's callback still hears it, as in JS.
+      log.error("Client state is corrupt; dropped database \(name) and started a new one")
+      loop.microtask { [weak self] in self?.options.onClientStateNotFound?() }
     }
     if let openFailure {
       log.warn(

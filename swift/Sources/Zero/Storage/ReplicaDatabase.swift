@@ -176,6 +176,11 @@ final class ReplicaDatabase {
   private static var open: [String: ReplicaDatabase] = [:]
   /// The profile ID of memory databases, one per process as in JS.
   private static var memoryProfileID: String?
+  /// The names of the memory databases clients fell back to after their
+  /// SQLite store failed (`fellBack` in `mem-fallback-store.ts`), with the
+  /// directories they stand in for. Drops from those directories drop
+  /// these too.
+  private static var fellBack: [String: Set<String>] = [:]
   /// When each SQLite file was last opened or closed in this process, as a
   /// count of such events, so the collector skips a file used after it
   /// started reading the directory.
@@ -183,6 +188,19 @@ final class ReplicaDatabase {
   private static var uses = 0
   /// The cookie of each client group's stored snapshot.
   private var snapshotCookies: [String: JSONValue] = [:]
+
+  /// The stored data doesn't decode, so the client state is lost
+  /// (`InvalidRefCountError` in JS): the database is dropped.
+  struct CorruptData: Error, CustomStringConvertible {
+    let description: String
+  }
+
+  /// A failure reading the database: a storage failure, unless the data
+  /// read doesn't decode.
+  private static func readFailure(_ error: any Error) -> any Error {
+    if error is SQLiteError || error is StorageFailure { return StorageFailure(error) }
+    return CorruptData(description: String(describing: error))
+  }
 
   private static func markUsed(_ path: String) {
     lastUsed[path] = uses
@@ -198,11 +216,14 @@ final class ReplicaDatabase {
 
   /// Opens the database named `name` in `storage`, or the one already open
   /// in this process. A database that can't be opened is replaced by the
-  /// memory one of its name, and the failure returned.
-  static func open(_ storage: ZeroStorage, name: String) -> (ReplicaDatabase, StorageFailure?) {
+  /// memory one of its name, and the failure returned. A file whose data
+  /// doesn't decode is deleted and a new one started, and `corrupt` is set.
+  static func open(
+    _ storage: ZeroStorage, name: String
+  ) -> (ReplicaDatabase, StorageFailure?, corrupt: Bool) {
     switch storage {
     case .memory:
-      return (memory(name: name), nil)
+      return (memory(name: name), nil, false)
     case .sqlite(let directory):
       do {
         let dir = try directory ?? defaultDirectory()
@@ -210,24 +231,44 @@ final class ReplicaDatabase {
         let path = dir + "/" + fileName(name)
         if let db = open[path] {
           db.users += 1
-          return (db, nil)
+          return (db, nil, false)
         }
-        let store = try SQLiteStore(path: path, name: name, directory: dir)
-        let db = ReplicaDatabase(name: name, key: path, sqlite: store)
+        var corrupt = false
+        let db: ReplicaDatabase
         do {
-          try store.sync { try db.load(from: $0) }
-        } catch {
-          _ = store.close()
-          throw error
+          db = try load(path: path, name: name, directory: dir)
+        } catch is CorruptData {
+          corrupt = true
+          _ = SQLiteStore.unlinkDatabase(path)
+          db = try load(path: path, name: name, directory: dir)
         }
         db.users = 1
         open[path] = db
         markUsed(path)
-        return (db, nil)
+        return (db, nil, corrupt)
       } catch {
-        return (memory(name: name), StorageFailure(error))
+        return (fallback(name: name, storage: storage), StorageFailure(error), false)
       }
     }
+  }
+
+  private static func load(path: String, name: String, directory: String) throws -> ReplicaDatabase
+  {
+    let store = try SQLiteStore(path: path, name: name, directory: directory)
+    let db = ReplicaDatabase(name: name, key: path, sqlite: store)
+    do {
+      try store.sync { connection in
+        do {
+          try db.load(from: connection)
+        } catch {
+          throw readFailure(error)
+        }
+      }
+    } catch {
+      _ = store.close()
+      throw error
+    }
+    return db
   }
 
   /// The memory database named `name`, which lives for the process and is
@@ -235,6 +276,15 @@ final class ReplicaDatabase {
   /// (`fallbackStoreProvider`, `MemStore`).
   static func memory(name: String) -> ReplicaDatabase {
     shared(key: "memory:" + name, name: name, sqlite: nil)
+  }
+
+  /// The memory database a client whose SQLite database in `storage`
+  /// failed runs on.
+  static func fallback(name: String, storage: ZeroStorage) -> ReplicaDatabase {
+    if case .sqlite(let directory) = storage {
+      fellBack[name, default: []].insert(directory ?? (try? defaultDirectory()) ?? "")
+    }
+    return memory(name: name)
   }
 
   private static func shared(key: String, name: String, sqlite: SQLiteStore?) -> ReplicaDatabase {
@@ -313,15 +363,17 @@ final class ReplicaDatabase {
     profileID = try SQLiteStore.profileID(in: sqlite!.directory)
   }
 
-  /// The snapshot and pending mutations of group `id`.
-  private func loadGroup(_ id: String) throws(StorageFailure) -> StoredGroup {
+  /// The snapshot and pending mutations of group `id`. Throws
+  /// `CorruptData` when they don't decode, and a `StorageFailure` when they
+  /// can't be read.
+  private func loadGroup(_ id: String) throws -> StoredGroup {
     if let memoryGroups { return memoryGroups[id] ?? StoredGroup() }
     guard let sqlite else { return StoredGroup() }
     do {
       return try sqlite.sync { try SQLiteStore.loadGroup(id, from: $0) }
     } catch {
-      let failure = StorageFailure(error)
-      fail(failure)
+      let failure = Self.readFailure(error)
+      if let failure = failure as? StorageFailure { fail(failure) }
       throw failure
     }
   }
@@ -428,11 +480,12 @@ final class ReplicaDatabase {
   /// Adds client `clientID` to the newest client group that registers the
   /// same mutators and isn't disabled, or to a new empty one
   /// (`initClientV6` with client group forking off). Returns the group and
-  /// what it holds. Throws, adding nothing, when the database failed or
-  /// the group can't be read.
+  /// what it holds. Throws, adding nothing, a `StorageFailure` when the
+  /// database failed or the group can't be read, and `CorruptData` when
+  /// what it holds doesn't decode.
   func initClient(
     _ clientID: String, mutatorNames: [String], now: Double
-  ) throws(StorageFailure) -> (
+  ) throws -> (
     clientGroupID: String, group: StoredGroup
   ) {
     if let failure { throw failure }
@@ -509,10 +562,18 @@ final class ReplicaDatabase {
   }
 
   /// Deletes the database (`dropDatabase`). The next client to open it
-  /// starts empty; this one's later writes are dropped.
+  /// starts empty; this one's later writes are dropped. Dropping it again
+  /// does nothing: the file may be a new database by then.
   func drop() {
+    guard !dropped else { return }
     dropped = true
-    if Self.open[key] === self { Self.open[key] = nil }
+    // Another database of this name opened since owns the file now.
+    if let other = Self.open[key], other !== self {
+      _ = sqlite?.close()
+      return
+    }
+    Self.open[key] = nil
+    if sqlite != nil { Self.markUsed(key) }
     sqlite?.drop()
   }
 
@@ -547,7 +608,16 @@ final class ReplicaDatabase {
       result.deleted.append(db.name)
     }
     guard case .sqlite = storage else { return result }
+    // The memory databases clients of this directory fell back to go too
+    // (`dropTargets`); those of `.memory` clients stay.
     let directory = String(prefix.dropLast())
+    for (name, directories) in fellBack
+    where directories.contains(directory) && matches(replicacheName(name)) {
+      fellBack[name] = nil
+      guard let db = open["memory:" + name] else { continue }
+      db.drop()
+      if !result.deleted.contains(name) { result.deleted.append(name) }
+    }
     let files = await Task.detached {
       SQLiteStore.dropDatabases(in: directory) { matches(replicacheName($0)) }
     }.value
@@ -777,7 +847,7 @@ final class SQLiteStore: @unchecked Sendable {
     return files
   }
 
-  private static func unlinkDatabase(_ path: String) -> Bool {
+  static func unlinkDatabase(_ path: String) -> Bool {
     var deleted = true
     for suffix in ["", "-wal", "-shm"] where unlink(path + suffix) != 0 && errno != ENOENT {
       deleted = false

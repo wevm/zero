@@ -171,3 +171,8 @@ is written or sent.
 - **Storage.** The replica is a SQLite database per user and URL, not
   IndexedDB. One process uses it at a time; there are no tabs to share it
   with.
+- **Corrupt local data.** When the stored replica doesn't decode, JS drops
+  the database and calls `onClientStateNotFound`, which reloads the page by
+  default. Swift drops it and the client starts on a new, empty database at
+  once; `onClientStateNotFound` is called only if the app set it. Pending
+  mutations in the dropped database are lost, as in JS.

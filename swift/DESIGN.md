@@ -220,7 +220,9 @@ Rationale:
   `onStorageFailure`, as JS does. A failed write stops writing and calls it
   too. A write that finds the database busy is kept and written with the
   next one, or by `flush()` and `close()`, which try twice more before they
-  call it a failure.
+  call it a failure. Stored data that doesn't decode is lost client state,
+  as a corrupt ref count is in JS: the client deletes the database, starts
+  a new one, and calls `onClientStateNotFound` if the app set it.
 - A client writes a poke's snapshot only when its cookie is newer than the
   stored one, as Replicache persists, so a client of the group that is
   behind another doesn't overwrite it.

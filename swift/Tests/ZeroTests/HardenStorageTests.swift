@@ -281,29 +281,82 @@ import ZeroTesting
   /// the database and calls `onClientStateNotFound`, so the next instance
   /// starts on a fresh, persisted store (`#handleInvalidRefCount` and
   /// `#dropDatabaseAndFireOnClientStateNotFound` in `replicache-impl.ts`).
-  /// Here a row that doesn't decode makes every launch fall back to memory
-  /// and report a storage failure, forever: nothing is persisted again
-  /// until the app deletes the file itself.
-  @Test(.timeLimit(.minutes(1)))
-  func aRowThatDoesNotDecodeDoesNotDisablePersistenceForever() async throws {
+  /// A row that doesn't decode must not make every launch fall back to
+  /// memory, forever.
+  @Test(.timeLimit(.minutes(1)), arguments: ["mutations", "client_groups"])
+  func aRowThatDoesNotDecodeDoesNotDisablePersistenceForever(table: String) async throws {
     defer { cleanUp() }
     let first = try makeZero()
     first.mutate(Self.create("i1"))
     first.close()
     let db = try SQLiteDatabase(path: databasePath())
-    try db.execute("UPDATE mutations SET args = '{not json'")
+    try db.execute(
+      table == "mutations"
+        ? "UPDATE mutations SET args = '{not json'"
+        : "UPDATE client_groups SET mutator_names = '[not json'")
     db.close()
 
+    final class Calls: @unchecked Sendable { var notFound = 0 }
+    let calls = Calls()
     let failures = Failures()
-    let second = try makeZero(at: 1000, onStorageFailure: { failures.kinds.append($0.kind) })
-    try await settle(until: { !failures.kinds.isEmpty })
+    var options = ZeroOptions(userID: "u", storageKey: "k", storage: .sqlite(directory: directory))
+    options.logSink = RecordingLogSink()
+    options.onStorageFailure = { failures.kinds.append($0.kind) }
+    options.onClientStateNotFound = { calls.notFound += 1 }
+    let second = try Zero(
+      schema: .test, mutators: [Self.create], options: options,
+      scheduler: ManualScheduler(now: 1000), socketFactory: nil)
+    try await settle(until: { calls.notFound > 0 })
+    #expect(calls.notFound == 1)
+    #expect(failures.kinds == [])
+    #expect(second.engine.store.pending.isEmpty)
+    second.mutate(Self.create("i2"))
     second.close()
-    let reported = failures.kinds
 
     let third = try makeZero(at: 2000, onStorageFailure: { failures.kinds.append($0.kind) })
-    try await settle(until: { failures.kinds.count > reported.count })
-    #expect(failures.kinds == reported, "launch after the bad data: \(failures.kinds)")
+    try await settle()
+    #expect(failures.kinds == [])
+    #expect(third.clientGroupID == second.clientGroupID)
+    #expect(try await third.run(zql.issue).map(\.id) == ["i2"])
     third.close()
+  }
+
+  /// A client whose database was dropped (`InvalidConnectionRequest*`) and
+  /// replaced: another client of the group, still on the dropped database,
+  /// gets the same error and drops it again. That must not delete the file
+  /// the replacement started, with its pending mutation.
+  @Test(.timeLimit(.minutes(1)))
+  func droppingADroppedDatabaseAgainKeepsTheNewOne() async throws {
+    defer { cleanUp() }
+    let scheduler = ManualScheduler(now: 1_700_000_000_000)
+    let sockets = MockSocketFactory()
+    let first = try makeZero(cacheURL: "http://zero.test", sockets: sockets, scheduler: scheduler)
+    let a = try connect(sockets, scheduler)
+    let second = try makeZero(cacheURL: "http://zero.test", sockets: sockets, scheduler: scheduler)
+    let b = try connect(sockets, scheduler)
+    #expect(first.clientGroupID == second.clientGroupID)
+    let error =
+      #"["error",{"kind":"InvalidConnectionRequestBaseCookie","message":"x","origin":"zeroCache"}]"#
+
+    a.receive(text: error)
+    scheduler.runDueTimers()
+    let replacedGroup = first.clientGroupID
+    #expect(replacedGroup != second.clientGroupID)
+    first.mutate(Self.create("i1"))
+    first.engine.database.flush()
+    #expect(FileManager.default.fileExists(atPath: databasePath()))
+
+    b.receive(text: error)
+    scheduler.runDueTimers()
+    first.engine.database.flush()
+    #expect(FileManager.default.fileExists(atPath: databasePath()))
+    first.close()
+    second.close()
+
+    let next = try makeZero(at: 1_700_000_100_000)
+    #expect(next.clientGroupID == replacedGroup)
+    #expect(next.engine.store.pending.map(\.id) == [1])
+    next.close()
   }
 
   // MARK: - Writes that found the database busy
