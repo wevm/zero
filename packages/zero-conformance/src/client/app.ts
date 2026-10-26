@@ -118,8 +118,46 @@ const issue = {
   ),
 };
 
+type CRUDOp = {
+  op: 'insert' | 'upsert' | 'update' | 'delete';
+  table: string;
+  value: JSONObject;
+};
+
+const harden = {
+  /**
+   * Runs `ops` (CRUD operations on any table, values as given), then throws
+   * `fail` if set, or reads the `read` tables back through the transaction
+   * and returns them with the mutation ID, or returns `return`. With
+   * `failOnRebase` it throws before writing when replayed.
+   */
+  ops: defineMutator(async ({tx, args}: {tx: Tx; args: JSONObject}) => {
+    if (args['failOnRebase'] === true && tx.reason === 'rebase') {
+      throw new ApplicationError('fails on rebase');
+    }
+    for (const o of (args['ops'] ?? []) as CRUDOp[]) {
+      await tx.mutate[o.table][o.op](o.value);
+    }
+    if (typeof args['fail'] === 'string') {
+      throw new ApplicationError(args['fail'], {details: args['details']});
+    }
+    const read = args['read'] as string[] | undefined;
+    if (read) {
+      const out: Record<string, unknown> = {};
+      for (const t of read) {
+        out[t] = await tx.run(
+          (zql as unknown as Record<string, typeof zql.issue>)[t],
+        );
+      }
+      return {mutationID: tx.mutationID, read: out} as ReadonlyJSONValue;
+    }
+    return args['return'];
+  }),
+};
+
 export const mutators = defineMutators({
   issue,
+  harden,
   comment: {
     add: defineMutator(async ({tx, args}: {tx: Tx; args: JSONObject}) => {
       await tx.mutate.comment.insert({
