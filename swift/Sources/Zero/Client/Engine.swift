@@ -238,7 +238,10 @@ final class Engine {
       onFatalError: { [weak self] error in self?.disconnect(error) })
     pokeHandler = PokeHandler(
       clientID: clientID, schema: schema, scheduler: scheduler,
-      apply: { [weak self] poke in try self?.applyPoke(poke) },
+      apply: { [weak self] poke in
+        guard let self else { return }
+        try self.withWriteLock { try self.applyPoke(poke) }
+      },
       onApplied: { [weak self] poke in
         guard let self else { return }
         defer { self.settlePendingWaiters() }
@@ -1188,6 +1191,55 @@ final class Engine {
         server.resolve(outcome)
       }
     }
+    // A mutate from inside a mutator, or while a poke rebases, waits for it,
+    // as JS's waits for Replicache's write lock.
+    if writeLocked || !waitingForWriteLock.isEmpty {
+      waitingForWriteLock.append { [weak self] in
+        self?.runMutation(
+          mutator, name: name, args: args, ephemeralID: ephemeralID, client: client, server: server)
+      }
+    } else {
+      runMutation(
+        mutator, name: name, args: args, ephemeralID: ephemeralID, client: client, server: server)
+    }
+    return MutatorResult(client: client, server: server)
+  }
+
+  /// Set while a mutator runs, for a mutation or a rebase: Replicache's
+  /// write lock. Mutations that start meanwhile wait in
+  /// `waitingForWriteLock`, in order.
+  private var writeLocked = false
+  private var waitingForWriteLock: [() -> Void] = []
+
+  private func withWriteLock<T>(_ body: () throws -> T) rethrows -> T {
+    writeLocked = true
+    defer {
+      writeLocked = false
+      if !waitingForWriteLock.isEmpty {
+        loop.microtask { [weak self] in
+          guard let self, !self.writeLocked, !self.waitingForWriteLock.isEmpty else { return }
+          self.waitingForWriteLock.removeFirst()()
+        }
+      }
+    }
+    return try body()
+  }
+
+  private func runMutation(
+    _ mutator: MutatorFunction, name: String, args: JSONValue?, ephemeralID: Int,
+    client: Deferred<MutationOutcome>, server: Deferred<MutationOutcome>
+  ) {
+    withWriteLock {
+      runMutationLocked(
+        mutator, name: name, args: args, ephemeralID: ephemeralID, client: client, server: server)
+    }
+  }
+
+  private func runMutationLocked(
+    _ mutator: MutatorFunction, name: String, args: JSONValue?, ephemeralID: Int,
+    client: Deferred<MutationOutcome>, server: Deferred<MutationOutcome>
+  ) {
+    let log = self.log
     let mutationID = store.nextMutationID(for: clientID)
     let write = KVWrite(store.main)
     let branch = ivmMain.fork()
@@ -1203,7 +1255,7 @@ final class Engine {
       let outcome = Self.outcome(error)
       Self.logFailure(log, name, outcome, on: "client")
       client.resolve(outcome)
-      return MutatorResult(client: client, server: server)
+      return
     }
     let pending = ReplicaStore.PendingMutation(
       id: mutationID, clientID: clientID, name: name, args: args ?? .null,
@@ -1220,7 +1272,6 @@ final class Engine {
     requestPush(now: false)
     fireWatchers(diff)
     client.resolve(.success(data: result))
-    return MutatorResult(client: client, server: server)
   }
 
   private var token: String? { auth.flatMap { $0.isEmpty ? nil : $0 } }
