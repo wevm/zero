@@ -93,9 +93,9 @@ final class Engine {
     loop.stop()
     for t in lifecycleTimers { t.cancel() }
     if !repClosed {
-      database.removeWriteFailureListener(clientID)
       database.clientStopped(clientID)
       database.release()
+      database.removeWriteFailureListener(clientID)
     }
   }
   private let socketFactory: (any SocketFactory)?
@@ -1069,9 +1069,11 @@ final class Engine {
     pushTimer = nil
     for t in lifecycleTimers { t.cancel() }
     lifecycleTimers = []
-    database.removeWriteFailureListener(clientID)
     database.clientStopped(clientID)
+    // Releasing writes what the database kept while busy; a failure to is
+    // still this client's to report.
     database.release()
+    database.removeWriteFailureListener(clientID)
     connectionManager.closed()
   }
 

@@ -1,3 +1,4 @@
+import CSQLite
 import Dispatch
 
 /// Where a client keeps its replica between launches.
@@ -136,6 +137,8 @@ enum StorageOp: Sendable {
     group: String, changes: [(String, JSONValue?)], cleared: Bool, cookie: JSONValue,
     lastMutationIDs: [JSKey: Double])
   case addMutation(group: String, StoredMutation)
+  /// Drops the mutations the IDs confirm, keeping the snapshot.
+  case deleteConfirmedMutations(group: String, lastMutationIDs: [JSKey: Double])
 }
 
 /// The database a client stores its replica in, shared by the clients of
@@ -172,6 +175,8 @@ final class ReplicaDatabase {
   private static var open: [String: ReplicaDatabase] = [:]
   /// The profile ID of memory databases, one per process as in JS.
   private static var memoryProfileID: String?
+  /// The cookie of each client group's stored snapshot.
+  private var snapshotCookies: [String: JSONValue] = [:]
 
   private init(name: String, key: String, sqlite: SQLiteStore?) {
     self.name = name
@@ -201,7 +206,7 @@ final class ReplicaDatabase {
         do {
           try store.sync { try db.load(from: $0) }
         } catch {
-          store.close()
+          _ = store.close()
           throw error
         }
         db.users = 1
@@ -241,7 +246,7 @@ final class ReplicaDatabase {
     users -= 1
     guard users == 0, let sqlite else { return }
     if Self.open[key] === self { Self.open[key] = nil }
-    sqlite.close()
+    if let error = sqlite.close() { fail(StorageFailure(error)) }
   }
 
   /// Records that `clientID` runs until `clientStopped`. `onDelete` gets
@@ -267,8 +272,13 @@ final class ReplicaDatabase {
     running.filter { $0.clientGroupID == id }.map(\.clientID)
   }
 
-  /// Waits for the writes queued so far.
-  func flush() { sqlite?.flush() }
+  /// Waits for the writes queued so far, and writes those kept because the
+  /// database was busy. If they still can't be written, that is a storage
+  /// failure.
+  func flush() {
+    guard let sqlite else { return }
+    if let error = sqlite.flush() { fail(StorageFailure(error)) }
+  }
 
   private func load(from db: SQLiteDatabase) throws {
     try db.query("SELECT id, mutator_names, disabled FROM client_groups ORDER BY seq") { row in
@@ -303,6 +313,7 @@ final class ReplicaDatabase {
   /// Applies `ops` to the in-memory state now and queues them for SQLite.
   func apply(_ ops: [StorageOp]) {
     guard !dropped else { return }
+    let ops = ops.map(skippingOlderSnapshot)
     for op in ops { applyToMirror(op) }
     if memoryGroups != nil {
       for op in ops { applyToMemory(op) }
@@ -329,6 +340,19 @@ final class ReplicaDatabase {
     for (_, listener) in writeFailureListeners { listener(f) }
   }
 
+  /// A snapshot no newer than the stored one, from a client of the group
+  /// that is behind another, isn't written: only the mutations it confirms
+  /// are deleted (`persistDD31` persists a snapshot only when
+  /// `compareCookiesForSnapshots` says it is newer).
+  private func skippingOlderSnapshot(_ op: StorageOp) -> StorageOp {
+    guard case .updateSnapshot(let group, _, _, let cookie, let lmids) = op else { return op }
+    if let stored = snapshotCookies[group], compareCookies(cookie, stored) <= 0 {
+      return .deleteConfirmedMutations(group: group, lastMutationIDs: lmids)
+    }
+    snapshotCookies[group] = cookie
+    return op
+  }
+
   private func applyToMirror(_ op: StorageOp) {
     switch op {
     case .putGroup(let g):
@@ -339,6 +363,7 @@ final class ReplicaDatabase {
       }
     case .deleteGroup(let id):
       groups.removeAll { $0.id == id }
+      snapshotCookies[id] = nil
     case .putClient(let c):
       if let i = clients.firstIndex(where: { $0.id == c.id }) {
         clients[i] = c
@@ -352,7 +377,7 @@ final class ReplicaDatabase {
       deletedClients = pairs
     case .setProfileID(let id):
       profileID = id
-    case .updateSnapshot, .addMutation:
+    case .updateSnapshot, .addMutation, .deleteConfirmedMutations:
       break
     }
   }
@@ -375,6 +400,8 @@ final class ReplicaDatabase {
       memoryGroups![group] = g
     case .addMutation(let group, let m):
       memoryGroups![group, default: StoredGroup()].mutations.append(m)
+    case .deleteConfirmedMutations(let group, let lmids):
+      memoryGroups![group]?.mutations.removeAll { $0.id <= lmids[JSKey($0.clientID)] ?? 0 }
     case .putClient, .deleteClients, .setDeletedClients, .setProfileID:
       break
     }
@@ -402,6 +429,7 @@ final class ReplicaDatabase {
     }) {
       groupID = match.id
       group = try loadGroup(groupID)
+      snapshotCookies[groupID] = group.cookie
     } else {
       groupID = randomID()
       ops.append(
@@ -561,6 +589,10 @@ final class SQLiteStore: @unchecked Sendable {
   private var failed = false
   /// The writes that found the database busy, written with the next.
   private var retrying: [StorageOp] = []
+  /// How many times `flush()` and `close()` try the writes kept because
+  /// the database was busy, each waiting out the busy timeout.
+  static let busyRetries = 1
+
   let path: String
   let directory: String
 
@@ -622,7 +654,34 @@ final class SQLiteStore: @unchecked Sendable {
     }
   }
 
-  func flush() { queue.sync {} }
+  /// Waits for the queued writes, and writes those kept because the
+  /// database was busy. Returns the error when they still can't be
+  /// written; nothing more is written then.
+  func flush() -> (any Error)? { queue.sync { writeKept() } }
+
+  /// Writes the ops kept because the database was busy, trying up to
+  /// `busyRetries` times. On the queue.
+  private func writeKept() -> (any Error)? {
+    guard let db, !failed, !retrying.isEmpty else { return nil }
+    var last: any Error = SQLiteError(code: SQLITE_BUSY, message: "database is locked")
+    for _ in 0..<Self.busyRetries {
+      do {
+        try db.transaction {
+          for op in retrying { try Self.apply(op, to: db) }
+        }
+        retrying = []
+        return nil
+      } catch let error as SQLiteError where error.isBusy {
+        last = error
+      } catch {
+        last = error
+        break
+      }
+    }
+    failed = true
+    retrying = []
+    return last
+  }
 
   /// Applies `ops` in one transaction, after the writes queued before. A
   /// database busy past the busy timeout is not a failure
@@ -648,10 +707,14 @@ final class SQLiteStore: @unchecked Sendable {
     }
   }
 
-  func close() {
+  /// Closes the connection after the queued writes, and those kept because
+  /// the database was busy. Returns the error when those can't be written.
+  func close() -> (any Error)? {
     queue.sync {
+      let error = writeKept()
       db?.close()
       db = nil
+      return error
     }
   }
 
@@ -792,6 +855,12 @@ final class SQLiteStore: @unchecked Sendable {
       try db.run(
         "UPDATE client_groups SET cookie = ?, last_mutation_ids = ? WHERE id = ?",
         [json(cookie), json(.numberRecord(lmids)), .text(group)])
+      for (clientID, lmid) in lmids {
+        try db.run(
+          "DELETE FROM mutations WHERE client_group_id = ? AND client_id = ? AND id <= ?",
+          [.text(group), .text(clientID.string), .real(lmid)])
+      }
+    case .deleteConfirmedMutations(let group, let lmids):
       for (clientID, lmid) in lmids {
         try db.run(
           "DELETE FROM mutations WHERE client_group_id = ? AND client_id = ? AND id <= ?",

@@ -210,14 +210,20 @@ import ZeroTesting
   /// applied 02→03 leaves 03's rows with 02's version of the others and
   /// cookie 02, a state the server never had, which the next launch shows
   /// offline.
-  @Test(.timeLimit(.minutes(1)))
-  func aClientBehindDoesNotWriteAnOlderSnapshotOverANewerOne() async throws {
+  @Test(.timeLimit(.minutes(1)), arguments: [false, true])
+  func aClientBehindDoesNotWriteAnOlderSnapshotOverANewerOne(inMemory: Bool) async throws {
     defer { cleanUp() }
+    let key = randomID()
+    let storage: ZeroStorage = inMemory ? .memory : .sqlite(directory: directory)
     let scheduler = ManualScheduler(now: 1_700_000_000_000)
     let sockets = MockSocketFactory()
-    let first = try makeZero(cacheURL: "http://zero.test", sockets: sockets, scheduler: scheduler)
+    let first = try makeZero(
+      storageKey: key, storage: storage, cacheURL: "http://zero.test", sockets: sockets,
+      scheduler: scheduler)
     let a = try connect(sockets, scheduler)
-    let second = try makeZero(cacheURL: "http://zero.test", sockets: sockets, scheduler: scheduler)
+    let second = try makeZero(
+      storageKey: key, storage: storage, cacheURL: "http://zero.test", sockets: sockets,
+      scheduler: scheduler)
     let b = try connect(sockets, scheduler)
     #expect(first.clientGroupID == second.clientGroupID)
 
@@ -233,7 +239,7 @@ import ZeroTesting
     first.close()
     second.close()
 
-    let next = try makeZero(at: 1_700_000_100_000)
+    let next = try makeZero(storageKey: key, storage: storage, at: 1_700_000_100_000)
     #expect(next.engine.store.cookie == "03")
     let rows = try await next.run(zql.issue.orderBy(\.id, .asc))
     #expect(rows.map(\.id) == ["i1", "i3"])
@@ -333,6 +339,26 @@ import ZeroTesting
     let second = try makeZero(at: 1000)
     #expect(second.engine.store.pending.map(\.id) == [1])
     second.close()
+  }
+
+  /// When the writes kept because the database was busy still can't be
+  /// written as the client closes, that is reported as a storage failure,
+  /// not dropped without a word.
+  @Test(.timeLimit(.minutes(1)))
+  func aBusyWriteThatStillFailsAtCloseIsReported() async throws {
+    defer { cleanUp() }
+    let failures = Failures()
+    let first = try makeZero(onStorageFailure: { failures.kinds.append($0.kind) })
+    first.engine.database.flush()
+
+    let other = try SQLiteDatabase(path: databasePath())
+    try other.execute("BEGIN IMMEDIATE")
+    first.mutate(Self.create("i1"))
+    first.close()
+    try? other.execute("COMMIT")
+    other.close()
+    try await settle(until: { !failures.kinds.isEmpty })
+    #expect(failures.kinds == [.ioError])
   }
 
   // MARK: - A full disk

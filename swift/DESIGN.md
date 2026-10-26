@@ -213,7 +213,12 @@ Rationale:
 - No database-level encryption.
 - If the store can't be opened, the client runs on memory and calls
   `onStorageFailure`, as JS does. A failed write stops writing and calls it
-  too.
+  too. A write that finds the database busy is kept and written with the
+  next one, or by `flush()` and `close()`, which try twice more before they
+  call it a failure.
+- A client writes a poke's snapshot only when its cookie is newer than the
+  stored one, as Replicache persists, so a client of the group that is
+  behind another doesn't overwrite it.
 - One process per store in v1: one `Zero` instance per user and storage key per
   process. Concurrent cross-process access (app extensions) is deferred, and so
   is refreshing one instance from another's writes.
