@@ -17,6 +17,10 @@ public struct ApplicationError: Error, Sendable, Hashable, CustomStringConvertib
   /// `wrapWithApplicationError`.
   static func wrapping(_ error: any Error) -> ApplicationError {
     if let e = error as? ApplicationError { return e }
+    // `getErrorDetails` gives an error of another class its name.
+    if error is Keys.InvalidPrimaryKeyValue {
+      return ApplicationError(errorMessage(error), details: ["name": "TypeError"])
+    }
     return ApplicationError(errorMessage(error))
   }
 }

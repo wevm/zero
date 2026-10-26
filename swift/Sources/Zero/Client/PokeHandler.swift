@@ -179,6 +179,7 @@ final class PokeHandler {
   /// `String(error)` of the JS error the failure stands for.
   static func errorString(_ error: any Error) -> String {
     if let e = error as? PokeError { return "Error: " + e.message }
+    if error is Keys.InvalidPrimaryKeyValue { return "TypeError: \(error)" }
     return "Error: " + String(describing: error)
   }
 
