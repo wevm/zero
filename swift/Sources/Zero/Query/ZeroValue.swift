@@ -63,7 +63,7 @@ extension Int: ZeroValue {
   @inlinable
   public init(zeroValue: JSONValue) throws(ZeroValueError) {
     guard case .number(let n) = zeroValue, let i = Int(exactly: n),
-      abs(i) <= 1 << 53
+      i.magnitude <= 1 << 53
     else { throw .mismatch("an integer", zeroValue) }
     self = i
   }

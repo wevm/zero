@@ -77,6 +77,10 @@ final class PokeHandler {
       handlePokeError("received both pokePart and binary poke chunks")
       return nil
     }
+    if let message = Self.invalidLastMutationID(part) {
+      handlePokeError(message)
+      return nil
+    }
     receiving!.parts.append(part)
     return part.lastMutationIDChanges?[JSKey(clientID)]
   }
@@ -113,6 +117,12 @@ final class PokeHandler {
         handlePokeError("TypeError: " + valitaMessage(error))
         return nil
       }
+      for part in parts {
+        if let message = Self.invalidLastMutationID(part) {
+          handlePokeError(message)
+          return nil
+        }
+      }
     }
     var result = PokeEndResult(lastMutationIDChangeForSelf: nil, hasRows: false)
     for part in parts {
@@ -128,6 +138,17 @@ final class PokeHandler {
   }
 
   func handleDisconnect() { clear() }
+
+  /// Why `part` can't be applied: a last mutation ID that isn't a safe
+  /// non-negative integer. JS takes any number; mutation IDs here become
+  /// `Int`s, so such a poke is rejected like other bad poke data.
+  static func invalidLastMutationID(_ part: PokePartBody) -> String? {
+    guard let changes = part.lastMutationIDChanges else { return nil }
+    for (clientID, lmid) in changes where !(lmid >= 0 && JSNumber.isSafeInteger(lmid)) {
+      return "invalid lastMutationIDChanges for \(clientID): \(JSNumber.format(lmid))"
+    }
+    return nil
+  }
 
   private func startPlayback() {
     playbackRunning = true

@@ -156,6 +156,13 @@ package enum JSNumber {
     n >= -2_147_483_648 && n <= 2_147_483_647 && n == n.rounded(.towardZero)
   }
 
+  /// `Number.isSafeInteger(n)` in JS: an integer of at most 2^53 - 1 in
+  /// magnitude, which an `Int` holds exactly.
+  @inlinable
+  package static func isSafeInteger(_ n: Double) -> Bool {
+    n.magnitude <= 9_007_199_254_740_991 && n == n.rounded(.towardZero)
+  }
+
   /// `ToInt32(n)` in JS, for an `n` that `isInt32` accepted.
   @inlinable
   package static func int32Bits(_ n: Double) -> UInt32 {

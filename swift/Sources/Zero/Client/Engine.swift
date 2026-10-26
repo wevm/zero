@@ -191,11 +191,27 @@ final class Engine {
     self.database = database
     self.clientGroupID = clientGroupID
     self.profileID = database.profileID
+    // Mutation IDs become `Int`s: drop stored ones that can't be (a corrupt
+    // or tampered file) rather than trap on them.
+    func isMutationID(_ id: Double) -> Bool { id >= 0 && JSNumber.isSafeInteger(id) }
+    let log = self.log
+    let lastMutationIDs = group.lastMutationIDs.filter { cid, lmid in
+      if isMutationID(lmid) { return true }
+      log.error("Dropping invalid stored last mutation ID of \(cid): \(JSNumber.format(lmid))")
+      return false
+    }
+    let mutations = group.mutations.filter { m in
+      if isMutationID(m.id) { return true }
+      log.error(
+        "Dropping stored mutation \"\(m.name)\" of \(m.clientID) with invalid ID "
+          + JSNumber.format(m.id))
+      return false
+    }
     self.store = ReplicaStore(
       clientID: clientID,
       snapshot: ReplicaStore.Snapshot(
-        map: group.entries, cookie: group.cookie, lastMutationIDs: group.lastMutationIDs),
-      pending: group.mutations.map {
+        map: group.entries, cookie: group.cookie, lastMutationIDs: lastMutationIDs),
+      pending: mutations.map {
         ReplicaStore.PendingMutation(
           id: $0.id, clientID: $0.clientID, name: $0.name, args: $0.args,
           timestamp: $0.timestamp, writes: [])
@@ -1241,11 +1257,19 @@ final class Engine {
   ) {
     let log = self.log
     let mutationID = store.nextMutationID(for: clientID)
+    // Last mutation IDs are checked when they arrive, so this always holds.
+    guard let intMutationID = Int(exactly: mutationID) else {
+      let error = ConnectionError.client(
+        .internal, message: "Invalid mutation ID \(JSNumber.format(mutationID))")
+      mutationTracker.rejectMutation(ephemeralID, error)
+      client.resolve(Self.outcome(error))
+      return
+    }
     let write = KVWrite(store.main)
     let branch = ivmMain.fork()
     mutationTracker.mutationIDAssigned(ephemeralID, mutationID, name: name, args: args ?? .null)
     let tx = Transaction(
-      clientID: clientID, mutationID: Int(mutationID), reason: .optimistic, token: token,
+      clientID: clientID, mutationID: intMutationID, reason: .optimistic, token: token,
       write: write, branch: branch, schema: schema)
     let result: JSONValue?
     do {
@@ -1401,6 +1425,7 @@ final class Engine {
     } catch {
       throw PokeError(error.description)
     }
+    try checkUpdatedRows(poke.patch, patchWrite)
     snapshot.map = patchWrite.map
 
     var touched = patchWrite.writes.union(store.pendingWrites)
@@ -1457,10 +1482,16 @@ final class Engine {
     var touched = Set<JSKey>()
     var replayed: [ReplicaStore.PendingMutation] = []
     for var m in pending {
+      // Stored and assigned IDs are checked, so this always holds.
+      guard let mutationID = Int(exactly: m.id) else {
+        m.writes = []
+        replayed.append(m)
+        continue
+      }
       let write = KVWrite(main)
       let fork = branch.fork()
       let tx = Transaction(
-        clientID: m.clientID, mutationID: Int(m.id), reason: .rebase, token: token,
+        clientID: m.clientID, mutationID: mutationID, reason: .rebase, token: token,
         write: write, branch: fork, schema: schema)
       do {
         guard let mutator = mutators[m.name] else {
@@ -1492,6 +1523,40 @@ final class Engine {
       return "  {\n" + fields.joined(separator: ",\n") + "\n  }"
     }
     return "[\n" + entries.joined(separator: ",\n") + "\n]"
+  }
+
+  /// Rejects a poke whose `update` ops leave a row under a key that isn't
+  /// its primary key: one whose merge drops or changes the key's columns.
+  /// The table's source would then hold rows that disagree with the
+  /// replica, which JS's `MemorySource` reports by throwing ("Row already
+  /// exists", "Row not found") and the poke handler by disconnecting.
+  private func checkUpdatedRows(_ patch: [KVPatchOp], _ write: KVWrite) throws {
+    var keyless: [String: [Row]] = [:]
+    for case .update(let key, _, _) in patch {
+      guard let value = write.get(key) else { continue }
+      let table = IVMBranch.sourceName(key)
+      guard let primaryKey = schema.tables[table]?.primaryKey else { continue }
+      let row = value.objectValue ?? [:]
+      if let rowKey = try? Keys.primaryKeyString(table: table, primaryKey: primaryKey, row: row) {
+        guard StringCompare.equal(rowKey, key) else {
+          throw PokeError("update of \(key) changes its primary key to \(rowKey)")
+        }
+        continue
+      }
+      // JS keeps a row whose merge leaves it without a usable primary key,
+      // and fails once a second one collides with it in the source.
+      guard let source = ivmMain.source(table) else { continue }
+      let sourceRow = Row(row, layout: source.layout)
+      let compare = source.primaryIndex.data.compare
+      let previous = store.main.get(key).map { Row($0.objectValue ?? [:], layout: source.layout) }
+      let replacesItself = previous.map { compare($0, sourceRow) == 0 } ?? false
+      if (!replacesItself && source.primaryIndex.data.contains(sourceRow))
+        || keyless[table, default: []].contains(where: { compare($0, sourceRow) == 0 })
+      {
+        throw PokeError("Row already exists: update of \(key)")
+      }
+      keyless[table, default: []].append(sourceRow)
+    }
   }
 
   static func badOrderMessage(_ name: String, _ received: String, _ last: String) -> String {

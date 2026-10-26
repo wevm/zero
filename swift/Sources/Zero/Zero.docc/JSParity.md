@@ -137,6 +137,16 @@ is written or sent.
   then the others in the order they were set. Keys are compared by UTF-16
   code unit, so `"é"` and `"e\u{301}"` are two keys, as they are in JS. JSON
   text round-trips as `JSON.stringify` writes it.
+- **Lone surrogates.** A Swift `String` can't hold half of a surrogate
+  pair, so JSON text with an escaped lone surrogate (`"\ud800"`) reads it
+  as U+FFFD, the replacement character; JS keeps the code unit. Two values
+  that differ only in lone surrogates, such as the keys `"\ud800"` and
+  `"\udc00"` of one object, are then the same value.
+- **Mutation IDs.** A poke whose `lastMutationIDChanges` holds a number
+  that isn't a safe non-negative integer (`Number.isSafeInteger`) is
+  rejected as bad poke data: the client disconnects with a poke error. JS
+  takes any number. A stored pending mutation with such an ID is dropped
+  when the client opens, and logged as an error.
 - **JSON nesting depth.** JSON nested more than 1,500 arrays and objects
   deep is rejected ("JSON nested too deeply"); JS accepts whatever fits its
   stack, and zero-cache writes up to about 4,100 levels. A poke is about 5
