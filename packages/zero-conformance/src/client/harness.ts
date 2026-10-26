@@ -81,6 +81,10 @@ export type Step =
       bytes?: number[];
       socket?: number;
     }
+  /** A text frame of exactly `text`, which need not be JSON. */
+  | {op: 'receiveText'; text: string; socket?: number}
+  /** A binary frame of exactly `bytes`, the message type byte included. */
+  | {op: 'receiveBinary'; bytes: number[]; socket?: number}
   /** The socket closes from the server or network side. */
   | {
       op: 'socketClose';
@@ -95,6 +99,15 @@ export type Step =
    * tab does (`document.visibilityState`).
    */
   | {op: 'visibility'; state: 'visible' | 'hidden'}
+  /**
+   * Once `connection.state` next becomes `state`, runs `then` (a `connect`
+   * or `close` step) synchronously from inside the state listener.
+   */
+  | {
+      op: 'onState';
+      state: string;
+      then: {op: 'connect'; auth?: string} | {op: 'close'};
+    }
   /** `zero.connection.connect()`. */
   | {op: 'connect'; auth?: string}
   | {op: 'close'}
@@ -474,6 +487,18 @@ export async function runScenario(scenario: Scenario): Promise<StepResult[]> {
         );
         return;
       }
+      case 'receiveText':
+        targetSocket(step.socket).dispatchEvent(
+          new MessageEvent('message', {data: step.text}),
+        );
+        return;
+      case 'receiveBinary':
+        targetSocket(step.socket).dispatchEvent(
+          new MessageEvent('message', {
+            data: Uint8Array.from(step.bytes).buffer,
+          }),
+        );
+        return;
       case 'socketClose':
         targetSocket(step.socket).dispatchEvent(
           new CloseEvent('close', {
@@ -489,6 +514,21 @@ export async function runScenario(scenario: Scenario): Promise<StepResult[]> {
       case 'visibility':
         document.setVisibility(step.state);
         return;
+      case 'onState': {
+        const {then} = step;
+        const unsubscribe = z.connection.state.subscribe(state => {
+          if (state.name !== step.state) return;
+          unsubscribe();
+          if (then.op === 'close') {
+            void z.close();
+          } else {
+            void z.connection.connect(
+              then.auth === undefined ? undefined : {auth: then.auth},
+            );
+          }
+        });
+        return;
+      }
       case 'connect':
         void z.connection.connect(
           step.auth === undefined ? undefined : {auth: step.auth},

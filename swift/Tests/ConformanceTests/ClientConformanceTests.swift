@@ -20,8 +20,8 @@ struct ClientConformanceTests {
     try Self.run(storage: .sqlite(directory: directory))
   }
 
-  static func run(storage: ZeroStorage) throws {
-    let file = try Vectors.file("client")
+  static func run(storage: ZeroStorage, vectors: String = "client") throws {
+    let file = try Vectors.file(vectors)
     let startTime = file["shared"]?["startTime"]?.numberValue ?? 0
     let only = ProcessInfo.processInfo.environment["ZERO_CLIENT_SCENARIO"]
     var failed = 0
@@ -312,6 +312,11 @@ final class ScenarioRunner {
         payload = Array(JSONSerializer.stringify(substitute(step["parts"] ?? [])).utf8)
       }
       try socket(step["socket"]).receive(.binary([PokeChunk.messageType] + payload))
+    case "receiveText":
+      try socket(step["socket"]).receive(text: step["text"]!.stringValue!)
+    case "receiveBinary":
+      try socket(step["socket"]).receive(
+        .binary((step["bytes"]?.arrayValue ?? []).map { UInt8($0.numberValue!) }))
     case "socketClose":
       try socket(step["socket"]).serverClose(
         code: Int(step["code"]?.numberValue ?? 1006), reason: step["reason"]?.stringValue ?? "",
@@ -320,6 +325,20 @@ final class ScenarioRunner {
       scheduler.advance(by: step["ms"]?.numberValue ?? 0)
     case "visibility":
       zero.setVisible(step["state"] == "visible")
+    case "onState":
+      let name = step["state"]!.stringValue!
+      let then = step["then"]!
+      var unsubscribe: (() -> Void)?
+      unsubscribe = zero.connection.subscribe { [weak self] state in
+        guard let self, state.status.rawValue == name else { return }
+        unsubscribe?()
+        unsubscribe = nil
+        if then["op"] == "close" {
+          self.zero.close()
+        } else {
+          self.zero.connection.connect(auth: then["auth"]?.stringValue)
+        }
+      }
     case "connect":
       zero.connection.connect(auth: step["auth"]?.stringValue)
     case "close":
