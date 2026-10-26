@@ -12,7 +12,10 @@ import Testing
 @Suite(.enabled(if: Vectors.available))
 struct HardenIVMTests {
   /// Errors JS throws that Swift throws too, rather than trapping on.
-  static let comparableErrors = ["not(exists()) is not supported on the client"]
+  static let comparableErrors = [
+    "not(exists()) is not supported on the client",
+    "Partitioned take does not allow unpartitioned fetches",
+  ]
 
   static func decode(_ v: JSONValue) -> JSONValue {
     switch v {
@@ -57,9 +60,10 @@ struct HardenIVMTests {
   static func run(_ c: JSONValue, schema: ZeroSchema, datasets: [JSONValue]) throws -> Outcome {
     let result = c["result"]!
     if let error = result["error"]?.stringValue,
-      !comparableErrors.contains(where: { error.hasPrefix($0) })
+      result["batch"] != nil || !comparableErrors.contains(where: { error.hasPrefix($0) })
     {
-      // A JS assertion: Swift has a precondition there.
+      // JS threw from a push, or from an assertion where Swift has a
+      // precondition: not compared.
       return .skipped
     }
     let dataset = datasets[Int(c["dataset"]!.numberValue!)]
@@ -87,7 +91,7 @@ struct HardenIVMTests {
     do {
       let input = try buildPipeline(built.ast, IVMConformanceTests.Delegate(sources), queryID: "q")
       recorder = IVMConformanceTests.Recorder(input)
-      view = ArrayView(recorder, format: format, complete: true)
+      view = try PipelineFailure.capture { ArrayView(recorder, format: format, complete: true) }
       view.addListener { _, _ in notified += 1 }
     } catch {
       if let expected = result["error"]?.stringValue {

@@ -34,6 +34,15 @@ export const queries = defineQueries({
       zql.issue.where('id', args).related('owner').one(),
     ),
     firstTwo: defineQuery(() => zql.issue.orderBy('title', 'asc').limit(2)),
+    // A flipped EXISTS over a limited subquery: fetching it throws
+    // `Partitioned take does not allow unpartitioned fetches`.
+    withFirstComment: defineQuery(() =>
+      zql.issue
+        .whereExists('comments', q => q.orderBy('id', 'asc').limit(1), {
+          flip: true,
+        })
+        .orderBy('id', 'asc'),
+    ),
   },
   users: {
     all: defineQuery(() => zql.user.orderBy('id', 'asc')),

@@ -46,8 +46,15 @@ package final class DeferredInput: Input {
       return
     }
     input.setOutput(output)
-    for node in input.fetch(FetchRequest()) {
-      output.push(.add(node), pusher: input)
+    do {
+      try PipelineFailure.capture {
+        for node in input.fetch(FetchRequest()) {
+          output.push(.add(node), pusher: input)
+        }
+      }
+    } catch {
+      input.destroy()
+      throw error
     }
     output.reconcile(pusher: input)
     self.input = input

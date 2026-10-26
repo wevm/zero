@@ -128,6 +128,10 @@ is written or sent.
 - **The main actor.** Queries, views, and mutators run synchronously on the
   main actor. Views and live queries are up to date when `mutate` returns.
   Only the network and storage are asynchronous.
+- **Queries that can't be built.** A query JS rejects when it is
+  materialized, such as a flipped `whereExists` over a subquery with a
+  `limit`, makes `materialize` and `liveQuery` throw and `run` reject with
+  the same message. Unlike JS, nothing stays registered with the server.
 - **Nulls in columns that can't be null.** When the server sends null for
   a column the schema says isn't optional, a `String`, `Double`, `Int`, or
   `Bool` property reads as `""`, `0`, or `false`. JS hands the null

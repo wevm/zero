@@ -468,6 +468,21 @@ export const hardenQueryScenarios: Scenario[] = [
     ],
   },
   {
+    name: 'error: a query that fails to hydrate throws from materialize and run',
+    steps: [
+      // Registered first, so the failing calls below don't change what the
+      // server is sent (JS leaves their registrations behind; Swift drops
+      // them).
+      {op: 'preload', preload: 'p', query: 'issues.withFirstComment'},
+      ...allView,
+      {op: 'materialize', view: 'w', query: 'issues.withFirstComment'},
+      {op: 'run', run: 'r', query: 'issues.withFirstComment'},
+      {op: 'run', run: 'c', query: 'issues.withFirstComment', type: 'complete'},
+      advance(10),
+      ...syncPoke('p1', '00', '01', [], [put('issues', issue('i1'))]),
+    ],
+  },
+  {
     name: 'ttl: strings JS parses oddly',
     steps: [
       start,

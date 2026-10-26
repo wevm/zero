@@ -653,7 +653,10 @@ class Recorder implements Operator {
 }
 
 type Step = {changes: JSONValue; data: JSONValue; notified: boolean};
-type Result = {error: string} | {initial: JSONValue; steps: Step[]};
+/** `batch` is set for an error thrown by a push rather than by hydrating. */
+type Result =
+  | {error: string; batch?: number}
+  | {initial: JSONValue; steps: Step[]};
 
 function errorText(e: unknown) {
   return String(e instanceof Error ? e.message : e);
@@ -690,7 +693,7 @@ function runBatches(
   }
   const initial = encode(view.data);
   const steps: Step[] = [];
-  for (const batch of batches) {
+  for (const [i, batch] of batches.entries()) {
     recorder.changes.length = 0;
     notified = 0;
     try {
@@ -704,7 +707,7 @@ function runBatches(
         consume(sources[push.table].push(change));
       }
     } catch (e) {
-      return {error: errorText(e)};
+      return {error: errorText(e), batch: i};
     }
     view.flush();
     steps.push({

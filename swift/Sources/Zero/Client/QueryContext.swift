@@ -232,13 +232,30 @@ final class QueryContext {
     }
 
     var created: ArrayView!
+    var hydrationError: (any Error)?
     batchViewUpdates {
       let v: ArrayView
+      // Hydrating fetches the pipeline, which can fail where JS throws.
+      func hydrate(_ error: ErroredQuery?, complete: Bool) -> ArrayView? {
+        do {
+          return try PipelineFailure.capture {
+            ArrayView(input, format: query.format, error: error, complete: complete)
+          }
+        } catch {
+          hydrationError = error
+          return nil
+        }
+      }
       switch queryComplete {
-      case .complete: v = ArrayView(input, format: query.format, error: nil, complete: true)
-      case .failed(let e): v = ArrayView(input, format: query.format, error: e, complete: false)
+      case .complete:
+        guard let h = hydrate(nil, complete: true) else { return }
+        v = h
+      case .failed(let e):
+        guard let h = hydrate(e, complete: false) else { return }
+        v = h
       case .pending:
-        v = ArrayView(input, format: query.format, error: nil, complete: false)
+        guard let h = hydrate(nil, complete: false) else { return }
+        v = h
         onResolved = { [weak v] (r: Completion) in
           switch r {
           case .complete: microtask { v?.setResultType(.complete) }
@@ -250,6 +267,14 @@ final class QueryContext {
       }
       removeCommitObserver = onTransactionCommit { [weak v] in v?.flush() }
       created = v
+    }
+    if let hydrationError {
+      // Unlike JS, which leaves the query registered, nothing is left
+      // behind: there is no view to destroy.
+      destroyed = true
+      input.destroy()
+      removeAddedQuery()
+      throw hydrationError
     }
     created.onDestroy = {
       destroyed = true
@@ -310,7 +335,14 @@ final class QueryContext {
       result.reject(error)
       return result
     }
-    let v = try materialize(query, ttl: ttl ?? .defaultTTL)
+    let v: MaterializedView
+    do {
+      v = try materialize(query, ttl: ttl ?? .defaultTTL)
+    } catch {
+      // JS's `run` is async: a query that can't be materialized rejects it.
+      result.reject(error)
+      return result
+    }
     if type == .unknown {
       // While the pipelines are not ready the view is deferred and this is
       // empty: `unknown` does not wait for local data either.

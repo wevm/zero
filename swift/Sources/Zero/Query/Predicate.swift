@@ -7,6 +7,34 @@ package struct PipelineError: Error, CustomStringConvertible {
   package init(_ description: String) { self.description = description }
 }
 
+/// An error an operator finds while a pipeline is fetched, where JS throws
+/// from inside the fetch and the error comes out of whatever hydrates the
+/// view (`materialize`, `run`). Fetches are lazy streams that can't throw,
+/// so the operator reports the error here and yields nothing, and the code
+/// that hydrates throws it once the fetch is done.
+package final class PipelineFailure: @unchecked Sendable {
+  private var error: PipelineError?
+
+  @TaskLocal private static var current: PipelineFailure?
+
+  /// Runs `body`, and throws the first error an operator reported while it
+  /// ran.
+  package static func capture<T>(_ body: () throws -> T) throws -> T {
+    let failure = PipelineFailure()
+    let result = try $current.withValue(failure) { try body() }
+    if let error = failure.error { throw error }
+    return result
+  }
+
+  /// Reports `message`. Returns false when no `capture` is running, where
+  /// the caller can't recover.
+  static func report(_ message: String) -> Bool {
+    guard let current else { return false }
+    if current.error == nil { current.error = PipelineError(message) }
+    return true
+  }
+}
+
 /// `createPredicate(condition)` for a condition without subqueries.
 func createPredicate(_ condition: AST.Condition) throws(PipelineError) -> RowPredicate {
   switch condition {
