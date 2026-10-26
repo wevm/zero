@@ -580,7 +580,8 @@ package final class VirtualizerCore<
 
   private static func minPageSize(_ options: Options) -> Int {
     guard let min = options.minPageSize else { return defaultMinPageSize }
-    return makeEven(max(2, min))
+    // At most 2^30, so a page query's limit (one more) fits a query limit.
+    return makeEven(Swift.min(max(2, min), 1 << 30))
   }
 
   private static func restorable(_ options: Options) -> ScrollState? {
@@ -894,8 +895,8 @@ package final class VirtualizerCore<
   private func updatePageSize() {
     let min = Self.minPageSize(options)
     let height = host?.viewportHeight ?? 0
-    let size =
-      height > 0 ? max(min, makeEven(Int((height / rowEstimate).rounded(.up)) * 3)) : min
+    let rows = (height / rowEstimate).rounded(.up) * 3
+    let size = height > 0 ? max(min, makeEven(rows < 0x1p30 ? Int(rows) : 1 << 30)) : min
     if size > pageSize {
       pageSize = size
       version += 1
