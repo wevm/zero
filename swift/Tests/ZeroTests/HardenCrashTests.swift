@@ -13,7 +13,7 @@ import ZeroTesting
   /// `precondition`, which fails the child.
   @Suite @MainActor struct HardenCrashTests {
     static let create = defineMutator("issue.create") { (tx, id: String) in
-      try tx.mutate.insert(
+      try tx.mutate.issue.insert(
         Issue(id: id, title: "", description: "", closed: false, createdAt: 1))
     }
 

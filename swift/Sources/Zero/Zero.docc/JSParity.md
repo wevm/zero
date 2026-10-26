@@ -172,9 +172,10 @@ is written or sent.
   that writes one to a column a view sorts by fails, and so does every
   mutation after it, and a poke that brings one disconnects the client
   again after every reconnect. Swift sorts such a value with the others
-  (by type, then by its JSON) and keeps working. A mutator can only write
-  one through the untyped `tx.mutate.<table>` calls; the server rejects
-  such a mutation, and its row goes when the next poke comes.
+  (by type, then by its JSON) and keeps working. The typed
+  `tx.mutate.<table>` calls can't write one; a mutator can only write one
+  through the untyped `tx.mutate.table(_:)`, and the server rejects such a
+  mutation, so its row goes when the next poke comes.
 - **Error messages.** Messages about data the client can't read follow
   valita's wording, as JS's do. A server frame that isn't JSON is the
   exception: JS shows the engine's `JSON.parse` message, and Swift its

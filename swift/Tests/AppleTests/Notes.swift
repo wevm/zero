@@ -40,7 +40,7 @@ enum Notes {
   }
 
   static let put = defineMutator("note.put") { (tx, note: Put) in
-    try tx.mutate.upsert(Note(id: note.id, text: note.text))
+    try tx.mutate.note.upsert(Note(id: note.id, text: note.text).columnValues)
   }
   static let remove = defineMutator("note.remove") { (tx, id: String) in
     try tx.mutate.note.delete(["id": .string(id)])

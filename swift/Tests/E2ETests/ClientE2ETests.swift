@@ -20,8 +20,8 @@ enum E2EApp {
   }
 
   static let create = defineMutator("issue.create") { (tx, args: CreateIssue) in
-    try tx.mutate.insert(
-      TestIssue(
+    try tx.mutate.issue.insert(
+      .init(
         id: args.id, title: args.title, description: "", closed: false, ownerId: args.ownerId,
         createdAt: 100))
   }

@@ -28,26 +28,26 @@ import ZeroTesting
   }
 
   static let create = defineMutator("t.create") { (tx, id: String) -> Seen in
-    try tx.mutate.insert(row(id))
+    try tx.mutate.issue.insert(row(id))
     return Seen(mid: tx.mutationID, seen: try ids(tx))
   }
   static let createThenThrow = defineMutator("t.createThenThrow") { (tx, id: String) in
-    try tx.mutate.insert(row(id))
+    try tx.mutate.issue.insert(row(id))
     throw ApplicationError("midway")
   }
   /// Writes, calls `zero.mutate` without waiting for it, and writes again.
   static let outer = defineMutator("t.outer") { (tx, _: String) -> Seen in
-    try tx.mutate.insert(row("outer1"))
+    try tx.mutate.issue.insert(row("outer1"))
     Nested.inner = Nested.zero?.mutate(create("inner"))
-    try tx.mutate.insert(row("outer2"))
+    try tx.mutate.issue.insert(row("outer2"))
     return Seen(mid: tx.mutationID, seen: try ids(tx))
   }
 
   /// Closes the `Zero` it runs in, then writes again.
   static let closing = defineMutator("t.closing") { (tx, _: String) -> String in
-    try tx.mutate.insert(row("a"))
+    try tx.mutate.issue.insert(row("a"))
     Nested.zero?.close()
-    try tx.mutate.insert(row("b"))
+    try tx.mutate.issue.insert(row("b"))
     return "done"
   }
 

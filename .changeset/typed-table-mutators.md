@@ -7,6 +7,9 @@
 To migrate, regenerate with `npx zero-swift codegen`, then replace dictionaries passed to `tx.mutate.<table>` with the typed values:
 
 ```diff
+- try tx.mutate.insert(Issue(id: id, title: title, ...))
++ try tx.mutate.issue.insert(.init(id: id, title: title, ...))
+
 - try tx.mutate.issue.insert(["id": .string(id), "title": .string(title), ...])
 + try tx.mutate.issue.insert(.init(id: id, title: title, ...))
 
@@ -20,4 +23,4 @@ To migrate, regenerate with `npx zero-swift codegen`, then replace dictionaries 
 + try tx.mutate.issue.delete(.init(id: id))
 ```
 
-`tx.mutate.insert(row)` and `tx.mutate.upsert(row)` still work. For untyped writes, `tx.mutate.table("issue")` takes dictionaries as before.
+`tx.mutate.insert(row)` and `tx.mutate.upsert(row)` are gone: `tx.mutate.<table>` is the one way to write. Generic code can use `TypedTableMutator<R>(tx.mutate)`, and `tx.mutate.table("issue")` takes dictionaries for untyped writes.

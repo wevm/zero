@@ -22,8 +22,8 @@ import ZeroTesting
     zql.issue.where(\.ownerId, auth.userID).orderBy(\.id, .asc)
   }
   static let create = defineMutator("issue.create") { (tx, args: CreateIssue, auth: Auth) in
-    try tx.mutate.insert(
-      Issue(
+    try tx.mutate.issue.insert(
+      .init(
         id: args.id, title: args.title, description: "", closed: false,
         ownerId: args.ownerId ?? auth.userID, createdAt: 1))
   }

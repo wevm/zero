@@ -14,7 +14,7 @@ import ZeroTesting
 @Suite(.serialized) @MainActor struct HardenStorageTests {
   static let day: Double = 24 * 60 * 60_000
   static let create = defineMutator("issue.create") { (tx, id: String) in
-    try tx.mutate.insert(
+    try tx.mutate.issue.insert(
       Issue(id: id, title: "", description: "", closed: false, createdAt: 1))
   }
 

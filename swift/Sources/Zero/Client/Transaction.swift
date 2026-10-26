@@ -131,16 +131,6 @@ public struct TransactionMutate {
   /// The untyped CRUD operations on `name`, with values keyed by client
   /// column name.
   public func table(_ name: String) -> TableMutator { TableMutator(tx: tx, table: name) }
-
-  /// Inserts a row unless one with its primary key exists.
-  public func insert<R: ZeroRow>(_ row: R) throws {
-    try tx.insert(R.tableName, row.columnValues)
-  }
-
-  /// Inserts a row, or replaces the columns of the existing one.
-  public func upsert<R: ZeroRow>(_ row: R) throws {
-    try tx.upsert(R.tableName, row.columnValues)
-  }
 }
 
 /// The CRUD operations on one table (`TableCRUD` in
