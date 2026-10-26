@@ -44,6 +44,9 @@ jobs:
         run: swift test
       - name: Docs
         run: scripts/docs.sh
+      # The Apple-only API, which Linux doesn't build.
+      - name: API breaks
+        run: scripts/api-breaks.sh
       - name: Test (iOS Simulator)
         run: |
           device="$(xcrun simctl list devices available -j |
