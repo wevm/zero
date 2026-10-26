@@ -127,7 +127,11 @@ is written or sent.
 
 - **The main actor.** Queries, views, and mutators run synchronously on the
   main actor. Views and live queries are up to date when `mutate` returns.
-  Only the network and storage are asynchronous.
+  Only the network and storage are asynchronous. The exception is a
+  `mutate` from a view listener: as a JS mutator commits after the
+  notification that ran it, it runs once the current notification and the
+  rest of its task are done, so every listener ends on the latest rows and
+  every view sees each change. Its `client` outcome settles then.
 - **Queries that can't be built.** A query JS rejects when it is
   materialized, such as a flipped `whereExists` over a subquery with a
   `limit`, makes `materialize` and `liveQuery` throw and `run` reject with

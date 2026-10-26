@@ -1192,9 +1192,22 @@ final class Engine {
   }
 
   /// `zero.mutate`, through the `MutatorProxy` and Replicache's `mutate`.
+  ///
+  /// A mutation made while listeners are notified, from a listener, runs
+  /// once the current task is done, as an async JS mutator commits after
+  /// the notification: every listener sees the change that notified it
+  /// before the mutation's, and every view sees both.
   func mutate(name: String, args: JSONValue?) -> MutatorResult {
     let client = Deferred<MutationOutcome>()
     let server = Deferred<MutationOutcome>()
+    if context.isNotifying {
+      loop.afterCurrentTask { [self] in
+        let result = mutate(name: name, args: args)
+        result.client.onSettle { client.settle($0) }
+        result.server.onSettle { server.settle($0) }
+      }
+      return MutatorResult(client: client, server: server)
+    }
     // JS throws this before it looks at the connection; here both outcomes
     // carry it, and nothing is written or pushed.
     guard let mutator = mutators[name] else {

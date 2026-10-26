@@ -16,6 +16,7 @@
 final class EventLoop {
   private var queue: [() -> Void] = []
   private var head = 0
+  private var afterTask: [() -> Void] = []
   private var depth = 0
   private var checkpointRequested = false
   private let scheduler: any Scheduler
@@ -32,6 +33,25 @@ final class EventLoop {
     if depth == 0 { requestCheckpoint() }
   }
 
+  /// Runs `work` once the current task or call is done, before its
+  /// microtasks. Outside a task or call (a microtask draining before a
+  /// task's body), it is queued as a microtask, which runs once the current
+  /// one is done.
+  func afterCurrentTask(_ work: @escaping () -> Void) {
+    guard !stopped else { return }
+    if depth == 0 { return microtask(work) }
+    afterTask.append(work)
+  }
+
+  private func runAfterTask() {
+    var i = 0
+    while i < afterTask.count {
+      afterTask[i]()
+      i += 1
+    }
+    afterTask.removeAll()
+  }
+
   /// Runs a task: the microtasks already queued, `body`, then the
   /// microtasks it queued.
   func dispatch<T>(_ body: () throws -> T) rethrows -> T {
@@ -39,6 +59,7 @@ final class EventLoop {
     drain()
     depth = 1
     defer {
+      runAfterTask()
       drain()
       depth = 0
     }
@@ -51,6 +72,7 @@ final class EventLoop {
     if depth > 0 { return try body() }
     depth = 1
     defer {
+      runAfterTask()
       depth = 0
       if head < queue.count { requestCheckpoint() }
     }
@@ -62,6 +84,7 @@ final class EventLoop {
   func stop() {
     stopped = true
     queue.removeAll()
+    afterTask.removeAll()
     head = 0
   }
 

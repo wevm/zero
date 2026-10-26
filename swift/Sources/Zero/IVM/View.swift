@@ -417,7 +417,11 @@ package final class ArrayView: Output {
 
   private func fireListeners() {
     let (data, type) = listenerArgs()
-    for (_, listener) in listeners { listener(data, type) }
+    forEachLive(listeners) { listener in
+      listener(data, type)
+    } next: { [unowned self] in
+      self.listeners
+    }
   }
 
   package func destroy() { onDestroy?() }
@@ -501,4 +505,33 @@ extension Array<ViewEntry> {
   mutating func insertOrAppend(_ entry: ViewEntry, at i: Int) {
     if i == count { append(entry) } else { insert(entry, at: i) }
   }
+}
+
+/// Calls `body` for each element of `elements()`, read again after every
+/// call, as JS iterates a `Set` that changes while it is iterated: one
+/// removed before its turn is skipped, one added is called in the same pass.
+/// Elements are in increasing `id` order.
+func forEachLive<T>(
+  _ start: [(id: Int, listener: T)], _ body: (T) -> Void,
+  next elements: () -> [(id: Int, listener: T)]
+) {
+  var current = start
+  var last = Int.min
+  while let i = firstIndex(after: last, in: current) {
+    let element = current[i]
+    last = element.id
+    body(element.listener)
+    current = elements()
+  }
+}
+
+private func firstIndex<T>(after id: Int, in elements: [(id: Int, listener: T)]) -> Int? {
+  // Ids increase along the array: binary search for the first above `id`.
+  var low = 0
+  var high = elements.count
+  while low < high {
+    let mid = (low + high) / 2
+    if elements[mid].id <= id { low = mid + 1 } else { high = mid }
+  }
+  return low < elements.count ? low : nil
 }

@@ -34,6 +34,13 @@ final class QueryContext {
   private let closedReason: () -> ConnectionError?
   /// The hashes of the unnamed queries already warned about.
   private var warnedLocalOnly = Set<String>()
+  /// Counts the view notifications under way.
+  let notifications = NotificationGate()
+
+  /// Whether listeners are being told about a change. JS mutators are
+  /// async, so a mutation made from a listener commits once the
+  /// notification is over; `Engine.mutate` defers one made now.
+  var isNotifying: Bool { notifications.depth > 0 }
 
   init(
     branch: IVMBranch,
@@ -145,6 +152,8 @@ final class QueryContext {
   }
 
   private func endTransaction() {
+    notifications.depth += 1
+    defer { notifications.depth -= 1 }
     for (_, l) in commitListeners { l() }
   }
 
@@ -315,7 +324,7 @@ final class QueryContext {
     let updateTTL: (TTL) -> Void =
       customQueryID.map { id in { [weak self] ttl in self?.updateCustomQuery(id, ttl) } } ?? { _ in
       }
-    return MaterializedView(created, updateTTL: updateTTL)
+    return MaterializedView(created, updateTTL: updateTTL, notifications: notifications)
   }
 
   enum RunType: String, Sendable {
@@ -463,9 +472,17 @@ public final class MaterializedView {
   var query: AnyQuery?
   var ttl: TTL = .defaultTTL
 
-  init(_ view: ArrayView, updateTTL: @escaping (TTL) -> Void) {
+  private var notifications: NotificationGate
+  /// How many notification passes are under way. As in JS, a listener that
+  /// destroys the view doesn't keep the pass from reaching the others.
+  private var forwarding = 0
+
+  init(
+    _ view: ArrayView, updateTTL: @escaping (TTL) -> Void, notifications: NotificationGate
+  ) {
     self.view = view
     self.updateTTLImpl = updateTTL
+    self.notifications = notifications
     forward()
   }
 
@@ -516,7 +533,20 @@ public final class MaterializedView {
     removeForward = view.addListener { [weak self] data, type in
       guard let self else { return }
       let error = self.view.listenerResultType.1
-      for (_, listener) in self.listeners { listener(data, type, error) }
+      self.notifications.depth += 1
+      self.forwarding += 1
+      defer {
+        self.notifications.depth -= 1
+        self.forwarding -= 1
+        // Destroyed during the pass: its listeners went on hearing it.
+        if self.destroyed && self.forwarding == 0 { self.listeners = [] }
+      }
+      forEachLive(self.listeners) { listener in
+        listener(data, type, error)
+      } next: {
+        [unowned self] in
+        self.listeners
+      }
     }
   }
 
@@ -530,6 +560,7 @@ public final class MaterializedView {
     other.destroyed = true
     view = other.view
     updateTTLImpl = other.updateTTLImpl
+    notifications = other.notifications
     forward()
   }
 
@@ -539,7 +570,7 @@ public final class MaterializedView {
     guard !destroyed else { return }
     destroyed = true
     removeForward()
-    listeners = []
+    if forwarding == 0 { listeners = [] }
     view.destroy()
   }
 
@@ -548,6 +579,12 @@ public final class MaterializedView {
     self.ttl = ttl
     updateTTLImpl(ttl)
   }
+}
+
+/// How many view notifications are under way on a client.
+@MainActor
+final class NotificationGate {
+  var depth = 0
 }
 
 /// Keeps a view alive while its snapshot stream is iterated.

@@ -144,7 +144,7 @@ public final class Deferred<Value: Sendable> {
     if let result { observer(result) } else { observers.append(observer) }
   }
 
-  private func settle(_ r: Result<Value, any Error>) {
+  func settle(_ r: Result<Value, any Error>) {
     guard result == nil else { return }
     result = r
     let waiters = self.waiters

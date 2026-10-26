@@ -396,7 +396,7 @@ export async function runScenario(scenario: Scenario): Promise<StepResult[]> {
     {
       remove: () => void;
       calls: {data: ReadonlyJSONValue; resultType: string}[];
-      threw?: string;
+      threw?: string | undefined;
     }
   >();
 
@@ -576,7 +576,7 @@ export async function runScenario(scenario: Scenario): Promise<StepResult[]> {
         const entry: {
           remove: () => void;
           calls: {data: ReadonlyJSONValue; resultType: string}[];
-          threw?: string;
+          threw?: string | undefined;
         } = {remove: () => {}, calls: []};
         listeners.set(step.listener, entry);
         let count = 0;

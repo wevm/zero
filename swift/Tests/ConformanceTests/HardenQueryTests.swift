@@ -14,4 +14,11 @@ struct HardenQueryTests {
   @Test func scenariosOnMemory() throws {
     try ClientConformanceTests.run(storage: .memory, vectors: "harden-queries")
   }
+
+  @Test func scenariosOnSQLite() throws {
+    let directory = NSTemporaryDirectory() + "zero-harden-scenarios-" + UUID().uuidString
+    defer { try? FileManager.default.removeItem(atPath: directory) }
+    try ClientConformanceTests.run(
+      storage: .sqlite(directory: directory), vectors: "harden-queries")
+  }
 }
