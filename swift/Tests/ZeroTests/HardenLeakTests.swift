@@ -17,10 +17,12 @@ import ZeroTesting
 
   let scheduler = ManualScheduler(now: 1_700_000_000_000)
 
+  let log = RecordingLogSink()
+
   func makeZero(_ sockets: any SocketFactory) throws -> Zero<Void> {
     var options = ZeroOptions(
       cacheURL: "http://zero.test", userID: "u", storageKey: randomID(), storage: .memory)
-    options.logSink = RecordingLogSink()
+    options.logSink = log
     options.onUpdateNeeded = { _ in }
     return try Zero(
       schema: .test, mutators: [Self.create], options: options, scheduler: scheduler,
@@ -163,6 +165,81 @@ import ZeroTesting
     #expect(manager.stateWaiters.count == waiters)
     #expect(waiters <= 1)
     #expect(scheduler.pendingTimers == timers)
+    zero.close()
+  }
+
+  /// The sizes of the collections the engine and its parts hold, by path,
+  /// read by reflection so private state counts too.
+  func collectionSizes(_ engine: Engine) -> [String: Int] {
+    var sizes: [String: Int] = [:]
+    func visit(_ value: Any, _ path: String, depth: Int) {
+      let mirror = Mirror(reflecting: value)
+      switch mirror.displayStyle {
+      case .collection, .dictionary, .set:
+        sizes[path] = mirror.children.count
+        return
+      case .optional:
+        if let some = mirror.children.first { visit(some.value, path, depth: depth) }
+        return
+      default: break
+      }
+      guard depth > 0 else { return }
+      for child in mirror.children {
+        visit(child.value, path + "." + (child.label ?? "?"), depth: depth - 1)
+      }
+    }
+    visit(engine, "engine", depth: 3)
+    return sizes
+  }
+
+  /// Hours of churn: the server drops the connection every few minutes,
+  /// and between drops views and live queries come and go, preloads expire,
+  /// and mutations are confirmed. What the engine holds stays the same
+  /// from one cycle to the next.
+  @Test func reconnectAndViewChurnDoesNotGrow() throws {
+    let sockets = MockSocketFactory()
+    let zero = try makeZero(sockets)
+    var cookie = 0
+    var lmid = 0
+    func cycle(_ i: Int) throws {
+      let socket = try connect(sockets)
+      #expect(
+        zero.connection.state.status == .connected,
+        "\(log.entries.filter { $0.level == .error }.map(\.message).prefix(3))")
+      let view = try zero.materialize(Self.all())
+      let live = try zero.liveQuery(Self.byID("x\(i % 3)"))
+      _ = live
+      let preload = zero.preload(Self.byID("p\(i % 5)"), ttl: .milliseconds(1_000))
+      zero.mutate(Self.create("m\(i % 4)"))
+      lmid += 1
+      cookie += 1
+      func c(_ n: Int) -> String { String(repeating: "0", count: 6 - String(n).count) + String(n) }
+      let base = cookie == 1 ? "null" : #""\#(c(cookie - 1))""#
+      socket.receive(text: #"["pokeStart",{"pokeID":"p\#(cookie)","baseCookie":\#(base)}]"#)
+      socket.receive(
+        text:
+          #"["pokePart",{"pokeID":"p\#(cookie)","lastMutationIDChanges":{"\#(zero.clientID)":\#(lmid)}}]"#
+      )
+      socket.receive(text: #"["pokeEnd",{"pokeID":"p\#(cookie)","cookie":"\#(c(cookie))"}]"#)
+      scheduler.runDueTimers()
+      view.destroy()
+      preload.cleanup()
+      scheduler.advance(by: 120_000)
+      socket.serverClose()
+      scheduler.runDueTimers()
+      scheduler.advance(by: 5_000)
+    }
+    for i in 0..<10 { try cycle(i) }
+    let before = collectionSizes(zero.engine)
+    let timers = scheduler.pendingTimers
+    for i in 10..<210 { try cycle(i) }
+    let after = collectionSizes(zero.engine)
+    // The test's socket factory keeps every socket.
+    for (path, size) in after where size > (before[path] ?? 0) && !path.contains("socketFactory") {
+      Testing.Issue.record("\(path) grew from \(before[path] ?? 0) to \(size)")
+    }
+    #expect(after.count > 20)
+    #expect(scheduler.pendingTimers <= timers)
     zero.close()
   }
 }
