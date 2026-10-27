@@ -5,6 +5,9 @@
 #
 #   scripts/api-breaks.sh [<baseline tag>]     default: the mirror's newest tag
 #
+# With API_BREAKS_BASELINE_DIR set, the baseline's API dumps are kept there and
+# reused, which saves building the baseline (CI caches it per tag).
+#
 # The digester (`swift package diagnose-api-breaking-changes`) needs the
 # package at the root of a git repository, so this runs it in a scratch
 # repository shaped like the SwiftPM mirror (wevm/zero-swift): the released tag,
@@ -45,15 +48,17 @@ cd "$work"
 # them. Stripping `package` declarations from both sides matters: one that
 # was public and became `package` reads as removed.
 for side in old:$baseline new:HEAD; do
-  name=${side%%:*} rev=${side#*:}
+  name=${side%%:*} rev=${side#*:} dir=$dumps/${side%%:*}
+  # SwiftPM skips dumping a revision whose dumps are already in the directory.
+  [ "$name" = old ] && dir=${API_BREAKS_BASELINE_DIR:-$dir}
   swift package diagnose-api-breaking-changes "$rev" --products $products \
-    --baseline-dir "$dumps/$name" >"$dumps/$name.log" 2>&1 || true
-  if ! ls "$dumps/$name"/*/*.json >/dev/null 2>&1; then
+    --baseline-dir "$dir" >"$dumps/$name.log" 2>&1 || true
+  if ! ls "$dir"/*/*.json >/dev/null 2>&1; then
     echo "Couldn't dump the API at $rev:" >&2
     cat "$dumps/$name.log" >&2
     exit 1
   fi
-  for dump in "$dumps/$name"/*/*.json; do
+  for dump in "$dir"/*/*.json; do
     jq 'walk(if type == "object" and has("children")
       then .children |= map(select(.isInternal != true)) else . end)' \
       "$dump" >"$dumps/$name-$(basename "$dump")"
