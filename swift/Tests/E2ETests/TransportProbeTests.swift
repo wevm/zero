@@ -216,6 +216,112 @@ struct TransportProbeTests {
     #expect(end.close?.code == 1006)
   }
 
+  /// The server goes away partway through a frame while a client is connected: the client reconnects, as it does with a browser `WebSocket`, which never delivers the partial frame. Delivered as a message, the partial frame reads as an invalid message, which stops the client in `.error` until the app calls `connect()`.
+  @Test(arguments: TransportKind.allCases) @MainActor
+  func clientReconnectsAfterTheServerGoesAwayMidFrame(_ kind: TransportKind) async throws {
+    for binary in [false, true] {
+      let connections = Box(0)
+      let server = try await ScriptedServer { c in
+        let n = connections.withLock {
+          $0 += 1
+          return $0
+        }
+        await c.write(c.accept() + ScriptedServer.text(#"["connected",{"wsid":"w\#(n)"}]"#))
+        if n == 1 {
+          try? await Task.sleep(for: .milliseconds(300))
+          let row =
+            #"{"op":"put","tableName":"issues","value":{"id":"x","title":"\#(String(repeating: "y", count: 100_000))"}}"#
+          let whole =
+            binary
+            ? ScriptedServer.frame(2, [PokeChunk.messageType] + Array(row.utf8))
+            : ScriptedServer.text(#"["pokePart",{"pokeID":"p1","rowsPatch":[\#(row)]}]"#)
+          await c.write(Array(whole.prefix(5000)))
+          try? await Task.sleep(for: .milliseconds(50))
+          await c.closeTCP()
+        } else {
+          for await _ in c.frames {}
+        }
+      }
+      let logs = LogCollector()
+      var options = ZeroOptions(
+        cacheURL: "http://127.0.0.1:\(server.port)", storageKey: UUID().uuidString, storage: .memory
+      )
+      options.logLevel = .info
+      options.logSink = logs
+      let zero = try Zero(
+        schema: .test, options: options, socketFactory: TransportSocketFactory(kind.transport))
+      var states: [ConnectionStatus] = []
+      let unsubscribe = zero.connection.subscribe { states.append($0.status) }
+      let reconnected = try await within(.seconds(15)) {
+        connections.withLock { $0 } >= 2 && zero.connection.state == .connected
+      }
+      print(
+        "[probe] \(kind) client, server gone mid-\(binary ? "binary" : "text") frame: reconnected \(reconnected), states \(states), \(zero.connection.state)"
+      )
+      if !reconnected {
+        for line in logs.all.suffix(8) { print("[probe]   \(line.prefix(300))") }
+      }
+      #expect(reconnected, "binary \(binary): \(zero.connection.state)")
+      #expect(!states.contains(.error), "binary \(binary)")
+      unsubscribe()
+      zero.close()
+      await server.shutdown()
+    }
+  }
+
+  #if canImport(Darwin)
+    /// What `URLSessionWebSocketTask` reports, message by message, when the connection ends: partway through a frame, or after whole frames with or without a pause. Prints only; it tells a partial frame from a whole one.
+    @Test func urlSessionTaskStateWhenTheConnectionEnds() async throws {
+      for scenario in [
+        "partial", "whole, then FIN later", "whole and FIN together", "whole, then partial",
+      ] {
+        for _ in 0..<5 {
+          let server = try await ScriptedServer { c in
+            let whole = ScriptedServer.text(String(repeating: "y", count: 100_000))
+            switch scenario {
+            case "partial":
+              await c.write(c.accept() + ScriptedServer.text("hi") + Array(whole.prefix(5000)))
+              try? await Task.sleep(for: .milliseconds(100))
+            case "whole, then FIN later":
+              await c.write(c.accept() + ScriptedServer.text("hi") + whole)
+              try? await Task.sleep(for: .milliseconds(300))
+            case "whole and FIN together":
+              await c.write(c.accept() + ScriptedServer.text("hi") + whole)
+            default:
+              await c.write(
+                c.accept() + ScriptedServer.text("hi") + whole + Array(whole.prefix(5000)))
+              try? await Task.sleep(for: .milliseconds(100))
+            }
+            await c.closeTCP()
+          }
+          let task = URLSession.shared.webSocketTask(with: URL(string: server.url)!)
+          task.resume()
+          var log: [String] = []
+          while true {
+            do {
+              let m = try await task.receive()
+              let size: Int
+              switch m {
+              case .string(let s): size = s.utf8.count
+              case .data(let d): size = d.count
+              @unknown default: size = -1
+              }
+              log.append(
+                "msg(\(size)) state=\(task.state.rawValue) error=\(task.error.map { "\($0)" } ?? "nil") close=\(task.closeCode.rawValue)"
+              )
+            } catch {
+              log.append("throws state=\(task.state.rawValue) close=\(task.closeCode.rawValue)")
+              break
+            }
+          }
+          print("[probe] raw \(scenario): \(log.joined(separator: "; "))")
+          task.cancel()
+          await server.shutdown()
+        }
+      }
+    }
+  #endif
+
   /// The client's close: the server gets a close frame with the code, and the socket is closed once the server answers.
   @Test(arguments: TransportKind.allCases)
   func clientCloseSendsTheCode(_ kind: TransportKind) async throws {
@@ -345,7 +451,9 @@ struct TransportProbeTests {
   /// A redirect: browsers don't follow it for a WebSocket, so the auth token in the protocol header never goes to another server.
   @Test(arguments: TransportKind.allCases)
   func redirectIsNotFollowed(_ kind: TransportKind) async throws {
+    let forwarded = Box<String?>(nil)
     let target = try await ScriptedServer { c in
+      forwarded.withLock { $0 = c.header("Sec-WebSocket-Protocol") }
       await c.write(c.accept())
       _ = await c.next()
     }
@@ -365,7 +473,9 @@ struct TransportProbeTests {
     } catch {
       print("[probe] \(kind) redirect: \(error)")
     }
-    print("[probe] \(kind) redirect: connected \(connected), target accepted \(target.accepted)")
+    print(
+      "[probe] \(kind) redirect: connected \(connected), target accepted \(target.accepted), protocol header sent to the target: \(String(describing: forwarded.withLock { $0 }))"
+    )
     #expect(!connected)
     #expect(target.accepted == 0, "followed the redirect, with the protocol header")
   }

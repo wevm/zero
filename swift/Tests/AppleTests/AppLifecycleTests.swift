@@ -40,8 +40,9 @@
               self.connected += 1
               self.peers.append(peer)
               if self.acknowledge { peer.send(.text(#"["connected",{"wsid":"w"}]"#)) }
-            case .message(_, .text(let text)):
+            case .message(let peer, .text(let text)):
               self.messages.append(text)
+              if text.hasPrefix(#"["ping""#) { peer.send(.text(#"["pong",{}]"#)) }
             case .message: break
             case .closed:
               self.closed += 1
@@ -63,11 +64,14 @@
       }
     }
 
+    let log = RecordingLogSink()
+
     func makeZero(_ server: Server) throws -> Zero<Void> {
       var options = ZeroOptions(
         cacheURL: "http://127.0.0.1:\(server.port)", userID: "u", storageKey: UUID().uuidString,
         storage: .memory)
-      options.logSink = RecordingLogSink()
+      options.logLevel = .debug
+      options.logSink = log
       return try Zero(schema: .notes, mutators: [Notes.put], options: options)
     }
 
@@ -93,6 +97,15 @@
       #endif
     }
 
+    func within(_ timeout: Duration, _ condition: () -> Bool) async throws -> Bool {
+      let deadline = ContinuousClock.now + timeout
+      while !condition() {
+        if ContinuousClock.now >= deadline { return false }
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      return true
+    }
+
     func eventually(
       _ what: String, timeout: Duration = .seconds(10), _ condition: () -> Bool
     ) async throws {
@@ -100,6 +113,9 @@
       while !condition() {
         guard ContinuousClock.now < deadline else {
           Issue.record("Timed out waiting for \(what)")
+          for entry in log.entries.suffix(25) {
+            print("[lifecycle]   \(entry.level) \(entry.message.prefix(200))")
+          }
           throw CancellationError()
         }
         try await Task.sleep(for: .milliseconds(10))
@@ -133,7 +149,11 @@
       try await Task.sleep(for: .milliseconds(100))
       server.acknowledgeAll()
       try await eventually("disconnected") { zero.connection.state.status == .disconnected }
-      try await eventually("the socket closed") { server.open == 0 }
+      let closed = try await within(.seconds(10)) { server.open == 0 }
+      print(
+        "[lifecycle] hidden while connecting: server connected \(server.connected), closed \(server.closed), \(zero.connection.state)"
+      )
+      #expect(closed, "the socket stayed open")
       server.acknowledge = true
       show()
       try await eventually("reconnected") { zero.connection.state == .connected }
