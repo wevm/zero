@@ -17,7 +17,7 @@ Goals:
 - Behavioral parity with the JS client for every non-deprecated public API.
 - Swift-idiomatic API that keeps the JS concept names (`query`, `mutate`,
   `materialize`, `preload`, `connection`, TTL) so the JS docs map 1:1.
-- Works with SwiftUI, UIKit, and AppKit (Mac Catalyst through UIKit).
+- Works with SwiftUI, UIKit, and AppKit.
 - A conformance suite that the JS implementation generates and both
   implementations pass.
 - Public-SDK quality, driven by a real app (`apps/zbugs-swift`).
