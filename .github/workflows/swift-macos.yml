@@ -44,9 +44,49 @@ jobs:
         run: swift test
       - name: Docs
         run: scripts/docs.sh
-      # The Apple-only API, which Linux doesn't build.
+
+  # The Apple-only API, which Linux doesn't build. See swift.yml.
+  api-breaks:
+    name: Swift API breaks (macOS)
+    runs-on: macos-26
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: swift
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Find the baseline
+        id: baseline
+        run: |
+          tag=$(git ls-remote --tags --refs https://github.com/wevm/zero-swift.git |
+            sed 's|.*refs/tags/||' | sort -V | tail -1)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "swift=$(swift --version 2>&1 | cksum | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      # The baseline's API dumps, which only change with a release or Xcode.
+      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: api-baseline
+          key: swift-api-baseline-macos-${{ steps.baseline.outputs.swift }}-${{ steps.baseline.outputs.tag }}
       - name: API breaks
-        run: scripts/api-breaks.sh
+        env:
+          BASELINE: ${{ steps.baseline.outputs.tag }}
+        run: |
+          API_BREAKS_BASELINE_DIR="$GITHUB_WORKSPACE/api-baseline" \
+            scripts/api-breaks.sh "$BASELINE"
+
+  ios:
+    name: Swift (iOS Simulator)
+    runs-on: macos-26
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: swift
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - name: Test (iOS Simulator)
         run: |
           device="$(xcrun simctl list devices available -j |
