@@ -285,6 +285,11 @@ struct TransportProbeTests {
     let socket = try await kind.transport.connect(url: server.url, secProtocol: nil)
     await socket.close(code: 4123, reason: "")
     #expect(await server.allClosed(within: .seconds(5)), "the socket stayed open after its close")
+    // The server's script records the frame a moment after the connection closes.
+    let deadline = ContinuousClock.now + .seconds(5)
+    while got.withLock({ $0 }) == nil, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
     let frame = got.withLock { $0 }
     print("[probe] \(kind) client close frame: \(String(describing: frame))")
     #expect(frame?.opcode == 8)
