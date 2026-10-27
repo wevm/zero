@@ -270,57 +270,73 @@ struct TransportProbeTests {
   }
 
   #if canImport(Darwin)
-    /// What `URLSessionWebSocketTask` reports, message by message, when the connection ends: partway through a frame, or after whole frames with or without a pause. Prints only; it tells a partial frame from a whole one.
-    @Test func urlSessionTaskStateWhenTheConnectionEnds() async throws {
-      for scenario in [
-        "partial", "whole, then FIN later", "whole and FIN together", "whole, then partial",
-      ] {
-        for _ in 0..<5 {
+    /// How long after URLSession returns a message the receive after it fails, when the connection ended partway through a frame or right after a whole one. `URLSessionSocket.cutFrameWindow` must cover the first. Prints only.
+    @Test func urlSessionGapBeforeTheConnectionEnds() async throws {
+      for scenario in ["partial", "whole and FIN together", "whole, then partial"] {
+        var gaps: [String] = []
+        for _ in 0..<10 {
           let server = try await ScriptedServer { c in
             let whole = ScriptedServer.text(String(repeating: "y", count: 100_000))
             switch scenario {
-            case "partial":
-              await c.write(c.accept() + ScriptedServer.text("hi") + Array(whole.prefix(5000)))
-              try? await Task.sleep(for: .milliseconds(100))
-            case "whole, then FIN later":
-              await c.write(c.accept() + ScriptedServer.text("hi") + whole)
-              try? await Task.sleep(for: .milliseconds(300))
-            case "whole and FIN together":
-              await c.write(c.accept() + ScriptedServer.text("hi") + whole)
-            default:
-              await c.write(
-                c.accept() + ScriptedServer.text("hi") + whole + Array(whole.prefix(5000)))
-              try? await Task.sleep(for: .milliseconds(100))
+            case "partial": await c.write(c.accept() + Array(whole.prefix(5000)))
+            case "whole and FIN together": await c.write(c.accept() + whole)
+            default: await c.write(c.accept() + whole + Array(whole.prefix(5000)))
             }
             await c.closeTCP()
           }
           let task = URLSession.shared.webSocketTask(with: URL(string: server.url)!)
           task.resume()
-          var log: [String] = []
+          let watchdog = Task {
+            try await Task.sleep(for: .seconds(5))
+            task.cancel()
+          }
+          var last = ContinuousClock.now
+          var steps: [String] = []
           while true {
             do {
-              let m = try await task.receive()
-              let size: Int
-              switch m {
-              case .string(let s): size = s.utf8.count
-              case .data(let d): size = d.count
-              @unknown default: size = -1
-              }
-              log.append(
-                "msg(\(size)) state=\(task.state.rawValue) error=\(task.error.map { "\($0)" } ?? "nil") close=\(task.closeCode.rawValue)"
-              )
+              _ = try await task.receive()
+              last = ContinuousClock.now
+              steps.append("msg")
             } catch {
-              log.append("throws state=\(task.state.rawValue) close=\(task.closeCode.rawValue)")
+              let gap = ContinuousClock.now - last
+              steps.append("throws after \(gap.components.attoseconds / 1_000_000_000_000)µs")
               break
             }
           }
-          print("[probe] raw \(scenario): \(log.joined(separator: "; "))")
-          task.cancel()
+          watchdog.cancel()
+          gaps.append(steps.joined(separator: ","))
           await server.shutdown()
         }
+        print("[probe] gap \(scenario): \(gaps.joined(separator: " | "))")
       }
     }
   #endif
+
+  /// How long a message alone on the connection takes to arrive: the cost of holding it back for a cut frame. Prints only.
+  @Test(arguments: TransportKind.allCases)
+  func latencyOfALoneMessage(_ kind: TransportKind) async throws {
+    let sent = Box<[ContinuousClock.Instant]>([])
+    let server = try await ScriptedServer { c in
+      await c.write(c.accept())
+      for n in 0..<10 {
+        try? await Task.sleep(for: .milliseconds(50))
+        sent.withLock { $0.append(.now) }
+        await c.write(ScriptedServer.text("m\(n)"))
+      }
+      _ = await c.next()
+    }
+    defer { Task { await server.shutdown() } }
+    let socket = try await kind.transport.connect(url: server.url, secProtocol: nil)
+    var delays: [Duration] = []
+    for n in 0..<10 {
+      #expect(try await socket.receive() == .text("m\(n)"))
+      delays.append(ContinuousClock.now - sent.withLock { $0[n] })
+    }
+    print(
+      "[probe] \(kind) lone message latency: \(delays.map { "\($0.components.attoseconds / 1_000_000_000_000)µs" })"
+    )
+    await socket.close(code: 1000, reason: "")
+  }
 
   /// The client's close: the server gets a close frame with the code, and the socket is closed once the server answers.
   @Test(arguments: TransportKind.allCases)
