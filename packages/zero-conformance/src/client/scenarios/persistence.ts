@@ -160,6 +160,27 @@ export const persistenceScenarios: Scenario[] = [
     ],
   },
   {
+    name: 'persistence: a pending mutation stays with its client group when the mutators change',
+    steps: [
+      start,
+      connected,
+      mutate('m1', 'issue.create', {id: 'i1'}),
+      persisted,
+      // A newer app version without some mutators: a new client group,
+      // which neither shows nor pushes the old group's mutation.
+      {op: 'restart', mutators: 'issues'},
+      {op: 'materialize', view: 'v', query: 'issues.all'},
+      start,
+      connected,
+      persisted,
+      // Back to the old set within the day: the old group pushes it.
+      {op: 'restart'},
+      {op: 'materialize', view: 'v', query: 'issues.all'},
+      start,
+      connected,
+    ],
+  },
+  {
     name: 'persistence: the same set of mutators joins the existing client group',
     steps: [
       ...synced,
