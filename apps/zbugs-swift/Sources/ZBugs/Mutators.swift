@@ -200,8 +200,8 @@ public enum Mutators {
   public static let createIssue = defineMutator("issue.create") {
     (tx, args: CreateIssueArgs, auth: AuthData?) in
     let auth = try assertIsLoggedIn(auth)
-    try tx.mutate.insert(
-      Issue(
+    try tx.mutate.issue.insert(
+      .init(
         id: args.id, title: args.title, open: true, modified: args.modified,
         created: args.created, projectID: args.projectID, creatorID: auth.sub,
         description: args.description ?? "", visibility: .public))
@@ -219,7 +219,11 @@ public enum Mutators {
       // An admin skips the creator check; the same error as for anyone else.
       throw mutationError("Issue not found or not authorized", .notAuthorized, change.id)
     }
-    try tx.mutate.issue.update(JSONValueEncoder.encode(change).objectValue ?? [:])
+    try tx.mutate.issue.update(
+      .init(
+        id: change.id, title: change.title, open: change.open, modified: change.modified,
+        assigneeID: change.assigneeID.map(ColumnUpdate.init) ?? .unchanged,
+        description: change.description, visibility: change.visibility))
 
     var previousAssigneeID: String?
     if case .some(let assigneeID) = change.assigneeID, assigneeID != oldIssue.assigneeID {
@@ -241,7 +245,7 @@ public enum Mutators {
   public static let deleteIssue = defineMutator("issue.delete") {
     (tx, id: String, auth: AuthData?) in
     try assertIsCreatorOrAdmin(tx, auth, zql.issue, id)
-    try tx.mutate.issue.delete(["id": .string(id)])
+    try tx.mutate.issue.delete(.init(id: id))
   }
 
   /// Deletes the issues if the user created every one of them (or is an
@@ -253,15 +257,15 @@ public enum Mutators {
       try assertIsCreatorOrAdmin(tx, auth, zql.issue, id)
     }
     for id in ids {
-      try tx.mutate.issue.delete(["id": .string(id)])
+      try tx.mutate.issue.delete(.init(id: id))
     }
   }
 
   public static let addLabel = defineMutator("issue.addLabel") {
     (tx, args: IssueLabelArgs, auth: AuthData?) in
     try assertIsCreatorOrAdmin(tx, auth, zql.issue, args.issueID)
-    try tx.mutate.insert(
-      IssueLabel(
+    try tx.mutate.issueLabel.insert(
+      .init(
         issueID: args.issueID, labelID: args.labelID,
         projectID: issueProjectID(tx, args.issueID)))
   }
@@ -269,9 +273,7 @@ public enum Mutators {
   public static let removeLabel = defineMutator("issue.removeLabel") {
     (tx, args: RemoveLabelArgs, auth: AuthData?) in
     try assertIsCreatorOrAdmin(tx, auth, zql.issue, args.issueID)
-    try tx.mutate.issueLabel.delete([
-      "issueID": .string(args.issueID), "labelID": .string(args.labelID),
-    ])
+    try tx.mutate.issueLabel.delete(.init(labelID: args.labelID, issueID: args.issueID))
   }
 
   public static let updateNotification = defineMutator("notification.update") {
@@ -295,15 +297,15 @@ public enum Mutators {
   public static let removeEmoji = defineMutator("emoji.remove") {
     (tx, id: String, auth: AuthData?) in
     try assertIsCreatorOrAdmin(tx, auth, zql.emoji, id)
-    try tx.mutate.emoji.delete(["id": .string(id)])
+    try tx.mutate.emoji.delete(.init(id: id))
   }
 
   public static let addComment = defineMutator("comment.add") {
     (tx, args: AddCommentArgs, auth: AuthData?) in
     let creatorID = try assertIsLoggedIn(auth).sub
     try assertUserCanSeeIssue(tx, creatorID, args.issueID)
-    try tx.mutate.insert(
-      Comment(
+    try tx.mutate.comment.insert(
+      .init(
         id: args.id, issueID: args.issueID, created: args.created, body: args.body,
         creatorID: creatorID))
     try updateIssueNotification(
@@ -314,13 +316,13 @@ public enum Mutators {
   public static let editComment = defineMutator("comment.edit") {
     (tx, args: EditCommentArgs, auth: AuthData?) in
     try assertIsCreatorOrAdmin(tx, auth, zql.comment, args.id)
-    try tx.mutate.comment.update(["id": .string(args.id), "body": .string(args.body)])
+    try tx.mutate.comment.update(.init(id: args.id, body: args.body))
   }
 
   public static let removeComment = defineMutator("comment.remove") {
     (tx, id: String, auth: AuthData?) in
     try assertIsCreatorOrAdmin(tx, auth, zql.comment, id)
-    try tx.mutate.comment.delete(["id": .string(id)])
+    try tx.mutate.comment.delete(.init(id: id))
   }
 
   public static let createLabel = defineMutator("label.create") {
@@ -328,7 +330,7 @@ public enum Mutators {
     guard try isAdmin(auth) else {
       throw mutationError("Only admins can create labels", .notAuthorized, args.id)
     }
-    try tx.mutate.insert(Label(id: args.id, name: args.name, projectID: args.projectID))
+    try tx.mutate.label.insert(.init(id: args.id, name: args.name, projectID: args.projectID))
   }
 
   public static let createAndAddLabel = defineMutator("label.createAndAddToIssue") {
@@ -337,21 +339,22 @@ public enum Mutators {
       throw mutationError("Only admins can create labels", .notAuthorized, args.labelID)
     }
     let projectID = try issueProjectID(tx, args.issueID)
-    try tx.mutate.insert(Label(id: args.labelID, name: args.labelName, projectID: projectID))
-    try tx.mutate.insert(
-      IssueLabel(issueID: args.issueID, labelID: args.labelID, projectID: projectID))
+    try tx.mutate.label.insert(.init(id: args.labelID, name: args.labelName, projectID: projectID))
+    try tx.mutate.issueLabel.insert(
+      .init(issueID: args.issueID, labelID: args.labelID, projectID: projectID))
   }
 
   public static let setViewState = defineMutator("viewState.set") {
     (tx, args: ViewStateArgs, auth: AuthData?) in
     let userID = try assertIsLoggedIn(auth).sub
-    try tx.mutate.upsert(ViewState(issueID: args.issueID, userID: userID, viewed: args.viewed))
+    try tx.mutate.viewState.upsert(
+      .init(issueID: args.issueID, userID: userID, viewed: args.viewed))
   }
 
   public static let setUserPref = defineMutator("userPref.set") {
     (tx, args: UserPrefArgs, auth: AuthData?) in
     let userID = try assertIsLoggedIn(auth).sub
-    try tx.mutate.upsert(UserPref(key: args.key, userID: userID, value: args.value))
+    try tx.mutate.userPref.upsert(.init(key: args.key, userID: userID, value: args.value))
   }
 
   /// Every mutator, for the client and the drift test.
@@ -384,8 +387,8 @@ func addEmoji(_ tx: Transaction, _ subject: EmojiSubject, _ args: AddEmojiArgs, 
   case .issue: try assertUserCanSeeIssue(tx, creatorID, args.subjectID)
   case .comment: try assertUserCanSeeComment(tx, creatorID, args.subjectID)
   }
-  try tx.mutate.insert(
-    Emoji(
+  try tx.mutate.emoji.insert(
+    .init(
       id: args.id, value: args.unicode, annotation: args.annotation, subjectID: args.subjectID,
       creatorID: creatorID, created: args.created))
   // An emoji on the issue itself follows the issue.
@@ -407,10 +410,10 @@ func updateIssueNotification(
   let existing = try tx.run(
     zql.issueNotifications.where(\.userID, userID).where(\.issueID, issueID).one())
   if subscribed == .subscribe && (existing == nil || forceUpdate) {
-    try tx.mutate.upsert(
-      IssueNotifications(userID: userID, issueID: issueID, subscribed: true, created: created))
+    try tx.mutate.issueNotifications.upsert(
+      .init(userID: userID, issueID: issueID, subscribed: true, created: created))
   } else if subscribed == .unsubscribe {
-    try tx.mutate.upsert(
-      IssueNotifications(userID: userID, issueID: issueID, subscribed: false, created: created))
+    try tx.mutate.issueNotifications.upsert(
+      .init(userID: userID, issueID: issueID, subscribed: false, created: created))
   }
 }

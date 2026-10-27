@@ -20,13 +20,13 @@ enum E2EApp {
   }
 
   static let create = defineMutator("issue.create") { (tx, args: CreateIssue) in
-    try tx.mutate.insert(
-      TestIssue(
+    try tx.mutate.issue.insert(
+      .init(
         id: args.id, title: args.title, description: "", closed: false, ownerId: args.ownerId,
         createdAt: 100))
   }
   static let close = defineMutator("issue.close") { (tx, id: String) in
-    try tx.mutate.issue.update(["id": .string(id), "closed": true])
+    try tx.mutate.issue.update(.init(id: id, closed: true))
   }
 }
 

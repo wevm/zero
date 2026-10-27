@@ -15,7 +15,8 @@ needs the app's own `@rocicorp/zero`, 1.11 or later.
 ## `zero-swift codegen`
 
 Generates Swift from the TypeScript schema. For each table it writes a row
-struct, a `ZeroSchema`, and a `zql` builder with a `Query`.
+struct with its `Update` and `Key`, a `ZeroSchema`, a `zql` builder with a
+`Query`, and a typed `tx.mutate.<table>` for mutators.
 
 ```sh
 npx zero-swift codegen            # reads zero-swift.json

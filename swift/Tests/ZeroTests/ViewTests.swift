@@ -13,22 +13,18 @@ import ZeroTesting
   }
 
   static let create = defineMutator("issue.create") { (tx, args: Edit) in
-    try tx.mutate.issue.insert([
-      "id": .string(args.id), "title": .string(args.title), "description": "", "closed": false,
-      "ownerId": .null, "createdAt": 1,
-    ])
+    try tx.mutate.issue.insert(
+      Issue(id: args.id, title: args.title, description: "", closed: false, createdAt: 1))
   }
   static let retitle = defineMutator("issue.retitle") { (tx, args: Edit) in
-    try tx.mutate.issue.update(["id": .string(args.id), "title": .string(args.title)])
+    try tx.mutate.issue.update(.init(id: args.id, title: args.title))
   }
   static let remove = defineMutator("issue.remove") { (tx, id: String) in
-    try tx.mutate.issue.delete(["id": .string(id)])
+    try tx.mutate.issue.delete(.init(id: id))
   }
   static let comment = defineMutator("comment.create") { (tx, args: Edit) in
-    try tx.mutate.comment.insert([
-      "id": .string("c-\(args.id)"), "authorId": "u", "issueId": .string(args.id),
-      "text": .string(args.title), "createdAt": 1,
-    ])
+    try tx.mutate.comment.insert(
+      Comment(id: "c-\(args.id)", authorId: "u", issueId: args.id, text: args.title, createdAt: 1))
   }
 
   func makeZero() throws -> Zero<Void> {

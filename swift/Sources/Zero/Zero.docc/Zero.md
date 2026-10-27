@@ -59,6 +59,8 @@ your TypeScript registries.
 - ``NoArgs``
 - ``Transaction``
 - ``TransactionMutate``
+- ``TypedTableMutator``
+- ``ColumnUpdate``
 - ``TableMutator``
 - ``ApplicationError``
 
@@ -118,6 +120,8 @@ These are what `zero-swift codegen` writes; apps rarely use them directly.
 - ``Relationship``
 - ``Cardinality``
 - ``ZeroRow``
+- ``ZeroTable``
+- ``ZeroColumnValues``
 - ``ZeroValue``
 - ``ZeroEnum``
 - ``Nullable``

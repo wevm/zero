@@ -101,10 +101,29 @@ query.
 | JS                                                                                 | Swift                                                                                                |
 | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | `defineMutators({issue: {create: defineMutator(async ({tx, args, ctx}) => ...)}})` | `defineMutator("issue.create") { (tx, args: Args, ctx: Context) in ... }`, a plain `throws` function |
-| `await tx.mutate.issue.insert(row)`                                                | `try tx.mutate.issue.insert(row)`                                                                    |
+| `await tx.mutate.issue.insert(row)`, `.upsert(row)`                                | `try tx.mutate.issue.insert(.init(...))`, `.upsert(...)`                                             |
+| `await tx.mutate.issue.update({id, title})`                                        | `try tx.mutate.issue.update(.init(id: id, title: title))`                                            |
+| `await tx.mutate.issue.delete({id})`                                               | `try tx.mutate.issue.delete(.init(id: id))`                                                          |
 | `await tx.run(query)`                                                              | `try tx.run(query)`                                                                                  |
 | `tx.location`, `tx.reason`, `tx.clientID`, `tx.mutationID`                         | the same                                                                                             |
 | `throw new ApplicationError(message, {details})`                                   | `throw ApplicationError(message, details:)`                                                          |
+
+`upsert` takes the whole row struct, so it writes every column: an
+optional column left nil sets null on an existing row, where JS keeps a
+column the value leaves out.
+
+Each takes a value of a generated type, which `.init(...)` builds inline.
+Like a JS object, it can also be built first, changed, and passed later:
+`var change = Issue.Update(id: id)`, then `change.title = title`, then
+`try tx.mutate.issue.update(change)`.
+
+`update` takes the row struct's generated `Update`: the primary key, and
+the columns to set. A column left nil keeps its value, as an `undefined`
+one does in JS. An optional column is a ``ColumnUpdate``, so leaving it
+(`.unchanged`, the default) differs from setting it to null (`.null`):
+`.init(id: id, assigneeID: .null)` unassigns, and a literal or `.set(x)`
+sets it. `tx.mutate.table("issue")` is the untyped ``TableMutator``, with
+values keyed by column name.
 
 Calling a mutator that isn't registered with the `Zero` throws in JS. In
 Swift `mutate` returns a ``MutatorResult`` whose `client` and `server` are
@@ -153,9 +172,10 @@ is written or sent.
   that writes one to a column a view sorts by fails, and so does every
   mutation after it, and a poke that brings one disconnects the client
   again after every reconnect. Swift sorts such a value with the others
-  (by type, then by its JSON) and keeps working. A mutator can only write
-  one through the untyped `tx.mutate.<table>` calls; the server rejects
-  such a mutation, and its row goes when the next poke comes.
+  (by type, then by its JSON) and keeps working. The typed
+  `tx.mutate.<table>` calls can't write one; a mutator can only write one
+  through the untyped `tx.mutate.table(_:)`, and the server rejects such a
+  mutation, so its row goes when the next poke comes.
 - **Error messages.** Messages about data the client can't read follow
   valita's wording, as JS's do. A server frame that isn't JSON is the
   exception: JS shows the engine's `JSON.parse` message, and Swift its

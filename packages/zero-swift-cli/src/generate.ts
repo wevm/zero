@@ -118,7 +118,13 @@ const rowMembers = [
   'CodingKeys',
   // The parameter of `init(entry:)`, which assigns the columns.
   'entry',
+  // What `tx.mutate.<table>.update` and `.delete` take.
+  'Update',
+  'Key',
 ];
+
+/** The members of `TransactionMutate` besides the tables. */
+const mutateMembers = ['tx', 'table', 'insert', 'upsert'];
 
 /** The members of a `json<T>()` object struct besides its fields. */
 const objectMembers = [
@@ -559,7 +565,7 @@ export function generate(
       table.primaryKey.length === 1 &&
       table.primaryKey[0] === 'id' &&
       columns.some(c => c.name === 'id' && c.id === 'id' && !c.optional);
-    const conformances = ['ZeroRow', 'Codable', 'Hashable'];
+    const conformances = ['ZeroTable', 'Codable', 'Hashable'];
     if (identifiable) {
       conformances.push('Identifiable');
     }
@@ -642,6 +648,25 @@ export function generate(
     lines.push('    ]');
     lines.push('  }');
     lines.push(...codingKeys([...columns, ...relationships]));
+    const keyColumns = table.primaryKey.map(k =>
+      columns.find(c => c.name === k)!,
+    );
+    lines.push(
+      '',
+      ...columnsDecl(
+        pub,
+        'Update',
+        `What \`tx.mutate.${t}.update\` takes: the primary key, and the other columns to set. A column that is nil, or \`.unchanged\`, keeps its value.`,
+        columns.map(c => ({...c, key: keyColumns.includes(c)})),
+      ),
+      '',
+      ...columnsDecl(
+        pub,
+        'Key',
+        `What \`tx.mutate.${t}.delete\` takes: the primary key.`,
+        keyColumns.map(c => ({...c, key: true})),
+      ),
+    );
     lines.push('}');
     typeDecls.push(lines.join('\n'));
   }
@@ -679,7 +704,84 @@ export function generate(
   out.push('');
   out.push(`${pub}let ${identifier(zqlName)} = ${zqlType}()`);
   out.push('');
+  out.push(
+    `/// The typed CRUD operations in a mutator, one per table: \`tx.mutate.${tableNames[0] ?? 'table'}.insert(…)\`.`,
+  );
+  out.push('extension TransactionMutate {');
+  const mutateIds = new Members(mutateMembers).claimAll(
+    tableNames.map(t => ({name: t, id: sanitize(t)})),
+  );
+  for (const [i, t] of tableNames.entries()) {
+    const row = rowNames.get(t)!;
+    out.push(
+      `  ${pub}var ${ref(mutateIds[i])}: TypedTableMutator<${row}> { TypedTableMutator(self) }`,
+    );
+  }
+  out.push('}');
+  out.push('');
   return out.join('\n');
+}
+
+/**
+ * A struct of some of a row's columns, nested in the row struct: the
+ * primary key's columns are required, the others optional. An optional
+ * column is a `ColumnUpdate`, so leaving it differs from setting it to
+ * null.
+ */
+function columnsDecl(
+  pub: string,
+  name: string,
+  doc: string,
+  columns: readonly (Column & {key: boolean})[],
+): string[] {
+  const nullable = (c: Column) => c.swiftType.endsWith('?');
+  const type = (c: Column & {key: boolean}) =>
+    c.key
+      ? c.swiftType
+      : nullable(c)
+        ? `ColumnUpdate<${c.swiftType.slice(0, -1)}>`
+        : `${c.swiftType}?`;
+  const fallback = (c: Column & {key: boolean}) =>
+    c.key ? '' : nullable(c) ? ' = .unchanged' : ' = nil';
+  const lines = [
+    `  /// ${doc}`,
+    `  ${pub}struct ${name}: ZeroColumnValues, Hashable {`,
+  ];
+  for (const c of columns) {
+    lines.push(`    ${pub}var ${c.property}: ${type(c)}`);
+  }
+  lines.push('');
+  lines.push(`    ${pub}init(`);
+  lines.push(
+    columns
+      .map(c => `      ${c.property}: ${type(c)}${fallback(c)}`)
+      .join(',\n'),
+  );
+  lines.push('    ) {');
+  for (const c of columns) {
+    lines.push(`      self.${c.property} = ${c.property}`);
+  }
+  lines.push('    }');
+  lines.push('');
+  lines.push(`    ${pub}var columnValues: Row {`);
+  lines.push('      var row = Row()');
+  for (const c of columns) {
+    if (c.key) {
+      lines.push(`      row[${str(c.name)}] = self.${c.property}.zeroValue`);
+    } else if (nullable(c)) {
+      lines.push(
+        `      if let value = self.${c.property}.zeroValue { row[${str(c.name)}] = value }`,
+      );
+    } else {
+      lines.push(
+        `      if let value = self.${c.property} { row[${str(c.name)}] = value.zeroValue }`,
+      );
+    }
+  }
+  lines.push('      return row');
+  lines.push('    }');
+  lines.push('  }');
+  return lines;
 }
 
 /**

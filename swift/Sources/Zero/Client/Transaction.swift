@@ -116,7 +116,9 @@ public final class Transaction {
   }
 }
 
-/// `tx.mutate`: the tables of the schema.
+/// `tx.mutate`: the tables of the schema. `zero-swift codegen` adds a
+/// typed member per table, `tx.mutate.issue`, as in JS. A table without
+/// one, or `table(_:)`, gives the untyped ``TableMutator``.
 @MainActor
 @dynamicMemberLookup
 public struct TransactionMutate {
@@ -126,17 +128,9 @@ public struct TransactionMutate {
     TableMutator(tx: tx, table: table)
   }
 
+  /// The untyped CRUD operations on `name`, with values keyed by client
+  /// column name.
   public func table(_ name: String) -> TableMutator { TableMutator(tx: tx, table: name) }
-
-  /// Inserts a row unless one with its primary key exists.
-  public func insert<R: ZeroRow>(_ row: R) throws {
-    try tx.insert(R.tableName, row.columnValues)
-  }
-
-  /// Inserts a row, or replaces the columns of the existing one.
-  public func upsert<R: ZeroRow>(_ row: R) throws {
-    try tx.upsert(R.tableName, row.columnValues)
-  }
 }
 
 /// The CRUD operations on one table (`TableCRUD` in
@@ -166,4 +160,95 @@ public struct TableMutator {
   public func upsert(_ value: JSONObject) throws { try upsert(Row(value)) }
   public func update(_ value: JSONObject) throws { try update(Row(value)) }
   public func delete(_ id: JSONObject) throws { try delete(Row(id)) }
+}
+
+/// A row struct with typed writes, as `zero-swift codegen` generates it:
+/// `Update` is what `update` takes (`UpdateValue` in JS) and `Key` what
+/// `delete` takes (`DeleteID`).
+public protocol ZeroTable: ZeroRow {
+  associatedtype Update: ZeroColumnValues
+  associatedtype Key: ZeroColumnValues
+}
+
+/// Some of a table's columns, keyed by client column name.
+public protocol ZeroColumnValues: Sendable {
+  var columnValues: Row { get }
+}
+
+/// The CRUD operations on one table, typed by its row struct (`TableCRUD`
+/// in `packages/zql/src/mutate/crud.ts`): `tx.mutate.issue`.
+@MainActor
+public struct TypedTableMutator<R: ZeroTable> {
+  let tx: Transaction
+
+  public init(_ mutate: TransactionMutate) { tx = mutate.tx }
+
+  /// Inserts a row unless one with its primary key exists.
+  public func insert(_ row: R) throws { try tx.insert(R.tableName, row.columnValues) }
+  /// Inserts a row, or replaces the columns of the existing one. Every
+  /// column is written, so an optional one left nil sets null; JS keeps a
+  /// column the value leaves out. Use `update` to set only some columns.
+  public func upsert(_ row: R) throws { try tx.upsert(R.tableName, row.columnValues) }
+  /// Sets the columns of the row with the primary key in `value` that
+  /// `value` sets, if the row exists.
+  public func update(_ value: R.Update) throws { try tx.update(R.tableName, value.columnValues) }
+  /// Deletes the row with the primary key `id`, if any.
+  public func delete(_ id: R.Key) throws { try tx.delete(R.tableName, id.columnValues) }
+}
+
+/// An optional column in an update: left as it is (the default), set to
+/// null, or set to a value. A literal sets the value: `ownerID: "u1"`.
+public enum ColumnUpdate<Value: ZeroValue & Hashable>: Sendable, Hashable {
+  case unchanged
+  case null
+  case set(Value)
+
+  /// Sets the column to `value`, or to null when it is nil.
+  public init(_ value: Value?) {
+    self = value.map { .set($0) } ?? .null
+  }
+
+  /// What the update writes to the column; nil when it leaves it.
+  public var zeroValue: JSONValue? {
+    switch self {
+    case .unchanged: nil
+    case .null: .null
+    case .set(let value): value.zeroValue
+    }
+  }
+}
+
+extension ColumnUpdate: ExpressibleByUnicodeScalarLiteral
+where Value: ExpressibleByStringLiteral, Value.StringLiteralType == String {
+  public init(unicodeScalarLiteral value: String) { self = .set(Value(stringLiteral: value)) }
+}
+
+extension ColumnUpdate: ExpressibleByExtendedGraphemeClusterLiteral
+where Value: ExpressibleByStringLiteral, Value.StringLiteralType == String {
+  public init(extendedGraphemeClusterLiteral value: String) {
+    self = .set(Value(stringLiteral: value))
+  }
+}
+
+extension ColumnUpdate: ExpressibleByStringLiteral
+where Value: ExpressibleByStringLiteral, Value.StringLiteralType == String {
+  public init(stringLiteral value: String) { self = .set(Value(stringLiteral: value)) }
+}
+
+extension ColumnUpdate: ExpressibleByIntegerLiteral where Value: ExpressibleByIntegerLiteral {
+  public init(integerLiteral value: Value.IntegerLiteralType) {
+    self = .set(Value(integerLiteral: value))
+  }
+}
+
+extension ColumnUpdate: ExpressibleByFloatLiteral where Value: ExpressibleByFloatLiteral {
+  public init(floatLiteral value: Value.FloatLiteralType) {
+    self = .set(Value(floatLiteral: value))
+  }
+}
+
+extension ColumnUpdate: ExpressibleByBooleanLiteral where Value: ExpressibleByBooleanLiteral {
+  public init(booleanLiteral value: Value.BooleanLiteralType) {
+    self = .set(Value(booleanLiteral: value))
+  }
 }

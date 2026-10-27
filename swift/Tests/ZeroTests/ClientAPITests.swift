@@ -22,23 +22,21 @@ import ZeroTesting
     zql.issue.where(\.ownerId, auth.userID).orderBy(\.id, .asc)
   }
   static let create = defineMutator("issue.create") { (tx, args: CreateIssue, auth: Auth) in
-    try tx.mutate.insert(
-      Issue(
+    try tx.mutate.issue.insert(
+      .init(
         id: args.id, title: args.title, description: "", closed: false,
         ownerId: args.ownerId ?? auth.userID, createdAt: 1))
   }
   static let closeMine = defineMutator("issue.closeMine") { (tx, _: NoArgs, auth: Auth) in
     for issue in try tx.run(zql.issue.where(\.ownerId, auth.userID)) {
-      try tx.mutate.issue.update(["id": .string(issue.id), "closed": true])
+      try tx.mutate.issue.update(.init(id: issue.id, closed: true))
     }
   }
   struct Created: Encodable { var created: String }
   static let createReturning = defineMutator("issue.createReturning") {
     (tx, args: CreateIssue, _: Auth) -> Created in
-    try tx.mutate.issue.insert([
-      "id": .string(args.id), "title": .string(args.title), "description": "",
-      "closed": false, "ownerId": .null, "createdAt": 1,
-    ])
+    try tx.mutate.issue.insert(
+      Issue(id: args.id, title: args.title, description: "", closed: false, createdAt: 1))
     return Created(created: args.id)
   }
 
@@ -113,6 +111,54 @@ import ZeroTesting
           ["issue.create", [["id": "i2", "title": "theirs", "ownerId": "u1"]]],
           ["issue.closeMine", [nil]],
         ])
+  }
+
+  static let seed = defineMutator("t.seed") { (tx, _: NoArgs, _: Auth) in
+    try tx.mutate.issue.insert(
+      Issue(id: "i1", title: "a", description: "", closed: false, ownerId: "u1", createdAt: 1))
+    try tx.mutate.issueLabel.insert(IssueLabel(issueId: "i1", labelId: "l1"))
+    try tx.mutate.issueLabel.insert(IssueLabel(issueId: "i1", labelId: "l2"))
+  }
+  static let retitle = defineMutator("t.retitle") { (tx, _: NoArgs, _: Auth) in
+    try tx.mutate.issue.update(.init(id: "i1", title: "b"))
+  }
+  static let clearOwner = defineMutator("t.clearOwner") { (tx, _: NoArgs, _: Auth) in
+    try tx.mutate.issue.update(.init(id: "i1", ownerId: .null))
+  }
+  static let setOwner = defineMutator("t.setOwner") { (tx, _: NoArgs, _: Auth) in
+    try tx.mutate.issue.update(.init(id: "i1", closed: true, ownerId: "u3"))
+  }
+  static let unlabel = defineMutator("t.unlabel") { (tx, _: NoArgs, _: Auth) in
+    try tx.mutate.issueLabel.delete(.init(issueId: "i1", labelId: "l1"))
+  }
+
+  /// `tx.mutate.<table>` takes the generated row, `Update`, and `Key`, and
+  /// writes what JS's `TableCRUD` writes: an update sets only the columns
+  /// it names (JS skips `undefined`), and `.null` sets null.
+  @Test func typedTableMutatorsWriteOnlyTheColumnsTheyName() async throws {
+    let zero = try Zero(
+      schema: .test, context: Auth(userID: "u2"),
+      mutators: [Self.seed, Self.retitle, Self.clearOwner, Self.setOwner, Self.unlabel],
+      options: Self.options, scheduler: scheduler, socketFactory: sockets)
+    func issue() async throws -> Issue? { try await zero.run(zql.issue.one()) }
+
+    zero.mutate(Self.seed())
+    zero.mutate(Self.retitle())
+    var i = try #require(try await issue())
+    #expect([i.title, i.ownerId] == ["b", "u1"])
+    #expect(i.closed == false)
+
+    zero.mutate(Self.clearOwner())
+    i = try #require(try await issue())
+    #expect([i.title, i.ownerId] == ["b", nil])
+
+    zero.mutate(Self.setOwner())
+    i = try #require(try await issue())
+    #expect([i.title, i.ownerId] == ["b", "u3"])
+    #expect(i.closed == true)
+
+    zero.mutate(Self.unlabel())
+    #expect(try await zero.run(zql.issueLabel).map(\.labelId) == ["l2"])
   }
 
   @Test func returnsTheEncodedResultOfAMutator() async throws {
@@ -190,10 +236,8 @@ import ZeroTesting
     socket.receive(text: #"["connected",{"wsid":"w1"}]"#)
     scheduler.runDueTimers()
     let unregistered = defineMutator("issue.unregistered") { (tx, args: CreateIssue, _: Auth) in
-      try tx.mutate.issue.insert([
-        "id": .string(args.id), "title": .string(args.title), "description": "",
-        "closed": false, "ownerId": .null, "createdAt": 1,
-      ])
+      try tx.mutate.issue.insert(
+        Issue(id: args.id, title: args.title, description: "", closed: false, createdAt: 1))
     }
 
     let result = zero.mutate(unregistered(CreateIssue(id: "i4", title: "t")))

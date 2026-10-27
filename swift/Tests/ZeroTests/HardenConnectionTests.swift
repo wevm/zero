@@ -8,7 +8,7 @@ import ZeroTesting
 /// inside `send`. Expected values follow `packages/zero-client/src/client/zero.ts`.
 @Suite @MainActor struct HardenConnectionTests {
   static let create = defineMutator("issue.create") { (tx, id: String) in
-    try tx.mutate.insert(
+    try tx.mutate.issue.insert(
       Issue(id: id, title: "", description: "", closed: false, createdAt: 1))
   }
 

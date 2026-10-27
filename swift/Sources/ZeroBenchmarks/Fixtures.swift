@@ -78,14 +78,14 @@ struct UpdateUser: Codable, Sendable {
 enum Mutators {
   static let insertUsers = defineMutator("insertUsers") { (tx, args: InsertUsers) in
     for n in args.from..<args.from + args.count {
-      try tx.mutate.insert(User(n))
+      try tx.mutate.user.insert(User(n).columnValues)
     }
   }
   static let updateUser = defineMutator("updateUser") { (tx, args: UpdateUser) in
     var row = User(args.a)
     let v = Double(args.value)
     (row.b, row.c, row.d, row.e, row.f, row.g, row.h, row.i, row.j) = (v, v, v, v, v, v, v, v, v)
-    try tx.mutate.upsert(row)
+    try tx.mutate.user.upsert(row.columnValues)
   }
   static let all: [any Mutator<Void>] = [insertUsers, updateUser]
 }
