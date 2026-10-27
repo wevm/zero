@@ -272,13 +272,18 @@ struct TransportProbeTests {
   #if canImport(Darwin)
     /// How long after URLSession returns a message the receive after it fails, when the connection ended partway through a frame or right after a whole one. `URLSessionSocket.cutFrameWindow` must cover the first. Prints only.
     @Test func urlSessionGapBeforeTheConnectionEnds() async throws {
-      for scenario in ["partial", "whole and FIN together", "whole, then partial"] {
+      for scenario in [
+        "partial", "partial, FIN 100 ms later", "whole and FIN together", "whole, then partial",
+      ] {
         var gaps: [String] = []
         for _ in 0..<10 {
           let server = try await ScriptedServer { c in
             let whole = ScriptedServer.text(String(repeating: "y", count: 100_000))
             switch scenario {
             case "partial": await c.write(c.accept() + Array(whole.prefix(5000)))
+            case "partial, FIN 100 ms later":
+              await c.write(c.accept() + Array(whole.prefix(5000)))
+              try? await Task.sleep(for: .milliseconds(100))
             case "whole and FIN together": await c.write(c.accept() + whole)
             default: await c.write(c.accept() + whole + Array(whole.prefix(5000)))
             }
@@ -309,6 +314,41 @@ struct TransportProbeTests {
         }
         print("[probe] gap \(scenario): \(gaps.joined(separator: " | "))")
       }
+    }
+  #endif
+
+  #if canImport(Darwin)
+    /// The latency of a lone message on a bare `URLSessionWebSocketTask`, and how long a 10 ms `Task.sleep` takes: the baseline for `latencyOfALoneMessage`. Prints only.
+    @Test func urlSessionBaselineLatency() async throws {
+      let sent = Box<[ContinuousClock.Instant]>([])
+      let server = try await ScriptedServer { c in
+        await c.write(c.accept())
+        for n in 0..<10 {
+          try? await Task.sleep(for: .milliseconds(50))
+          sent.withLock { $0.append(.now) }
+          await c.write(ScriptedServer.text("m\(n)"))
+        }
+        _ = await c.next()
+      }
+      defer { Task { await server.shutdown() } }
+      let task = URLSession.shared.webSocketTask(with: URL(string: server.url)!)
+      task.resume()
+      var delays: [String] = []
+      for n in 0..<10 {
+        _ = try await task.receive()
+        let d = ContinuousClock.now - sent.withLock { $0[n] }
+        delays.append("\(d.components.attoseconds / 1_000_000_000_000)µs")
+      }
+      task.cancel(with: .normalClosure, reason: nil)
+      var sleeps: [String] = []
+      for _ in 0..<10 {
+        let start = ContinuousClock.now
+        try await Task.sleep(for: .milliseconds(10))
+        sleeps.append(
+          "\((ContinuousClock.now - start).components.attoseconds / 1_000_000_000_000)µs")
+      }
+      print("[probe] bare URLSession lone message latency: \(delays)")
+      print("[probe] Task.sleep(10 ms) took: \(sleeps)")
     }
   #endif
 
