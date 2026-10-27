@@ -201,6 +201,46 @@ import ZeroTesting
     view.destroy()
   }
 
+  /// A view listener that mutates when the view's result type turns complete, a notification that runs in a microtask rather than in a task's body: the mutation commits with the next mutation ID, is pushed, and the view has its row.
+  @Test func mutateFromAResultTypeListenerCommits() async throws {
+    let zero = try makeZero()
+    let socket = try connect()
+    let view = try zero.materialize(Self.all())
+    var result: MutatorResult?
+    _ = view.addListener { _, resultType, _ in
+      if resultType == .complete, result == nil {
+        result = zero.mutate(Self.create("fromListener"))
+      }
+    }
+    poke(
+      socket, from: nil, to: "01",
+      #""gotQueriesPatch":[{"op":"put","hash":"\#(QueryHash.hashOfNameAndArgs("issues.all", []))"}]"#
+    )
+    scheduler.runDueTimers()
+    let mutation = try #require(result)
+    #expect(zero.engine.store.pending.map(\.id) == [1])
+    #expect(view.data.json?.arrayValue?.compactMap { $0["id"]?.stringValue } == ["fromListener"])
+    #expect(pushedIDs(on: socket) == [1])
+    #expect(
+      try await mutation.client.value
+        == .success(data: ["mid": 1, "seen": ["fromListener"]]))
+    view.destroy()
+  }
+
+  /// Work deferred to the end of the task from one of the task's microtasks, as a listener's mutate is when a result-type change notifies it, runs before the task returns. It used to be queued after the task's deferred work had already run, and waited for whatever task came next.
+  @Test func workDeferredFromATasksMicrotaskRunsBeforeTheTaskReturns() {
+    let loop = EventLoop(scheduler: scheduler)
+    var order: [String] = []
+    loop.dispatch {
+      loop.microtask {
+        order.append("microtask")
+        loop.afterCurrentTask { order.append("deferred") }
+      }
+      loop.afterCurrentTask { order.append("after body") }
+    }
+    #expect(order == ["after body", "microtask", "deferred"])
+  }
+
   // MARK: - Mutation outcomes (Swift only)
 
   /// The outcome is reported once: by the lmid that confirms the mutation,

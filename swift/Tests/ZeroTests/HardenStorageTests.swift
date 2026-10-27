@@ -431,7 +431,8 @@ import ZeroTesting
     let zero = try makeZero(at: 1000, onStorageFailure: { failures.kinds.append($0.kind) })
     let elapsed = ContinuousClock.now - start
     defer { zero.close() }
-    #expect(elapsed < .seconds(1), "Zero.init waited \(elapsed) for the lock")
+    // The busy timeout is 5 s; the open waits 250 ms. The margin is for slow CI simulators.
+    #expect(elapsed < .seconds(3), "Zero.init waited \(elapsed) for the lock")
     try await settle(until: { !failures.kinds.isEmpty })
     #expect(failures.kinds.count == 1)
   }

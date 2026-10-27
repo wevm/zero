@@ -26,6 +26,8 @@ final class EventLoop {
   }
 
   private var stopped = false
+  /// Microtasks are running.
+  private var draining = false
 
   func microtask(_ task: @escaping () -> Void) {
     guard !stopped else { return }
@@ -34,12 +36,12 @@ final class EventLoop {
   }
 
   /// Runs `work` once the current task or call is done, before its
-  /// microtasks. Outside a task or call (a microtask draining before a
-  /// task's body), it is queued as a microtask, which runs once the current
-  /// one is done.
+  /// microtasks. From a microtask, it is queued as a microtask, which runs
+  /// once the current one is done: the task the microtask follows has
+  /// already finished.
   func afterCurrentTask(_ work: @escaping () -> Void) {
     guard !stopped else { return }
-    if depth == 0 { return microtask(work) }
+    if depth == 0 || draining { return microtask(work) }
     afterTask.append(work)
   }
 
@@ -99,6 +101,8 @@ final class EventLoop {
   }
 
   private func drain() {
+    draining = true
+    defer { draining = false }
     while head < queue.count {
       let task = queue[head]
       head += 1
