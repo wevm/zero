@@ -85,18 +85,17 @@
         return zero
       }
       let state = QueryState<[Note]>()
-      var reused = 0
+      // On macOS each new client lands at the freed one's address.
       for i in 0..<20 {
         var old: Zero<Void>? = try makeZero("old \(i)")
         state.update(old, Notes.all(), .defaultTTL)
         let id = ObjectIdentifier(old!)
         old = nil
         let new = try makeZero("new \(i)")
-        if ObjectIdentifier(new) == id { reused += 1 }
         state.update(new, Notes.all(), .defaultTTL)
-        #expect(state.live?.data.map(\.text) == ["new \(i)"])
+        #expect(
+          state.live?.data.map(\.text) == ["new \(i)"], "reused: \(ObjectIdentifier(new) == id)")
       }
-      Issue.record("R2PROBE reused \(reused)/20")
     }
   }
 #endif
