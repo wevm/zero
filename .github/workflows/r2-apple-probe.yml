@@ -40,25 +40,6 @@ jobs:
           "$bin/pg_ctl" -D "$RUNNER_TEMP/pg" -l "$RUNNER_TEMP/pg.log" -o "-c wal_level=logical -c max_connections=200" start
           until "$bin/pg_isready" -q -h 127.0.0.1; do sleep 1; done
       - run: swift --version
-      # The probes against main's Apple layer, for the failures the fixes address.
-      - name: Probes before the fixes
-        id: before
-        continue-on-error: true
-        env:
-          BASE: ${{ github.event.pull_request.base.sha }}
-        run: |
-          git fetch -q --depth=1 origin "$BASE"
-          git checkout FETCH_HEAD -- swift/Sources/Zero/Apple
-          git status --short
-          cd swift
-          swift build --build-tests
-          set +e
-          swift test --skip-build --filter 'TransportProbeTests/(clientReconnects|redirect|serverGoesAwayMidFrame|urlSessionTaskState)' 2>&1 | tee "$RUNNER_TEMP/before.log"
-          status="${PIPESTATUS[0]}"
-          cd ..
-          git checkout HEAD -- swift/Sources/Zero/Apple
-          git status --short
-          exit "$status"
       - name: Build
         working-directory: swift
         run: swift build --build-tests
