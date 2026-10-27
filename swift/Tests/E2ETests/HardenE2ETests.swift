@@ -293,6 +293,11 @@ struct HardenE2ETests {
     try await eventually("the ping timeout", timeout: .seconds(5)) {
       zero.connection.state.status != .connected
     }
+    // The proxy sees the socket close a moment after the client gives up.
+    let deadline = ContinuousClock.now + .seconds(2)
+    while await proxy.openConnections > 0, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(50))
+    }
     #expect(await proxy.openConnections == 0)
     await proxy.set { $0.downstreamRate = nil }
     try await eventually("the row written behind the client's back") {
