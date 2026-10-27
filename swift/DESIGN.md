@@ -219,10 +219,18 @@ Rationale:
 - If the store can't be opened, the client runs on memory and calls
   `onStorageFailure`, as JS does. A failed write stops writing and calls it
   too. A write that finds the database busy is kept and written with the
-  next one, or by `flush()` and `close()`, which try twice more before they
+  next one, or by `flush()` and `close()`, which try once more before they
   call it a failure. Stored data that doesn't decode is lost client state,
   as a corrupt ref count is in JS: the client deletes the database, starts
   a new one, and calls `onClientStateNotFound` if the app set it.
+- These waits are on the main thread, each up to SQLite's 5 s busy
+  timeout. Opening a database another connection holds locked blocks
+  `Zero.init` for about 5 s before the client falls back to memory, and
+  `flush()` or `close()` on a busy database blocks for up to about 10 s:
+  the queued write, then the retry. With one process per store, only
+  another program with the file open, such as a SQLite browser, holds
+  such a lock. Opening and closing the store off the main actor would
+  avoid the waits; that is deferred.
 - A client writes a poke's snapshot only when its cookie is newer than the
   stored one, as Replicache persists, so a client of the group that is
   behind another doesn't overwrite it.

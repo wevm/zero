@@ -163,6 +163,13 @@ is written or sent.
   connection in the `error` state, a mutation that fails is committed and
   its `client` outcome is the error, and later mutations, `materialize`,
   and `run` fail with the same message.
+- **A flipped `whereExists` stopping a `limit` early.** To learn whether a
+  row a change brings has a match, a flipped `whereExists` reads its
+  subquery's first row only. When that read goes through a `limit` whose
+  rows for this row weren't read before, JS asserts ("Unexpected early
+  return prevented full hydration") and the change fails as above. Swift
+  keeps working and shows the rows JS shows once its `Take` reads the rest
+  of such a fetch, as the comment by that assertion proposes.
 - **Nulls in columns that can't be null.** When the server sends null for
   a column the schema says isn't optional, a `String`, `Double`, `Int`, or
   `Bool` property reads as `""`, `0`, or `false`. JS hands the null

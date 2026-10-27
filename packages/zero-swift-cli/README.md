@@ -56,6 +56,11 @@ Rename a row struct whose name clashes with a type you use. A table named
 `list` generates `struct List`, which hides SwiftUI's `List`; set
 `tables.list.type` to `NoteList`, or set a `typePrefix`.
 
+Two generated schemas with a table of the same name can't share a module:
+both declare `tx.mutate.<table>`. Generate each into a module of its own.
+Code that imports both names the row type, as in
+`TypedTableMutator<Issue>(tx.mutate).insert(…)`.
+
 ### Names
 
 Tables, columns, relationships, JSON fields and enumeration values keep
