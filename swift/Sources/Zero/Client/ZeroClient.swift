@@ -68,6 +68,11 @@ public final class Zero<Context: Sendable> {
     #endif
   }
 
+  /// Dropping the last reference closes the client, as `close()` does: otherwise its socket would stay open, and its timers run, with no engine left to hear them.
+  isolated deinit {
+    close()
+  }
+
   public var clientID: String { engine.clientID }
   public var clientGroupID: String { engine.clientGroupID }
   public var userID: String? { engine.userID }
