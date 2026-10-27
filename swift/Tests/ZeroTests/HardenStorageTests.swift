@@ -414,6 +414,28 @@ import ZeroTesting
     #expect(failures.kinds == [.ioError])
   }
 
+  /// Opening a database another program holds locked, such as a SQLite browser, doesn't freeze the main thread for the busy timeout: the client falls back to memory at once and reports it.
+  @Test(.timeLimit(.minutes(1)))
+  func openingALockedDatabaseFallsBackWithoutWaitingOutTheBusyTimeout() async throws {
+    defer { cleanUp() }
+    try makeZero().close()
+    let other = try SQLiteDatabase(path: databasePath())
+    try other.execute("BEGIN EXCLUSIVE")
+    defer {
+      try? other.execute("COMMIT")
+      other.close()
+    }
+
+    let failures = Failures()
+    let start = ContinuousClock.now
+    let zero = try makeZero(at: 1000, onStorageFailure: { failures.kinds.append($0.kind) })
+    let elapsed = ContinuousClock.now - start
+    defer { zero.close() }
+    #expect(elapsed < .seconds(1), "Zero.init waited \(elapsed) for the lock")
+    try await settle(until: { !failures.kinds.isEmpty })
+    #expect(failures.kinds.count == 1)
+  }
+
   // MARK: - A full disk
 
   /// A disk that fills up while a large poke's snapshot is written: the
