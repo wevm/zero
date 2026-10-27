@@ -44,7 +44,7 @@ struct ClientE2ETests {
       cacheURL: origin, storageKey: storageKey, storage: .sqlite(directory: directory))
     return try Zero(
       schema: .test, mutators: [E2EApp.create, E2EApp.close], options: options,
-      socketFactory: TransportSocketFactory(NIOTransport()))
+      socketFactory: TransportSocketFactory(E2E.transport))
   }
 
   /// Waits until `condition` holds.
