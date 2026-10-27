@@ -8,9 +8,11 @@ name: Swift Release
 # - With pending changesets, opens or updates the "Version Packages" PR.
 # - Otherwise, if the version in swift/VERSION isn't released yet, after
 #   approval in the swift-release environment:
-#   - publishes swift/ to the SwiftPM mirror (wevm/zero-swift) and tags the
-#     version there. SwiftPM needs Package.swift at a repository root and
-#     clones whole repositories, so consumers install from the mirror.
+#   - publishes swift/ to the SwiftPM mirror (wevm/zero-swift), tags the
+#     version there, and creates a GitHub release from the version's section
+#     of packages/zero-swift-cli/CHANGELOG.md. SwiftPM needs Package.swift at
+#     a repository root and clones whole repositories, so consumers install
+#     from the mirror.
 #   - publishes the zero-swift CLI to npm with trusted publishing.
 # Each step is skipped when its release already exists, so a failed run can be
 # rerun.
@@ -63,6 +65,7 @@ jobs:
     outputs:
       version: ${{ steps.plan.outputs.version }}
       mirror: ${{ steps.plan.outputs.mirror }}
+      release: ${{ steps.plan.outputs.release }}
       npm: ${{ steps.plan.outputs.npm }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -73,6 +76,8 @@ jobs:
             packages/zero-swift-cli/package.json
           sparse-checkout-cone-mode: false
       - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           version="$(tr -d '[:space:]' < swift/VERSION)"
@@ -87,6 +92,13 @@ jobs:
           else
             echo "mirror=true" >> "$GITHUB_OUTPUT"
           fi
+          status="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/wevm/zero-swift/releases/tags/$version")"
+          case "$status" in
+            200) echo "release=false" >> "$GITHUB_OUTPUT" ;;
+            404) echo "release=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "Looking up the $version release returned HTTP $status." >&2; exit 1 ;;
+          esac
           if npm view "zero-swift@$version" version >/dev/null 2>&1; then
             echo "npm=false" >> "$GITHUB_OUTPUT"
           else
@@ -97,7 +109,7 @@ jobs:
     name: Publish mirror
     runs-on: ubuntu-latest
     needs: plan
-    if: needs.plan.outputs.mirror == 'true'
+    if: needs.plan.outputs.mirror == 'true' || needs.plan.outputs.release == 'true'
     environment: swift-release
     env:
       MIRROR_TOKEN: ${{ secrets.ZERO_SWIFT_MIRROR_TOKEN }}
@@ -109,6 +121,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Split and push
+        if: needs.plan.outputs.mirror == 'true'
         run: |
           set -euo pipefail
           git subtree split --prefix=swift -b mirror
@@ -116,6 +129,23 @@ jobs:
           git push "$remote" mirror:main
           git tag "$VERSION" mirror
           git push "$remote" "refs/tags/$VERSION"
+      # The version's changelog section. Its commit hashes are wevm/zero's,
+      # which GitHub doesn't link from the mirror, so they become links.
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ env.MIRROR_TOKEN }}
+        run: |
+          set -euo pipefail
+          awk -v v="## $VERSION" '$0 == v {f = 1; next} /^## / {f = 0} f' \
+            packages/zero-swift-cli/CHANGELOG.md |
+            sed -E 's|^- ([0-9a-f]{7,40}):|- [`\1`](https://github.com/wevm/zero/commit/\1):|' \
+            >"$RUNNER_TEMP/notes.md"
+          if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/notes.md"; then
+            echo "No section for $VERSION in packages/zero-swift-cli/CHANGELOG.md." >&2
+            exit 1
+          fi
+          gh release create "$VERSION" -R "$MIRROR_REPO" --verify-tag \
+            --title "$VERSION" --notes-file "$RUNNER_TEMP/notes.md"
 
   npm-build:
     name: Build npm package
