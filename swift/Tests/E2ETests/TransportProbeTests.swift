@@ -272,20 +272,17 @@ struct TransportProbeTests {
   #if canImport(Darwin)
     /// How long after URLSession returns a message the receive after it fails, when the connection ended partway through a frame or right after a whole one. `URLSessionSocket.cutFrameWindow` must cover the first. Prints only.
     @Test func urlSessionGapBeforeTheConnectionEnds() async throws {
-      for scenario in [
-        "partial", "partial, FIN 100 ms later", "whole and FIN together", "whole, then partial",
-      ] {
+      for scenario in ["partial after a whole message, FIN 100 ms later", "whole and FIN together"]
+      {
         var gaps: [String] = []
-        for _ in 0..<10 {
+        for _ in 0..<5 {
           let server = try await ScriptedServer { c in
             let whole = ScriptedServer.text(String(repeating: "y", count: 100_000))
-            switch scenario {
-            case "partial": await c.write(c.accept() + Array(whole.prefix(5000)))
-            case "partial, FIN 100 ms later":
-              await c.write(c.accept() + Array(whole.prefix(5000)))
+            if scenario == "whole and FIN together" {
+              await c.write(c.accept() + whole)
+            } else {
+              await c.write(c.accept() + ScriptedServer.text("hi") + Array(whole.prefix(5000)))
               try? await Task.sleep(for: .milliseconds(100))
-            case "whole and FIN together": await c.write(c.accept() + whole)
-            default: await c.write(c.accept() + whole + Array(whole.prefix(5000)))
             }
             await c.closeTCP()
           }
@@ -299,9 +296,9 @@ struct TransportProbeTests {
           var steps: [String] = []
           while true {
             do {
-              _ = try await task.receive()
+              let m = try await task.receive()
               last = ContinuousClock.now
-              steps.append("msg")
+              if case .string(let text) = m { steps.append("msg(\(text.utf8.count))") }
             } catch {
               let gap = ContinuousClock.now - last
               steps.append("throws after \(gap.components.attoseconds / 1_000_000_000_000)µs")
@@ -347,6 +344,22 @@ struct TransportProbeTests {
         sleeps.append(
           "\((ContinuousClock.now - start).components.attoseconds / 1_000_000_000_000)µs")
       }
+      var timers: [String] = []
+      for _ in 0..<10 {
+        let start = ContinuousClock.now
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+          let timer = DispatchSource.makeTimerSource(queue: .global(qos: .userInitiated))
+          timer.schedule(deadline: .now() + .milliseconds(5), leeway: .nanoseconds(0))
+          timer.setEventHandler {
+            timer.cancel()
+            c.resume()
+          }
+          timer.resume()
+        }
+        timers.append(
+          "\((ContinuousClock.now - start).components.attoseconds / 1_000_000_000_000)µs")
+      }
+      print("[probe] DispatchSource 5 ms without leeway took: \(timers)")
       print("[probe] bare URLSession lone message latency: \(delays)")
       print("[probe] Task.sleep(10 ms) took: \(sleeps)")
     }
