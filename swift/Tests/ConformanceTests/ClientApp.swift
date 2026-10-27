@@ -19,6 +19,17 @@ enum ClientApp {
     "issues.byOwner": { args in zql("issue").where("ownerId", args ?? .null).orderBy("id", .asc) },
     "issues.byID": { args in zql("issue").where("id", args ?? .null).related("owner").one() },
     "issues.firstTwo": { _ in zql("issue").orderBy("title", .asc).limit(2) },
+    "issues.withAuthoredComments": { _ in
+      zql("issue")
+        .whereExists("comments") { $0.whereExists("author", flip: true) { $0.limit(3) } }
+        .orderBy("id", .asc)
+    },
+    "issues.withOneComment": { _ in zql("issue").related("oneComment").orderBy("id", .asc) },
+    "issues.withFirstComment": { _ in
+      zql("issue")
+        .whereExists("comments", flip: true) { $0.orderBy("id", .asc).limit(1) }
+        .orderBy("id", .asc)
+    },
     "users.all": { _ in zql("user").orderBy("id", .asc) },
     "issueLabels.all": { _ in
       zql("issueLabel").orderBy("issueId", .asc).orderBy("labelId", .asc)
@@ -115,6 +126,33 @@ enum ClientApp {
     JSONMutator(name: "issue.createThenFail") { tx, args in
       try tx.mutate.issue.insert(issueRow(args))
       throw ApplicationError("failed after writing")
+    },
+    // Runs CRUD operations on any table, then throws, reads tables back, or
+    // returns `return` (`harden.ops` in app.ts).
+    JSONMutator(name: "harden.ops") { tx, args in
+      if args?["failOnRebase"] == true, tx.reason == .rebase {
+        throw ApplicationError("fails on rebase")
+      }
+      for o in args?["ops"]?.arrayValue ?? [] {
+        let table = tx.mutate.table(o["table"]?.stringValue ?? "")
+        let value = Row(o["value"]?.objectValue ?? [:])
+        switch o["op"]?.stringValue {
+        case "insert": try table.insert(value)
+        case "upsert": try table.upsert(value)
+        case "update": try table.update(value)
+        case "delete": try table.delete(value)
+        default: throw Failure("Unknown op")
+        }
+      }
+      if let fail = args?["fail"]?.stringValue {
+        throw ApplicationError(fail, details: args?["details"])
+      }
+      if let read = args?["read"]?.arrayValue {
+        var out: JSONObject = [:]
+        for t in read.compactMap(\.stringValue) { out[t] = try tx.run(zql(t)).json ?? .null }
+        return ["mutationID": .number(Double(tx.mutationID)), "read": .object(out)]
+      }
+      return args?["return"]
     },
     JSONMutator(name: "comment.add") { tx, args in
       var row: Row = [

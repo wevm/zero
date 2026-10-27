@@ -127,16 +127,54 @@ is written or sent.
 
 - **The main actor.** Queries, views, and mutators run synchronously on the
   main actor. Views and live queries are up to date when `mutate` returns.
-  Only the network and storage are asynchronous.
+  Only the network and storage are asynchronous. The exception is a
+  `mutate` from a view listener: as a JS mutator commits after the
+  notification that ran it, it runs once the current notification and the
+  rest of its task are done, so every listener ends on the latest rows and
+  every view sees each change. Its `client` outcome settles then.
+- **Queries that can't be built.** A query JS rejects when it is
+  materialized, such as a flipped `whereExists` over a subquery with a
+  `limit`, makes `materialize` and `liveQuery` throw and `run` reject with
+  the same message. Unlike JS, nothing stays registered with the server.
+- **Updates a query can't take.** When applying a change makes a view's
+  pipeline fail where JS throws (such as a `one` relationship that two rows
+  match, or a flipped `whereExists` over a `limit` that a new row reaches),
+  the views keep what they got of the change, and from then on, as in JS,
+  the client's views can't be updated: a poke that fails puts the
+  connection in the `error` state, a mutation that fails is committed and
+  its `client` outcome is the error, and later mutations, `materialize`,
+  and `run` fail with the same message.
 - **Nulls in columns that can't be null.** When the server sends null for
   a column the schema says isn't optional, a `String`, `Double`, `Int`, or
   `Bool` property reads as `""`, `0`, or `false`. JS hands the null
   through. An enum or JSON column still fails to read.
+- **Values of the wrong type for their column.** JS can't compare values
+  of different types, such as a number in a column of strings: a mutation
+  that writes one to a column a view sorts by fails, and so does every
+  mutation after it, and a poke that brings one disconnects the client
+  again after every reconnect. Swift sorts such a value with the others
+  (by type, then by its JSON) and keeps working. A mutator can only write
+  one through the untyped `tx.mutate.<table>` calls; the server rejects
+  such a mutation, and its row goes when the next poke comes.
+- **Error messages.** Messages about data the client can't read follow
+  valita's wording, as JS's do. A server frame that isn't JSON is the
+  exception: JS shows the engine's `JSON.parse` message, and Swift its
+  own.
 - **JSON objects.** A `JSONValue` object is a ``JSONObject``, which keeps
   its keys as a JS object does: integer-like keys first in ascending order,
   then the others in the order they were set. Keys are compared by UTF-16
   code unit, so `"é"` and `"e\u{301}"` are two keys, as they are in JS. JSON
   text round-trips as `JSON.stringify` writes it.
+- **Lone surrogates.** A Swift `String` can't hold half of a surrogate
+  pair, so JSON text with an escaped lone surrogate (`"\ud800"`) reads it
+  as U+FFFD, the replacement character; JS keeps the code unit. Two values
+  that differ only in lone surrogates, such as the keys `"\ud800"` and
+  `"\udc00"` of one object, are then the same value.
+- **Mutation IDs.** A poke whose `lastMutationIDChanges` holds a number
+  that isn't a safe non-negative integer (`Number.isSafeInteger`) is
+  rejected as bad poke data: the client disconnects with a poke error. JS
+  takes any number. A stored pending mutation with such an ID is dropped
+  when the client opens, and logged as an error.
 - **JSON nesting depth.** JSON nested more than 1,500 arrays and objects
   deep is rejected ("JSON nested too deeply"); JS accepts whatever fits its
   stack, and zero-cache writes up to about 4,100 levels. A poke is about 5
@@ -161,3 +199,8 @@ is written or sent.
 - **Storage.** The replica is a SQLite database per user and URL, not
   IndexedDB. One process uses it at a time; there are no tabs to share it
   with.
+- **Corrupt local data.** When the stored replica doesn't decode, JS drops
+  the database and calls `onClientStateNotFound`, which reloads the page by
+  default. Swift drops it and the client starts on a new, empty database at
+  once; `onClientStateNotFound` is called only if the app set it. Pending
+  mutations in the dropped database are lost, as in JS.

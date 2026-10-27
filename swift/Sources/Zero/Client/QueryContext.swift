@@ -34,6 +34,13 @@ final class QueryContext {
   private let closedReason: () -> ConnectionError?
   /// The hashes of the unnamed queries already warned about.
   private var warnedLocalOnly = Set<String>()
+  /// Counts the view notifications under way.
+  let notifications = NotificationGate()
+
+  /// Whether listeners are being told about a change. JS mutators are
+  /// async, so a mutation made from a listener commits once the
+  /// notification is over; `Engine.mutate` defers one made now.
+  var isNotifying: Bool { notifications.depth > 0 }
 
   init(
     branch: IVMBranch,
@@ -136,15 +143,35 @@ final class QueryContext {
     }
   }
 
-  /// Pushes `diff` into the branch and flushes the views.
-  func processChanges(_ diff: KVDiff, rows: [String: Row] = [:]) {
+  /// Why pushing into the branch failed, once it has (`#advanceError` in
+  /// `ivm-branch.ts`). The pipelines saw part of that push, so they no
+  /// longer match the sources: as in JS, the branch is unusable from then
+  /// on, and every later push, `materialize`, and mutation fails with it.
+  private(set) var branchFailure: PipelineError?
+
+  /// Pushes `diff` into the branch and flushes the views. A push an
+  /// operator fails (where JS throws from it) still flushes what the views
+  /// got, as JS's `finally` does, and then throws.
+  func processChanges(_ diff: KVDiff, rows: [String: Row] = [:]) throws {
+    if let branchFailure { throw branchFailure }
+    var failure: PipelineError?
     batchViewUpdates {
-      branch.apply(diff, rows: rows)
+      do {
+        try PipelineFailure.capture { branch.apply(diff, rows: rows) }
+      } catch {
+        failure = error as? PipelineError ?? PipelineError("\(error)")
+      }
       endTransaction()
+    }
+    if let failure {
+      branchFailure = failure
+      throw failure
     }
   }
 
   private func endTransaction() {
+    notifications.depth += 1
+    defer { notifications.depth -= 1 }
     for (_, l) in commitListeners { l() }
   }
 
@@ -155,6 +182,10 @@ final class QueryContext {
   }
 
   func materialize(_ query: AnyQuery, ttl: TTL = .defaultTTL) throws -> MaterializedView {
+    if let message = query.invalid { throw PipelineError(message) }
+    // JS's getSource throws once the branch failed. Unlike JS, the query
+    // isn't registered first.
+    if let branchFailure { throw branchFailure }
     let customQueryID = query.customQueryID
     let ast = query.ast
     let queryID =
@@ -231,13 +262,30 @@ final class QueryContext {
     }
 
     var created: ArrayView!
+    var hydrationError: (any Error)?
     batchViewUpdates {
       let v: ArrayView
+      // Hydrating fetches the pipeline, which can fail where JS throws.
+      func hydrate(_ error: ErroredQuery?, complete: Bool) -> ArrayView? {
+        do {
+          return try PipelineFailure.capture {
+            ArrayView(input, format: query.format, error: error, complete: complete)
+          }
+        } catch {
+          hydrationError = error
+          return nil
+        }
+      }
       switch queryComplete {
-      case .complete: v = ArrayView(input, format: query.format, error: nil, complete: true)
-      case .failed(let e): v = ArrayView(input, format: query.format, error: e, complete: false)
+      case .complete:
+        guard let h = hydrate(nil, complete: true) else { return }
+        v = h
+      case .failed(let e):
+        guard let h = hydrate(e, complete: false) else { return }
+        v = h
       case .pending:
-        v = ArrayView(input, format: query.format, error: nil, complete: false)
+        guard let h = hydrate(nil, complete: false) else { return }
+        v = h
         onResolved = { [weak v] (r: Completion) in
           switch r {
           case .complete: microtask { v?.setResultType(.complete) }
@@ -249,6 +297,14 @@ final class QueryContext {
       }
       removeCommitObserver = onTransactionCommit { [weak v] in v?.flush() }
       created = v
+    }
+    if let hydrationError {
+      // Unlike JS, which leaves the query registered, nothing is left
+      // behind: there is no view to destroy.
+      destroyed = true
+      input.destroy()
+      removeAddedQuery()
+      throw hydrationError
     }
     created.onDestroy = {
       destroyed = true
@@ -289,7 +345,7 @@ final class QueryContext {
     let updateTTL: (TTL) -> Void =
       customQueryID.map { id in { [weak self] ttl in self?.updateCustomQuery(id, ttl) } } ?? { _ in
       }
-    return MaterializedView(created, updateTTL: updateTTL)
+    return MaterializedView(created, updateTTL: updateTTL, notifications: notifications)
   }
 
   enum RunType: String, Sendable {
@@ -309,7 +365,14 @@ final class QueryContext {
       result.reject(error)
       return result
     }
-    let v = try materialize(query, ttl: ttl ?? .defaultTTL)
+    let v: MaterializedView
+    do {
+      v = try materialize(query, ttl: ttl ?? .defaultTTL)
+    } catch {
+      // JS's `run` is async: a query that can't be materialized rejects it.
+      result.reject(error)
+      return result
+    }
     if type == .unknown {
       // While the pipelines are not ready the view is deferred and this is
       // empty: `unknown` does not wait for local data either.
@@ -350,6 +413,12 @@ final class QueryContext {
     if let error = closedError(query) {
       cached.reject(error)
       complete.reject(error)
+      return Preload(cleanup: {}, cached: cached, complete: complete)
+    }
+    if let message = query.invalid {
+      log?.error(message)
+      cached.reject(PipelineError(message))
+      complete.reject(PipelineError(message))
       return Preload(cleanup: {}, cached: cached, complete: complete)
     }
     guard let id = query.customQueryID else {
@@ -424,9 +493,17 @@ public final class MaterializedView {
   var query: AnyQuery?
   var ttl: TTL = .defaultTTL
 
-  init(_ view: ArrayView, updateTTL: @escaping (TTL) -> Void) {
+  private var notifications: NotificationGate
+  /// How many notification passes are under way. As in JS, a listener that
+  /// destroys the view doesn't keep the pass from reaching the others.
+  private var forwarding = 0
+
+  init(
+    _ view: ArrayView, updateTTL: @escaping (TTL) -> Void, notifications: NotificationGate
+  ) {
     self.view = view
     self.updateTTLImpl = updateTTL
+    self.notifications = notifications
     forward()
   }
 
@@ -477,7 +554,20 @@ public final class MaterializedView {
     removeForward = view.addListener { [weak self] data, type in
       guard let self else { return }
       let error = self.view.listenerResultType.1
-      for (_, listener) in self.listeners { listener(data, type, error) }
+      self.notifications.depth += 1
+      self.forwarding += 1
+      defer {
+        self.notifications.depth -= 1
+        self.forwarding -= 1
+        // Destroyed during the pass: its listeners went on hearing it.
+        if self.destroyed && self.forwarding == 0 { self.listeners = [] }
+      }
+      forEachLive(self.listeners) { listener in
+        listener(data, type, error)
+      } next: {
+        [unowned self] in
+        self.listeners
+      }
     }
   }
 
@@ -491,6 +581,7 @@ public final class MaterializedView {
     other.destroyed = true
     view = other.view
     updateTTLImpl = other.updateTTLImpl
+    notifications = other.notifications
     forward()
   }
 
@@ -500,7 +591,7 @@ public final class MaterializedView {
     guard !destroyed else { return }
     destroyed = true
     removeForward()
-    listeners = []
+    if forwarding == 0 { listeners = [] }
     view.destroy()
   }
 
@@ -509,6 +600,12 @@ public final class MaterializedView {
     self.ttl = ttl
     updateTTLImpl(ttl)
   }
+}
+
+/// How many view notifications are under way on a client.
+@MainActor
+final class NotificationGate {
+  var depth = 0
 }
 
 /// Keeps a view alive while its snapshot stream is iterated.

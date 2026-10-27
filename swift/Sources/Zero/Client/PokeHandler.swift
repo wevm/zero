@@ -77,6 +77,10 @@ final class PokeHandler {
       handlePokeError("received both pokePart and binary poke chunks")
       return nil
     }
+    if let message = Self.invalidLastMutationID(part) {
+      handlePokeError(message)
+      return nil
+    }
     receiving!.parts.append(part)
     return part.lastMutationIDChanges?[JSKey(clientID)]
   }
@@ -113,6 +117,12 @@ final class PokeHandler {
         handlePokeError("TypeError: " + valitaMessage(error))
         return nil
       }
+      for part in parts {
+        if let message = Self.invalidLastMutationID(part) {
+          handlePokeError(message)
+          return nil
+        }
+      }
     }
     var result = PokeEndResult(lastMutationIDChangeForSelf: nil, hasRows: false)
     for part in parts {
@@ -128,6 +138,17 @@ final class PokeHandler {
   }
 
   func handleDisconnect() { clear() }
+
+  /// Why `part` can't be applied: a last mutation ID that isn't a safe
+  /// non-negative integer. JS takes any number; mutation IDs here become
+  /// `Int`s, so such a poke is rejected like other bad poke data.
+  static func invalidLastMutationID(_ part: PokePartBody) -> String? {
+    guard let changes = part.lastMutationIDChanges else { return nil }
+    for (clientID, lmid) in changes where !(lmid >= 0 && JSNumber.isSafeInteger(lmid)) {
+      return "invalid lastMutationIDChanges for \(clientID): \(JSNumber.format(lmid))"
+    }
+    return nil
+  }
 
   private func startPlayback() {
     playbackRunning = true
@@ -158,6 +179,7 @@ final class PokeHandler {
   /// `String(error)` of the JS error the failure stands for.
   static func errorString(_ error: any Error) -> String {
     if let e = error as? PokeError { return "Error: " + e.message }
+    if error is Keys.InvalidPrimaryKeyValue { return "TypeError: \(error)" }
     return "Error: " + String(describing: error)
   }
 
@@ -192,9 +214,7 @@ final class PokeHandler {
           for (clientID, lmid) in changes { merged.lastMutationIDChanges[clientID] = lmid }
         }
         if let patches = part.desiredQueriesPatches {
-          for (clientID, patch) in patches.sorted(by: {
-            StringCompare.utf16Less($0.key.string, $1.key.string)
-          }) {
+          for (clientID, patch) in patches.map({ ($0.clientID, $0.patch) }) {
             for op in patch {
               merged.patch.append(
                 Self.queryPatchOp(op) {

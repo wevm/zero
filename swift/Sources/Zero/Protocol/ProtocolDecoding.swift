@@ -10,13 +10,30 @@ extension JSONDecode {
   }
 
   /// `v.literalUnion(...)` of the raw values of `R`.
-  static func literalUnion<R: RawRepresentable>(
+  static func literalUnion<R: RawRepresentable & CaseIterable>(
     _ v: JSONValue, _: R.Type = R.self
   ) throws(DecodingError) -> R where R.RawValue == String {
     guard case .string(let s) = v, let r = R(rawValue: s) else {
-      throw DecodingError("Expected a \(R.self) literal, got \(v)")
+      // valita: `Expected literal value "A", "B" or "C" at <path> Got "x"`.
+      let names = R.allCases.map { JSONSerializer.stringify(.string($0.rawValue)) }
+      let list =
+        names.count < 2
+        ? names.joined()
+        : names.dropLast().joined(separator: ", ") + " or " + names.last!
+      throw DecodingError("Expected literal value \(list)", got: " Got \(valitaDisplay(v))")
     }
     return r
+  }
+
+  /// `toDisplay` in valita.ts: how its messages show a value.
+  static func valitaDisplay(_ v: JSONValue?) -> String {
+    switch v {
+    case nil: "undefined"
+    case .null?: "null"
+    case .array?: "array"
+    case .object?: "object"
+    case let v?: JSONSerializer.stringify(v)
+    }
   }
 
   /// `schema.nullable()`.
@@ -74,21 +91,21 @@ extension JSONDecode {
 
 extension JSONObjectReader {
   /// A required `v.literalUnion(...)` field.
-  func literalUnion<R: RawRepresentable>(
+  func literalUnion<R: RawRepresentable & CaseIterable>(
     _ key: String, _ type: R.Type = R.self
   ) throws(DecodingError) -> R where R.RawValue == String {
     try required(key) { (v) throws(DecodingError) in try JSONDecode.literalUnion(v, type) }
   }
 
   /// An optional `v.literalUnion(...)` field.
-  func optionalLiteralUnion<R: RawRepresentable>(
+  func optionalLiteralUnion<R: RawRepresentable & CaseIterable>(
     _ key: String, _ type: R.Type = R.self
   ) throws(DecodingError) -> R? where R.RawValue == String {
     try optional(key) { (v) throws(DecodingError) in try JSONDecode.literalUnion(v, type) }
   }
 
   /// A required field whose value is one of `allowed`.
-  func oneOf<R: RawRepresentable & Hashable>(
+  func oneOf<R: RawRepresentable & Hashable & CaseIterable>(
     _ key: String, _ allowed: Set<R>
   ) throws(DecodingError) -> R where R.RawValue == String {
     try required(key) { (v) throws(DecodingError) in

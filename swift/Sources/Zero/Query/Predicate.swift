@@ -7,6 +7,41 @@ package struct PipelineError: Error, CustomStringConvertible {
   package init(_ description: String) { self.description = description }
 }
 
+/// An error an operator finds while a pipeline is fetched, where JS throws
+/// from inside the fetch and the error comes out of whatever hydrates the
+/// view (`materialize`, `run`). Fetches are lazy streams that can't throw,
+/// so the operator reports the error here and yields nothing, and the code
+/// that hydrates throws it once the fetch is done.
+package final class PipelineFailure: @unchecked Sendable {
+  private var error: PipelineError?
+
+  @TaskLocal private static var current: PipelineFailure?
+
+  /// Runs `body`, and throws the first error an operator reported while it
+  /// ran.
+  package static func capture<T>(_ body: () throws -> T) throws -> T {
+    let failure = PipelineFailure()
+    let result = try $current.withValue(failure) { try body() }
+    if let error = failure.error { throw error }
+    return result
+  }
+
+  /// Whether an operator reported an error to the running `capture`. Where
+  /// JS's throw would unwind, the source stops pushing.
+  static var hasFailed: Bool { current?.error != nil }
+
+  /// Reports `message` to the running `capture`. The client fetches and
+  /// pushes only inside one; anything else (a pipeline driven directly)
+  /// gets the error logged, and the operator yields nothing.
+  static func report(_ message: String) {
+    guard let current else {
+      DefaultLogSink().log(level: .error, message: message, context: [:])
+      return
+    }
+    if current.error == nil { current.error = PipelineError(message) }
+  }
+}
+
 /// `createPredicate(condition)` for a condition without subqueries.
 func createPredicate(_ condition: AST.Condition) throws(PipelineError) -> RowPredicate {
   switch condition {

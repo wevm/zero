@@ -282,7 +282,10 @@ package final class MemorySource: Source {
     let index = primaryIndex
     let canBulkLoad = connections.isEmpty && indexes.count == 1 && index.data.isEmpty
     if !canBulkLoad {
-      for row in rows { push(.add(row)) }
+      for row in rows {
+        if PipelineFailure.hasFailed { return }
+        push(.add(row))
+      }
       return
     }
     let compare = index.comparator.compareRows
@@ -311,6 +314,7 @@ package final class MemorySource: Source {
       if shouldSplitEdit {
         pushEpoch += 1
         genPushAndWrite(.remove(oldRow), epoch: pushEpoch)
+        if PipelineFailure.hasFailed { return }
         pushEpoch += 1
         genPushAndWrite(.add(row), epoch: pushEpoch)
         return
@@ -322,6 +326,8 @@ package final class MemorySource: Source {
 
   private func genPushAndWrite(_ change: SourceChange, epoch: Int) {
     genPush(change, epoch: epoch)
+    // JS's throw skips the write.
+    if PipelineFailure.hasFailed { return }
     writeChange(change)
   }
 
@@ -353,6 +359,8 @@ package final class MemorySource: Source {
         case .remove(let row): .remove(Node(row: row))
         }
       filterPush(outputChange, output, conn.input, conn.filters?.predicate)
+      // JS's throw ends the push here, before the other connections.
+      if PipelineFailure.hasFailed { return }
     }
     i = 0
     while i < connections.count {

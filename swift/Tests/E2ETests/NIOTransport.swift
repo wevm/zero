@@ -1,3 +1,4 @@
+import Foundation
 import NIOCore
 import NIOHTTP1
 import NIOPosix
@@ -20,11 +21,27 @@ public struct NIOTransport: Transport {
 
   public func connect(url: String, secProtocol: String?) async throws -> any Socket {
     let (host, port, uri) = try Self.parse(url)
+    // Cancelling the connect closes the channel, as closing a browser
+    // WebSocket that is still connecting aborts it.
+    let opening = OpeningChannel()
+    return try await withTaskCancellationHandler {
+      try await connect(
+        host: host, port: port, uri: uri, url: url, secProtocol: secProtocol, opening)
+    } onCancel: {
+      opening.cancel()
+    }
+  }
+
+  private func connect(
+    host: String, port: Int, uri: String, url: String, secProtocol: String?,
+    _ opening: OpeningChannel
+  ) async throws -> any Socket {
     let upgrade: EventLoopFuture<Upgrade> = try await ClientBootstrap(
       group: MultiThreadedEventLoopGroup.singleton
     )
     .connect(host: host, port: port) { channel in
-      channel.eventLoop.makeCompletedFuture {
+      opening.opened(channel)
+      return channel.eventLoop.makeCompletedFuture {
         let upgrader = NIOTypedWebSocketClientUpgrader<Upgrade>(maxFrameSize: 1 << 24) {
           channel, _ in
           channel.eventLoop.makeCompletedFuture {
@@ -68,6 +85,30 @@ public struct NIOTransport: Transport {
   }
 }
 
+/// The channel of a connect in progress, closed if the connect is
+/// cancelled.
+final class OpeningChannel: @unchecked Sendable {
+  private let lock = NSLock()
+  private var channel: (any Channel)?
+  private var cancelled = false
+
+  func opened(_ channel: any Channel) {
+    let cancelled = lock.withLock {
+      self.channel = channel
+      return self.cancelled
+    }
+    if cancelled { channel.close(promise: nil) }
+  }
+
+  func cancel() {
+    let channel = lock.withLock {
+      cancelled = true
+      return self.channel
+    }
+    channel?.close(promise: nil)
+  }
+}
+
 /// One reader at a time: `receive` is called by a single task.
 final class NIOSocket: Socket, @unchecked Sendable {
   private var inbound: AsyncThrowingStream<SocketMessage, any Error>.AsyncIterator
@@ -95,7 +136,19 @@ final class NIOSocket: Socket, @unchecked Sendable {
                   outbound.yield(
                     WebSocketFrame(
                       fin: true, opcode: .pong, maskKey: .random(), data: frame.unmaskedData))
-                case .connectionClose: return
+                case .connectionClose:
+                  // A close other than a normal one is reported with its
+                  // code, as a browser's `CloseEvent` has it.
+                  var data = frame.unmaskedData
+                  if let code = data.readWebSocketErrorCode() {
+                    let number = Int(UInt16(webSocketErrorCode: code))
+                    if number != 1000 {
+                      throw SocketClosed(
+                        code: number, reason: data.readString(length: data.readableBytes) ?? "",
+                        wasClean: true)
+                    }
+                  }
+                  return
                 default: break
                 }
               }

@@ -198,10 +198,15 @@ Rationale:
   minutes, clients inactive for a day are deleted (and the server told with
   `deleteClients`, and in `initConnection` until it confirms) and client
   groups without clients are dropped; five minutes after launch and then every
-  12 hours, databases no client used for two days are deleted. A group is
-  disabled after `ClientNotFound`, `SchemaVersionNotSupported`, or a 1009
-  close, and the database dropped after `InvalidConnectionRequestBaseCookie`
-  or `InvalidConnectionRequestLastMutationID`.
+  12 hours, databases no client used for two days are deleted. Only our
+  databases are: of this layout version or an older one, holding their name,
+  and of a format the client knows. The collector reads the files in the
+  background; the main actor then keeps any opened or closed since and renames
+  the others away before they are deleted, so a client opening one meanwhile
+  starts a new file. A group is disabled after `ClientNotFound`,
+  `SchemaVersionNotSupported`, or a 1009 close, and the database dropped after
+  `InvalidConnectionRequestBaseCookie` or
+  `InvalidConnectionRequestLastMutationID`.
 - `ZeroStorage.memory` keeps databases for the life of the process, keyed by
   name, like JS `kvStore: 'mem'`. The client scenarios run on both storages.
 - Default location `Library/Application Support/Zero` on Apple platforms and
@@ -213,7 +218,14 @@ Rationale:
 - No database-level encryption.
 - If the store can't be opened, the client runs on memory and calls
   `onStorageFailure`, as JS does. A failed write stops writing and calls it
-  too.
+  too. A write that finds the database busy is kept and written with the
+  next one, or by `flush()` and `close()`, which try twice more before they
+  call it a failure. Stored data that doesn't decode is lost client state,
+  as a corrupt ref count is in JS: the client deletes the database, starts
+  a new one, and calls `onClientStateNotFound` if the app set it.
+- A client writes a poke's snapshot only when its cookie is newer than the
+  stored one, as Replicache persists, so a client of the group that is
+  behind another doesn't overwrite it.
 - One process per store in v1: one `Zero` instance per user and storage key per
   process. Concurrent cross-process access (app extensions) is deferred, and so
   is refreshing one instance from another's writes.

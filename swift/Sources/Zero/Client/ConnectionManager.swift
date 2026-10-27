@@ -244,7 +244,7 @@ final class ConnectionManager {
         .client(
           .offline,
           message:
-            "Zero was unable to connect for \(Int((disconnectTimeout / 1000).rounded(.down))) seconds and was disconnected"
+            "Zero was unable to connect for \(JSNumber.format((disconnectTimeout / 1000).rounded(.down))) seconds and was disconnected"
         ))
     }
   }

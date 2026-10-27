@@ -1,6 +1,7 @@
 /// The kind of a protocol error
 /// (`packages/zero-protocol/src/error-kind-enum.ts`).
 package enum ErrorKind: String, Sendable, Hashable, CaseIterable {
+  // In the order of `errorKindSchema`, which valita's messages list.
   case authInvalidated = "AuthInvalidated"
   case clientNotFound = "ClientNotFound"
   case invalidConnectionRequest = "InvalidConnectionRequest"
@@ -9,17 +10,17 @@ package enum ErrorKind: String, Sendable, Hashable, CaseIterable {
   case invalidConnectionRequestClientDeleted = "InvalidConnectionRequestClientDeleted"
   case invalidMessage = "InvalidMessage"
   case invalidPush = "InvalidPush"
-  case pushFailed = "PushFailed"
-  case mutationFailed = "MutationFailed"
   case mutationRateLimited = "MutationRateLimited"
-  case rebalance = "Rebalance"
-  case rehome = "Rehome"
-  case transformFailed = "TransformFailed"
+  case mutationFailed = "MutationFailed"
   case unauthorized = "Unauthorized"
   case versionNotSupported = "VersionNotSupported"
   case schemaVersionNotSupported = "SchemaVersionNotSupported"
-  case serverOverloaded = "ServerOverloaded"
   case `internal` = "Internal"
+  case rebalance = "Rebalance"
+  case rehome = "Rehome"
+  case serverOverloaded = "ServerOverloaded"
+  case pushFailed = "PushFailed"
+  case transformFailed = "TransformFailed"
 
   /// The kinds of a basic error body (`basicErrorKindSchema` in
   /// `packages/zero-protocol/src/error.ts`).

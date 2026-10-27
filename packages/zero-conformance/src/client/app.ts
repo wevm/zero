@@ -34,6 +34,28 @@ export const queries = defineQueries({
       zql.issue.where('id', args).related('owner').one(),
     ),
     firstTwo: defineQuery(() => zql.issue.orderBy('title', 'asc').limit(2)),
+    // A flipped EXISTS over a limited subquery: fetching it throws
+    // `Partitioned take does not allow unpartitioned fetches`.
+    // Hydrates, but adding an issue then fetches the limited flipped
+    // subquery without a constraint, which throws from the push.
+    withAuthoredComments: defineQuery(() =>
+      zql.issue
+        .whereExists('comments', q =>
+          q.whereExists('author', a => a.limit(3), {flip: true}),
+        )
+        .orderBy('id', 'asc'),
+    ),
+    // `oneComment` is a `one` relationship that several comments can match.
+    withOneComment: defineQuery(() =>
+      zql.issue.related('oneComment').orderBy('id', 'asc'),
+    ),
+    withFirstComment: defineQuery(() =>
+      zql.issue
+        .whereExists('comments', q => q.orderBy('id', 'asc').limit(1), {
+          flip: true,
+        })
+        .orderBy('id', 'asc'),
+    ),
   },
   users: {
     all: defineQuery(() => zql.user.orderBy('id', 'asc')),
@@ -118,8 +140,46 @@ const issue = {
   ),
 };
 
+type CRUDOp = {
+  op: 'insert' | 'upsert' | 'update' | 'delete';
+  table: string;
+  value: JSONObject;
+};
+
+const harden = {
+  /**
+   * Runs `ops` (CRUD operations on any table, values as given), then throws
+   * `fail` if set, or reads the `read` tables back through the transaction
+   * and returns them with the mutation ID, or returns `return`. With
+   * `failOnRebase` it throws before writing when replayed.
+   */
+  ops: defineMutator(async ({tx, args}: {tx: Tx; args: JSONObject}) => {
+    if (args['failOnRebase'] === true && tx.reason === 'rebase') {
+      throw new ApplicationError('fails on rebase');
+    }
+    for (const o of (args['ops'] ?? []) as CRUDOp[]) {
+      await tx.mutate[o.table][o.op](o.value);
+    }
+    if (typeof args['fail'] === 'string') {
+      throw new ApplicationError(args['fail'], {details: args['details']});
+    }
+    const read = args['read'] as string[] | undefined;
+    if (read) {
+      const out: Record<string, unknown> = {};
+      for (const t of read) {
+        out[t] = await tx.run(
+          (zql as unknown as Record<string, typeof zql.issue>)[t],
+        );
+      }
+      return {mutationID: tx.mutationID, read: out} as ReadonlyJSONValue;
+    }
+    return args['return'];
+  }),
+};
+
 export const mutators = defineMutators({
   issue,
+  harden,
   comment: {
     add: defineMutator(async ({tx, args}: {tx: Tx; args: JSONObject}) => {
       await tx.mutate.comment.insert({

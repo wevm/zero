@@ -3,18 +3,21 @@
 package struct DecodingError: Error, CustomStringConvertible, Equatable {
   package var path: [String]
   package var message: String
+  /// What valita writes after the path, such as ` Got "x"`.
+  package var got: String
 
-  package init(_ message: String, path: [String] = []) {
+  package init(_ message: String, path: [String] = [], got: String = "") {
     self.message = message
     self.path = path
+    self.got = got
   }
 
   package var description: String {
-    path.isEmpty ? message : "\(message) at \(path.joined(separator: "."))"
+    (path.isEmpty ? message : "\(message) at \(path.joined(separator: "."))") + got
   }
 
   func at(_ key: String) -> DecodingError {
-    DecodingError(message, path: [key] + path)
+    DecodingError(message, path: [key] + path, got: got)
   }
 }
 

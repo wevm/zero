@@ -42,7 +42,7 @@ public final class ManualScheduler: Scheduler {
   )
     -> any ScheduledTimer
   {
-    add(due: monotonicNow + max(0, ms), interval: nil, action)
+    add(due: monotonicNow + timerDelay(ms), interval: nil, action)
   }
 
   public func scheduleRepeating(
@@ -50,7 +50,8 @@ public final class ManualScheduler: Scheduler {
   )
     -> any ScheduledTimer
   {
-    add(due: monotonicNow + max(1, ms), interval: max(1, ms), action)
+    let interval = max(1, timerDelay(ms))
+    return add(due: monotonicNow + interval, interval: interval, action)
   }
 
   private func add(

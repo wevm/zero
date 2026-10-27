@@ -8,7 +8,8 @@ public struct ApplicationError: Error, Sendable, Hashable, CustomStringConvertib
 
   public init(_ message: String, details: JSONValue? = nil) {
     self.message = message
-    self.details = details
+    // `details ?? undefined` in JS.
+    self.details = details == .null ? nil : details
   }
 
   public var description: String { message }
@@ -16,6 +17,10 @@ public struct ApplicationError: Error, Sendable, Hashable, CustomStringConvertib
   /// `wrapWithApplicationError`.
   static func wrapping(_ error: any Error) -> ApplicationError {
     if let e = error as? ApplicationError { return e }
+    // `getErrorDetails` gives an error of another class its name.
+    if error is Keys.InvalidPrimaryKeyValue {
+      return ApplicationError(errorMessage(error), details: ["name": "TypeError"])
+    }
     return ApplicationError(errorMessage(error))
   }
 }
@@ -225,7 +230,15 @@ final class MutationTracker {
     let failure: any Error
     if kind == "app" {
       failure = ApplicationError(
-        error.message?.stringValue ?? "Unknown application error: app", details: error.details)
+        error.message?.stringValue ?? "Unknown application error: app",
+        // JS keeps details only when truthy (`error.details ? {details} : undefined`).
+        details: error.details.flatMap { d in
+          switch d {
+          case .null, .bool(false), .string(""): nil
+          case .number(let n) where n == 0 || n.isNaN: nil
+          default: d
+          }
+        })
     } else {
       let message =
         kind == "oooMutation"

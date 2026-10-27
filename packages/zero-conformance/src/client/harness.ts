@@ -81,6 +81,10 @@ export type Step =
       bytes?: number[];
       socket?: number;
     }
+  /** A text frame of exactly `text`, which need not be JSON. */
+  | {op: 'receiveText'; text: string; socket?: number}
+  /** A binary frame of exactly `bytes`, the message type byte included. */
+  | {op: 'receiveBinary'; bytes: number[]; socket?: number}
   /** The socket closes from the server or network side. */
   | {
       op: 'socketClose';
@@ -95,6 +99,15 @@ export type Step =
    * tab does (`document.visibilityState`).
    */
   | {op: 'visibility'; state: 'visible' | 'hidden'}
+  /**
+   * Once `connection.state` next becomes `state`, runs `then` (a `connect`
+   * or `close` step) synchronously from inside the state listener.
+   */
+  | {
+      op: 'onState';
+      state: string;
+      then: {op: 'connect'; auth?: string} | {op: 'close'};
+    }
   /** `zero.connection.connect()`. */
   | {op: 'connect'; auth?: string}
   | {op: 'close'}
@@ -113,7 +126,22 @@ export type Step =
       advance?: number;
       options?: ScenarioOptions;
       mutators?: 'all' | 'issues';
-    };
+    }
+  /**
+   * Adds the listener `listener` to `view`. Its calls are reported in
+   * `listeners`. Once it has been called more than `after` times (default
+   * 1: the call `addListener` makes), its next call performs `actions`,
+   * from inside the notification, once.
+   */
+  | {
+      op: 'listen';
+      view: string;
+      listener: string;
+      after?: number;
+      actions?: Step[];
+    }
+  /** Removes a listener added by `listen`. */
+  | {op: 'unlisten'; listener: string};
 
 type Args = ReadonlyJSONValue | undefined;
 
@@ -172,6 +200,14 @@ export type StepResult = {
   preloads?: Record<string, {cached: Settled; complete: Settled}>;
   /** `onUpdateNeeded` and `onClientStateNotFound` calls. */
   events?: ReadonlyJSONValue[];
+  /**
+   * Listeners added by `listen`, in order: the data and result type of
+   * each call during the step.
+   */
+  listeners?: Record<
+    string,
+    {calls: {data: ReadonlyJSONValue; resultType: string}[]; threw?: string}
+  >;
 };
 
 class CloseEventPolyfill extends Event {
@@ -355,6 +391,14 @@ export async function runScenario(scenario: Scenario): Promise<StepResult[]> {
   >();
   const sentCounts: number[] = [];
   const closedBefore: boolean[] = [];
+  const listeners = new Map<
+    string,
+    {
+      remove: () => void;
+      calls: {data: ReadonlyJSONValue; resultType: string}[];
+      threw?: string | undefined;
+    }
+  >();
 
   const targetSocket = (index: number | undefined) => {
     const socket = index === undefined ? sockets.at(-1) : sockets[index];
@@ -474,6 +518,18 @@ export async function runScenario(scenario: Scenario): Promise<StepResult[]> {
         );
         return;
       }
+      case 'receiveText':
+        targetSocket(step.socket).dispatchEvent(
+          new MessageEvent('message', {data: step.text}),
+        );
+        return;
+      case 'receiveBinary':
+        targetSocket(step.socket).dispatchEvent(
+          new MessageEvent('message', {
+            data: Uint8Array.from(step.bytes).buffer,
+          }),
+        );
+        return;
       case 'socketClose':
         targetSocket(step.socket).dispatchEvent(
           new CloseEvent('close', {
@@ -489,6 +545,21 @@ export async function runScenario(scenario: Scenario): Promise<StepResult[]> {
       case 'visibility':
         document.setVisibility(step.state);
         return;
+      case 'onState': {
+        const {then} = step;
+        const unsubscribe = z.connection.state.subscribe(state => {
+          if (state.name !== step.state) return;
+          unsubscribe();
+          if (then.op === 'close') {
+            void z.close();
+          } else {
+            void z.connection.connect(
+              then.auth === undefined ? undefined : {auth: then.auth},
+            );
+          }
+        });
+        return;
+      }
       case 'connect':
         void z.connection.connect(
           step.auth === undefined ? undefined : {auth: step.auth},
@@ -496,6 +567,36 @@ export async function runScenario(scenario: Scenario): Promise<StepResult[]> {
         return;
       case 'close':
         void z.close();
+        return;
+      case 'listen': {
+        const view = views.get(step.view)?.view;
+        if (!view) throw new Error(`No view ${step.view}`);
+        const after = step.after ?? 1;
+        let pending = step.actions;
+        const entry: {
+          remove: () => void;
+          calls: {data: ReadonlyJSONValue; resultType: string}[];
+          threw?: string | undefined;
+        } = {remove: () => {}, calls: []};
+        listeners.set(step.listener, entry);
+        let count = 0;
+        entry.remove = view.addListener((data, resultType) => {
+          entry.calls.push({data: json(data), resultType});
+          if (++count > after && pending) {
+            const actions = pending;
+            pending = undefined;
+            for (const action of actions) {
+              // The synchronous part of each step runs inside the listener.
+              perform(action).catch(e => {
+                entry.threw ??= errorMessage(e);
+              });
+            }
+          }
+        });
+        return;
+      }
+      case 'unlisten':
+        listeners.get(step.listener)?.remove();
         return;
       case 'restart': {
         await z.close();
@@ -517,6 +618,7 @@ export async function runScenario(scenario: Scenario): Promise<StepResult[]> {
         placeholders.set(clientGroupID, '$clientGroupID');
         ids.set('$clientID', clientID);
         views.clear();
+        listeners.clear();
         mutations.clear();
         runs.clear();
         preloads.clear();
@@ -582,6 +684,15 @@ export async function runScenario(scenario: Scenario): Promise<StepResult[]> {
       }
       if (events.length > 0) {
         result.events = events.splice(0);
+      }
+      if (listeners.size > 0) {
+        result.listeners = Object.fromEntries(
+          Array.from(listeners, ([k, v]) => [
+            k,
+            {calls: v.calls.splice(0), ...(v.threw ? {threw: v.threw} : {})},
+          ]),
+        );
+        for (const v of listeners.values()) v.threw = undefined;
       }
       results.push(result as StepResult);
     }

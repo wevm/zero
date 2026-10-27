@@ -8,8 +8,10 @@ package enum Keys {
   package struct InvalidPrimaryKeyValue: Error, CustomStringConvertible {
     package let column: String
     package let value: JSONValue?
+    /// valita's message for `primaryKeyValueSchema`, which JS throws as
+    /// a `TypeError`.
     package var description: String {
-      "Invalid primary key value for \(column): \(value.map(JSONSerializer.stringify) ?? "undefined")"
+      "Expected string, number or boolean. Got \(JSONDecode.valitaDisplay(value))"
     }
   }
 

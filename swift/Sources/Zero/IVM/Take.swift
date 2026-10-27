@@ -61,11 +61,14 @@ final class Take: Operator, TakeBoundProvider {
 
   func fetch(_ req: FetchRequest) -> NodeStream {
     NodeStream { [self] in
-      precondition(
-        partitionKey == nil
-          || (req.constraint != nil
-            && constraintContainsPartitionKey(req.constraint, partitionKey)),
-        "Partitioned take does not allow unpartitioned fetches")
+      // A flipped join fetches its child without a constraint, so a limited
+      // flipped EXISTS gets here. JS throws, and `materialize` with it.
+      if let partitionKey,
+        req.constraint == nil || !constraintContainsPartitionKey(req.constraint, partitionKey)
+      {
+        PipelineFailure.report("Partitioned take does not allow unpartitioned fetches")
+        return AnyIterator { nil }
+      }
       let key = takeStateKey(req.constraint)
       guard let state = storage[key] else {
         if constraintMatchesPartitionKey(req.constraint, partitionKey) {

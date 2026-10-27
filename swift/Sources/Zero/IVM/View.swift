@@ -111,10 +111,12 @@ enum ViewApply {
     case .add(let node):
       if format.singular {
         if case .one(var old?)? = parent.relationships[relationship] {
-          precondition(
-            schema.compareRows(old.row, node.row) == 0,
-            "Singular relationship '\(relationship)' should not have multiple rows. You may need to declare this relationship with the `many` helper instead of the `one` helper in your schema."
-          )
+          // Server data can do this, with two rows for a `one` relationship.
+          guard schema.compareRows(old.row, node.row) == 0 else {
+            return fail(
+              "Singular relationship '\(relationship)' should not have multiple rows. You may need to declare this relationship with the `many` helper instead of the `one` helper in your schema."
+            )
+          }
           old.refCount += 1
           parent.relationships[relationship] = .one(old)
         } else {
@@ -139,7 +141,7 @@ enum ViewApply {
     case .remove(let node):
       if format.singular {
         guard case .one(var old?)? = parent.relationships[relationship] else {
-          preconditionFailure("node does not exist")
+          return fail("node does not exist")
         }
         if old.refCount == 1 {
           parent.relationships[relationship] = .one(nil)
@@ -150,7 +152,10 @@ enum ViewApply {
       } else {
         var list = takeList(&parent, relationship)
         let pos = search(list, node.row, schema.compareRows)
-        precondition(pos >= 0, "node does not exist")
+        guard pos >= 0 else {
+          parent.relationships[relationship] = .many(list)
+          return fail("node does not exist")
+        }
         if list[pos].refCount == 1 {
           list.remove(at: pos)
         } else {
@@ -168,8 +173,11 @@ enum ViewApply {
         return false  // not in the view
       }
       if format.singular {
-        guard case .one(var existing?)? = parent.relationships.removeValue(forKey: relationship)
-        else { preconditionFailure("node does not exist") }
+        let removed = parent.relationships.removeValue(forKey: relationship)
+        guard case .one(var existing?)? = removed else {
+          parent.relationships[relationship] = removed
+          return fail("node does not exist")
+        }
         let changed = apply(
           &existing, child.change, childSchema, child.relationshipName, childFormat)
         parent.relationships[relationship] = .one(existing)
@@ -177,7 +185,10 @@ enum ViewApply {
       }
       var list = takeList(&parent, relationship)
       let pos = search(list, node.row, schema.compareRows)
-      precondition(pos >= 0, "node does not exist")
+      guard pos >= 0 else {
+        parent.relationships[relationship] = .many(list)
+        return fail("node does not exist")
+      }
       let changed = apply(
         &list[pos], child.change, childSchema, child.relationshipName, childFormat)
       parent.relationships[relationship] = .many(list)
@@ -186,7 +197,7 @@ enum ViewApply {
     case .edit(let node, let oldNode):
       if format.singular {
         guard case .one(var existing?)? = parent.relationships[relationship] else {
-          preconditionFailure("node does not exist")
+          return fail("node does not exist")
         }
         applyEdit(&existing, node.row)
         parent.relationships[relationship] = .one(existing)
@@ -197,7 +208,7 @@ enum ViewApply {
       if schema.compareRows(oldNode.row, node.row) != 0 {
         // The sort key changed, so the row may move.
         let oldPos = search(list, oldNode.row, schema.compareRows)
-        precondition(oldPos >= 0, "old node does not exist")
+        guard oldPos >= 0 else { return fail("old node does not exist") }
         let rawPos = search(list, node.row, schema.compareRows)
         let found = rawPos >= 0
         let pos = found ? rawPos : ~rawPos
@@ -230,10 +241,17 @@ enum ViewApply {
         return true
       }
       let pos = search(list, oldNode.row, schema.compareRows)
-      precondition(pos >= 0, "node does not exist")
+      guard pos >= 0 else { return fail("node does not exist") }
       applyEdit(&list[pos], node.row)
       return true
     }
+  }
+
+  /// Reports what JS asserts here (the view and its input disagree) and
+  /// leaves the tree as it was: the push or hydration then fails.
+  private static func fail(_ message: String) -> Bool {
+    PipelineFailure.report(message)
+    return false
   }
 
   /// Applies `.add` for each node, taking the list out of `parent` once
@@ -417,7 +435,11 @@ package final class ArrayView: Output {
 
   private func fireListeners() {
     let (data, type) = listenerArgs()
-    for (_, listener) in listeners { listener(data, type) }
+    forEachLive(listeners) { listener in
+      listener(data, type)
+    } next: { [unowned self] in
+      self.listeners
+    }
   }
 
   package func destroy() { onDestroy?() }
@@ -501,4 +523,33 @@ extension Array<ViewEntry> {
   mutating func insertOrAppend(_ entry: ViewEntry, at i: Int) {
     if i == count { append(entry) } else { insert(entry, at: i) }
   }
+}
+
+/// Calls `body` for each element of `elements()`, read again after every
+/// call, as JS iterates a `Set` that changes while it is iterated: one
+/// removed before its turn is skipped, one added is called in the same pass.
+/// Elements are in increasing `id` order.
+func forEachLive<T>(
+  _ start: [(id: Int, listener: T)], _ body: (T) -> Void,
+  next elements: () -> [(id: Int, listener: T)]
+) {
+  var current = start
+  var last = Int.min
+  while let i = firstIndex(after: last, in: current) {
+    let element = current[i]
+    last = element.id
+    body(element.listener)
+    current = elements()
+  }
+}
+
+private func firstIndex<T>(after id: Int, in elements: [(id: Int, listener: T)]) -> Int? {
+  // Ids increase along the array: binary search for the first above `id`.
+  var low = 0
+  var high = elements.count
+  while low < high {
+    let mid = (low + high) / 2
+    if elements[mid].id <= id { low = mid + 1 } else { high = mid }
+  }
+  return low < elements.count ? low : nil
 }

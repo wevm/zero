@@ -52,7 +52,7 @@ public final class SystemScheduler: Scheduler {
   {
     let timer = SystemTimer()
     timer.task = Task { @MainActor in
-      try? await Task.sleep(for: .milliseconds(max(0, ms)))
+      try? await Task.sleep(for: .milliseconds(timerDelay(ms)))
       guard !timer.cancelled else { return }
       timer.cancelled = true
       action()
@@ -68,7 +68,7 @@ public final class SystemScheduler: Scheduler {
     let timer = SystemTimer()
     timer.task = Task { @MainActor in
       while !timer.cancelled {
-        try? await Task.sleep(for: .milliseconds(max(1, ms)))
+        try? await Task.sleep(for: .milliseconds(max(1, timerDelay(ms))))
         if timer.cancelled { return }
         action()
       }
@@ -80,6 +80,13 @@ public final class SystemScheduler: Scheduler {
     let (s, attoseconds) = d.components
     return Double(s) * 1000 + Double(attoseconds) / 1e15
   }
+}
+
+/// The delay `setTimeout` and `setInterval` wait for `ms`: none for NaN,
+/// a negative delay, or one past 2^31 - 1 ms, which browsers and Node fire
+/// at once.
+package func timerDelay(_ ms: Double) -> Double {
+  ms >= 0 && ms <= 2_147_483_647 ? ms : 0
 }
 
 @MainActor
@@ -137,7 +144,7 @@ public final class Deferred<Value: Sendable> {
     if let result { observer(result) } else { observers.append(observer) }
   }
 
-  private func settle(_ r: Result<Value, any Error>) {
+  func settle(_ r: Result<Value, any Error>) {
     guard result == nil else { return }
     result = r
     let waiters = self.waiters

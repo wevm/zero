@@ -9,5 +9,17 @@ export default mergeConfig(config, {
     browser: {
       enabled: false,
     },
+    // A materialize that throws in JS has already registered its query, and
+    // that query's completion promise, which nothing holds, rejects when the
+    // client closes (`materializeImpl` in zql). The scenarios that check a
+    // failed materialize (harden-queries) leave one behind; that rejection
+    // isn't part of what they record.
+    onUnhandledError: error =>
+      !(
+        'error' in error &&
+        error.error === 'app' &&
+        'details' in error &&
+        (error.details as {kind?: unknown} | undefined)?.kind === 'ClientClosed'
+      ),
   },
 });

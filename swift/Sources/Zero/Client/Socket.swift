@@ -53,12 +53,16 @@ final class TransportConnection: SocketConnection {
   private weak var events: (any SocketEvents)?
   private var closed = false
   private let outgoing: AsyncStream<Outgoing>.Continuation
+  /// The task waiting for `Transport.connect`, until it returns. Closing
+  /// cancels it, which aborts the handshake, as closing a connecting JS
+  /// `WebSocket` does.
+  private var connecting: Task<Void, Never>?
 
   init(transport: any Transport, url: String, secProtocol: String?, events: any SocketEvents) {
     self.events = events
     let (frames, outgoing) = AsyncStream<Outgoing>.makeStream()
     self.outgoing = outgoing
-    Task { @MainActor [weak self] in
+    connecting = Task { @MainActor [weak self] in
       let socket: any Socket
       do {
         socket = try await transport.connect(url: url, secProtocol: secProtocol)
@@ -66,6 +70,7 @@ final class TransportConnection: SocketConnection {
         self?.finish(SocketClosed(error))
         return
       }
+      self?.connecting = nil
       guard let self, !self.closed else {
         await socket.close(code: 1000, reason: "")
         return
@@ -107,6 +112,8 @@ final class TransportConnection: SocketConnection {
     events = nil
     outgoing.yield(.close(code ?? 1000))
     outgoing.finish()
+    connecting?.cancel()
+    connecting = nil
   }
 
   private func finish(_ close: SocketClosed) {

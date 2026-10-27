@@ -82,7 +82,7 @@ struct SweepWireTests {
     }
     let text = poke(JSONParser.maxDepth - 5)
     #expect(throws: (any Error).self) { try Downstream(text: poke(JSONParser.maxDepth - 4)) }
-    let messages = try await onThread(stackSize: 512 << 10) {
+    let messages = try await Self.onThread(stackSize: 512 << 10) {
       let message = try Downstream(text: text)
       let encoded = JSONSerializer.stringify(message.json)
       let decoded = try Downstream(text: encoded)
@@ -94,7 +94,7 @@ struct SweepWireTests {
     #expect(messages.encodedLength == text.utf8.count)
     #expect(messages.all[0] == messages.all[1])
     // Freeing still recurses, in `Array`'s deinit, and fits as well.
-    try await onThread(stackSize: 512 << 10) { messages.all = [] }
+    try await Self.onThread(stackSize: 512 << 10) { messages.all = [] }
   }
 
   final class Messages: @unchecked Sendable {
@@ -108,7 +108,7 @@ struct SweepWireTests {
   }
 
   /// Runs `body` on a thread with a stack of `stackSize` bytes.
-  private func onThread<T: Sendable>(
+  static func onThread<T: Sendable>(
     stackSize: Int, _ body: @escaping @Sendable () throws -> T
   ) async throws -> T {
     try await withCheckedThrowingContinuation { (done: CheckedContinuation<T, any Error>) in

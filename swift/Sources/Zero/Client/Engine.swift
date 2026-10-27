@@ -93,9 +93,9 @@ final class Engine {
     loop.stop()
     for t in lifecycleTimers { t.cancel() }
     if !repClosed {
-      database.removeWriteFailureListener(clientID)
       database.clientStopped(clientID)
       database.release()
+      database.removeWriteFailureListener(clientID)
     }
   }
   private let socketFactory: (any SocketFactory)?
@@ -173,29 +173,55 @@ final class Engine {
       userID: options.userID, storageKey: options.storageKey ?? "",
       mutateURL: options.mutateURL, queryURL: options.queryURL,
       schemaHash: clientSchema.hash)
-    var (database, openFailure) = ReplicaDatabase.open(options.storage, name: name)
+    let mutatorNames = mutators.keys.sorted()
+    var (database, openFailure, corrupt) = ReplicaDatabase.open(options.storage, name: name)
     var joined: (clientGroupID: String, group: StoredGroup)
     do {
-      joined = try database.initClient(
-        clientID, mutatorNames: mutators.keys.sorted(), now: base.now)
+      do {
+        joined = try database.initClient(clientID, mutatorNames: mutatorNames, now: base.now)
+      } catch is ReplicaDatabase.CorruptData {
+        // What the client group holds doesn't decode, so the client state
+        // is lost: drop the database and start a new one
+        // (`#handleInvalidRefCount`).
+        corrupt = true
+        database.drop()
+        database.release()
+        (database, openFailure, _) = ReplicaDatabase.open(options.storage, name: name)
+        joined = try database.initClient(clientID, mutatorNames: mutatorNames, now: base.now)
+      }
     } catch {
       // The client group can't be read: run on memory, as when the open
       // fails.
       database.release()
-      database = ReplicaDatabase.memory(name: name)
-      openFailure = error
-      joined = try database.initClient(
-        clientID, mutatorNames: mutators.keys.sorted(), now: base.now)
+      database = ReplicaDatabase.fallback(name: name, storage: options.storage)
+      openFailure = StorageFailure(error)
+      joined = try database.initClient(clientID, mutatorNames: mutatorNames, now: base.now)
     }
     let (clientGroupID, group) = joined
     self.database = database
     self.clientGroupID = clientGroupID
     self.profileID = database.profileID
+    // Mutation IDs become `Int`s: drop stored ones that can't be (a corrupt
+    // or tampered file) rather than trap on them.
+    func isMutationID(_ id: Double) -> Bool { id >= 0 && JSNumber.isSafeInteger(id) }
+    let log = self.log
+    let lastMutationIDs = group.lastMutationIDs.filter { cid, lmid in
+      if isMutationID(lmid) { return true }
+      log.error("Dropping invalid stored last mutation ID of \(cid): \(JSNumber.format(lmid))")
+      return false
+    }
+    let mutations = group.mutations.filter { m in
+      if isMutationID(m.id) { return true }
+      log.error(
+        "Dropping stored mutation \"\(m.name)\" of \(m.clientID) with invalid ID "
+          + JSNumber.format(m.id))
+      return false
+    }
     self.store = ReplicaStore(
       clientID: clientID,
       snapshot: ReplicaStore.Snapshot(
-        map: group.entries, cookie: group.cookie, lastMutationIDs: group.lastMutationIDs),
-      pending: group.mutations.map {
+        map: group.entries, cookie: group.cookie, lastMutationIDs: lastMutationIDs),
+      pending: mutations.map {
         ReplicaStore.PendingMutation(
           id: $0.id, clientID: $0.clientID, name: $0.name, args: $0.args,
           timestamp: $0.timestamp, writes: [])
@@ -238,7 +264,10 @@ final class Engine {
       onFatalError: { [weak self] error in self?.disconnect(error) })
     pokeHandler = PokeHandler(
       clientID: clientID, schema: schema, scheduler: scheduler,
-      apply: { [weak self] poke in try self?.applyPoke(poke) },
+      apply: { [weak self] poke in
+        guard let self else { return }
+        try self.withWriteLock { try self.applyPoke(poke) }
+      },
       onApplied: { [weak self] poke in
         guard let self else { return }
         defer { self.settlePendingWaiters() }
@@ -266,6 +295,12 @@ final class Engine {
       self.loop.dispatch {
         self.sendIfConnected(.deleteClients(DeleteClientsBody(clientIDs: [id])))
       }
+    }
+    if corrupt {
+      // This client already starts on the new database, which is what
+      // replacing it would do; the app's callback still hears it, as in JS.
+      log.error("Client state is corrupt; dropped database \(name) and started a new one")
+      loop.microtask { [weak self] in self?.options.onClientStateNotFound?() }
     }
     if let openFailure {
       log.warn(
@@ -500,7 +535,8 @@ final class Engine {
 
   private func ping(_ token: Int, _ end: @escaping () -> Void) {
     let token = nextLoopToken()
-    send(.ping)
+    // Before the send, as JS sets `#onPong` first: a transport may deliver
+    // the pong from inside `send`.
     onPong = { [weak self] in
       self?.loop.microtask {
         guard let self, self.loopToken == token else { return }
@@ -508,6 +544,7 @@ final class Engine {
         self.iterate()
       }
     }
+    send(.ping)
     _ = scheduler.schedule(after: options.pingTimeoutMs) { [weak self] in
       guard let self, self.loopToken == token else { return }
       let error = ConnectionError.client(.pingTimeout, message: "Server ping request failed")
@@ -1048,9 +1085,11 @@ final class Engine {
     pushTimer = nil
     for t in lifecycleTimers { t.cancel() }
     lifecycleTimers = []
-    database.removeWriteFailureListener(clientID)
     database.clientStopped(clientID)
+    // Releasing writes what the database kept while busy; a failure to is
+    // still this client's to report.
     database.release()
+    database.removeWriteFailureListener(clientID)
     connectionManager.closed()
   }
 
@@ -1153,9 +1192,22 @@ final class Engine {
   }
 
   /// `zero.mutate`, through the `MutatorProxy` and Replicache's `mutate`.
+  ///
+  /// A mutation made while listeners are notified, from a listener, runs
+  /// once the current task is done, as an async JS mutator commits after
+  /// the notification: every listener sees the change that notified it
+  /// before the mutation's, and every view sees both.
   func mutate(name: String, args: JSONValue?) -> MutatorResult {
     let client = Deferred<MutationOutcome>()
     let server = Deferred<MutationOutcome>()
+    if context.isNotifying {
+      loop.afterCurrentTask { [self] in
+        let result = mutate(name: name, args: args)
+        result.client.onSettle { client.settle($0) }
+        result.server.onSettle { server.settle($0) }
+      }
+      return MutatorResult(client: client, server: server)
+    }
     // JS throws this before it looks at the connection; here both outcomes
     // carry it, and nothing is written or pushed.
     guard let mutator = mutators[name] else {
@@ -1186,22 +1238,82 @@ final class Engine {
         server.resolve(outcome)
       }
     }
+    // A mutate from inside a mutator, or while a poke rebases, waits for it,
+    // as JS's waits for Replicache's write lock.
+    if writeLocked || !waitingForWriteLock.isEmpty {
+      waitingForWriteLock.append { [weak self] in
+        self?.runMutation(
+          mutator, name: name, args: args, ephemeralID: ephemeralID, client: client, server: server)
+      }
+    } else {
+      runMutation(
+        mutator, name: name, args: args, ephemeralID: ephemeralID, client: client, server: server)
+    }
+    return MutatorResult(client: client, server: server)
+  }
+
+  /// Set while a mutator runs, for a mutation or a rebase: Replicache's
+  /// write lock. Mutations that start meanwhile wait in
+  /// `waitingForWriteLock`, in order.
+  private var writeLocked = false
+  private var waitingForWriteLock: [() -> Void] = []
+
+  private func withWriteLock<T>(_ body: () throws -> T) rethrows -> T {
+    writeLocked = true
+    defer {
+      writeLocked = false
+      if !waitingForWriteLock.isEmpty {
+        loop.microtask { [weak self] in
+          guard let self, !self.writeLocked, !self.waitingForWriteLock.isEmpty else { return }
+          self.waitingForWriteLock.removeFirst()()
+        }
+      }
+    }
+    return try body()
+  }
+
+  private func runMutation(
+    _ mutator: MutatorFunction, name: String, args: JSONValue?, ephemeralID: Int,
+    client: Deferred<MutationOutcome>, server: Deferred<MutationOutcome>
+  ) {
+    withWriteLock {
+      runMutationLocked(
+        mutator, name: name, args: args, ephemeralID: ephemeralID, client: client, server: server)
+    }
+  }
+
+  private func runMutationLocked(
+    _ mutator: MutatorFunction, name: String, args: JSONValue?, ephemeralID: Int,
+    client: Deferred<MutationOutcome>, server: Deferred<MutationOutcome>
+  ) {
+    let log = self.log
     let mutationID = store.nextMutationID(for: clientID)
+    // Last mutation IDs are checked when they arrive, so this always holds.
+    guard let intMutationID = Int(exactly: mutationID) else {
+      let error = ConnectionError.client(
+        .internal, message: "Invalid mutation ID \(JSNumber.format(mutationID))")
+      mutationTracker.rejectMutation(ephemeralID, error)
+      client.resolve(Self.outcome(error))
+      return
+    }
     let write = KVWrite(store.main)
     let branch = ivmMain.fork()
     mutationTracker.mutationIDAssigned(ephemeralID, mutationID, name: name, args: args ?? .null)
     let tx = Transaction(
-      clientID: clientID, mutationID: Int(mutationID), reason: .optimistic, token: token,
+      clientID: clientID, mutationID: intMutationID, reason: .optimistic, token: token,
       write: write, branch: branch, schema: schema)
     let result: JSONValue?
     do {
+      // JS forks the views' branch for the transaction, which throws once
+      // that branch has failed.
+      if let failure = context.branchFailure { throw failure }
       result = try mutator(tx, args)
     } catch {
       mutationTracker.rejectMutation(ephemeralID, error)
       let outcome = Self.outcome(error)
       Self.logFailure(log, name, outcome, on: "client")
       client.resolve(outcome)
-      return MutatorResult(client: client, server: server)
+      return
     }
     let pending = ReplicaStore.PendingMutation(
       id: mutationID, clientID: clientID, name: name, args: args ?? .null,
@@ -1214,11 +1326,20 @@ final class Engine {
           clientID: clientID, id: mutationID, name: name, args: pending.args,
           timestamp: pending.timestamp))
     ])
-    context.processChanges(diff, rows: tx.rows)
+    do {
+      try context.processChanges(diff, rows: tx.rows)
+    } catch {
+      // As in JS, the mutation stays committed and pending, but isn't
+      // pushed now, and its client outcome is the error.
+      fireWatchers(diff)
+      let outcome = Self.outcome(error)
+      Self.logFailure(log, name, outcome, on: "client")
+      client.resolve(outcome)
+      return
+    }
     requestPush(now: false)
     fireWatchers(diff)
     client.resolve(.success(data: result))
-    return MutatorResult(client: client, server: server)
   }
 
   private var token: String? { auth.flatMap { $0.isEmpty ? nil : $0 } }
@@ -1348,6 +1469,7 @@ final class Engine {
     } catch {
       throw PokeError(error.description)
     }
+    try checkUpdatedRows(poke.patch, patchWrite)
     snapshot.map = patchWrite.map
 
     var touched = patchWrite.writes.union(store.pendingWrites)
@@ -1378,7 +1500,8 @@ final class Engine {
         cleared: patchWrite.cleared, cookie: snapshot.cookie,
         lastMutationIDs: snapshot.lastMutationIDs)
     ])
-    context.processChanges(diff)
+    // A push that fails is a poke error: the client disconnects.
+    try context.processChanges(diff)
     fireWatchers(diff)
     markGotQueriesAuthoritative(ifStillOn: socketAtStart)
   }
@@ -1404,10 +1527,16 @@ final class Engine {
     var touched = Set<JSKey>()
     var replayed: [ReplicaStore.PendingMutation] = []
     for var m in pending {
+      // Stored and assigned IDs are checked, so this always holds.
+      guard let mutationID = Int(exactly: m.id) else {
+        m.writes = []
+        replayed.append(m)
+        continue
+      }
       let write = KVWrite(main)
       let fork = branch.fork()
       let tx = Transaction(
-        clientID: m.clientID, mutationID: Int(m.id), reason: .rebase, token: token,
+        clientID: m.clientID, mutationID: mutationID, reason: .rebase, token: token,
         write: write, branch: fork, schema: schema)
       do {
         guard let mutator = mutators[m.name] else {
@@ -1439,6 +1568,40 @@ final class Engine {
       return "  {\n" + fields.joined(separator: ",\n") + "\n  }"
     }
     return "[\n" + entries.joined(separator: ",\n") + "\n]"
+  }
+
+  /// Rejects a poke whose `update` ops leave a row under a key that isn't
+  /// its primary key: one whose merge drops or changes the key's columns.
+  /// The table's source would then hold rows that disagree with the
+  /// replica, which JS's `MemorySource` reports by throwing ("Row already
+  /// exists", "Row not found") and the poke handler by disconnecting.
+  private func checkUpdatedRows(_ patch: [KVPatchOp], _ write: KVWrite) throws {
+    var keyless: [String: [Row]] = [:]
+    for case .update(let key, _, _) in patch {
+      guard let value = write.get(key) else { continue }
+      let table = IVMBranch.sourceName(key)
+      guard let primaryKey = schema.tables[table]?.primaryKey else { continue }
+      let row = value.objectValue ?? [:]
+      if let rowKey = try? Keys.primaryKeyString(table: table, primaryKey: primaryKey, row: row) {
+        guard StringCompare.equal(rowKey, key) else {
+          throw PokeError("update of \(key) changes its primary key to \(rowKey)")
+        }
+        continue
+      }
+      // JS keeps a row whose merge leaves it without a usable primary key,
+      // and fails once a second one collides with it in the source.
+      guard let source = ivmMain.source(table) else { continue }
+      let sourceRow = Row(row, layout: source.layout)
+      let compare = source.primaryIndex.data.compare
+      let previous = store.main.get(key).map { Row($0.objectValue ?? [:], layout: source.layout) }
+      let replacesItself = previous.map { compare($0, sourceRow) == 0 } ?? false
+      if (!replacesItself && source.primaryIndex.data.contains(sourceRow))
+        || keyless[table, default: []].contains(where: { compare($0, sourceRow) == 0 })
+      {
+        throw PokeError("Row already exists: update of \(key)")
+      }
+      keyless[table, default: []].append(sourceRow)
+    }
   }
 
   static func badOrderMessage(_ name: String, _ received: String, _ last: String) -> String {

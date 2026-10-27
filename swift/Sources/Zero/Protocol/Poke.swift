@@ -60,14 +60,27 @@ package struct PokeStartBody: Sendable, Hashable, JSONCodable {
   }
 }
 
+/// One client's entry in a poke part's `desiredQueriesPatches`.
+package struct DesiredQueriesPatch: Sendable, Hashable {
+  package var clientID: JSKey
+  package var patch: QueriesPatch
+
+  package init(clientID: JSKey, patch: QueriesPatch) {
+    self.clientID = clientID
+    self.patch = patch
+  }
+}
+
 /// One part of a poke (`pokePartBodySchema` in
 /// `packages/zero-protocol/src/poke.ts`).
 package struct PokePartBody: Sendable, Hashable, JSONCodable {
   package var pokeID: String
   /// The new last mutation ID of each client that changed.
   package var lastMutationIDChanges: [JSKey: Double]?
-  /// Changes to each client's desired queries, by client ID.
-  package var desiredQueriesPatches: [JSKey: QueriesPatch]?
+  /// Changes to each client's desired queries, in the order the server sent
+  /// the clients: a `clear` for one client and a `put` for another must apply
+  /// in that order.
+  package var desiredQueriesPatches: [DesiredQueriesPatch]?
   /// Changes to the queries whose rows `rowsPatch` syncs.
   package var gotQueriesPatch: QueriesPatch?
   package var rowsPatch: RowsPatch?
@@ -75,7 +88,7 @@ package struct PokePartBody: Sendable, Hashable, JSONCodable {
 
   package init(
     pokeID: String, lastMutationIDChanges: [JSKey: Double]? = nil,
-    desiredQueriesPatches: [JSKey: QueriesPatch]? = nil, gotQueriesPatch: QueriesPatch? = nil,
+    desiredQueriesPatches: [DesiredQueriesPatch]? = nil, gotQueriesPatch: QueriesPatch? = nil,
     rowsPatch: RowsPatch? = nil, mutationsPatch: MutationsPatch? = nil
   ) {
     self.pokeID = pokeID
@@ -90,7 +103,15 @@ package struct PokePartBody: Sendable, Hashable, JSONCodable {
     let r = try JSONObjectReader(json, "pokePart body")
     lastMutationIDChanges = try r.optional("lastMutationIDChanges", JSONDecode.numberRecord)
     desiredQueriesPatches = try r.optional("desiredQueriesPatches") { (v) throws(DecodingError) in
-      try JSONDecode.keyedRecord(v, JSONDecode.queriesPatch)
+      var out: [DesiredQueriesPatch] = []
+      for (k, e) in try JSONDecode.object(v) {
+        do throws(DecodingError) {
+          out.append(DesiredQueriesPatch(clientID: JSKey(k), patch: try JSONDecode.queriesPatch(e)))
+        } catch {
+          throw error.at(k)
+        }
+      }
+      return out
     }
     gotQueriesPatch = try r.optional("gotQueriesPatch", JSONDecode.queriesPatch)
     rowsPatch = try r.optional("rowsPatch") { (v) throws(DecodingError) in
@@ -107,7 +128,10 @@ package struct PokePartBody: Sendable, Hashable, JSONCodable {
     o.set("lastMutationIDChanges", lastMutationIDChanges.map(JSONValue.numberRecord))
     o.set(
       "desiredQueriesPatches",
-      desiredQueriesPatches.map { JSONValue.object(JSONObject($0) { .array($0.map(\.json)) }) })
+      desiredQueriesPatches.map {
+        JSONValue.object(
+          JSONObject($0.map { ($0.clientID.string, JSONValue.array($0.patch.map(\.json))) }))
+      })
     o.set("gotQueriesPatch", gotQueriesPatch.map { JSONValue.array($0.map(\.json)) })
     o.set("rowsPatch", rowsPatch.map { JSONValue.array($0.map(\.json)) })
     o.set("mutationsPatch", mutationsPatch.map { JSONValue.array($0.map(\.json)) })
