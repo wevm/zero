@@ -66,8 +66,9 @@
     /// The live query, once the environment has a client.
     public private(set) var live: LiveQuery<Result>?
     private var materializeError: (any Error)?
-    @ObservationIgnored private var key:
-      (zero: ObjectIdentifier, name: String, args: [JSONValue], ttl: TTL)?
+    @ObservationIgnored private var key: (name: String, args: [JSONValue], ttl: TTL)?
+    /// The client `key` is of. Weak, and compared by identity: a client made after it was freed can have its address, and must not pass for it.
+    @ObservationIgnored private weak var keyZero: AnyObject?
     @ObservationIgnored let empty: Result
 
     init() {
@@ -84,15 +85,17 @@
     ) {
       guard let zero else {
         key = nil
+        keyZero = nil
         live = nil
         return
       }
-      if let key, key.zero == ObjectIdentifier(zero), key.name == request.name,
-        key.args == request.args, key.ttl == ttl
+      if let key, keyZero === zero, key.name == request.name, key.args == request.args,
+        key.ttl == ttl
       {
         return
       }
-      key = (ObjectIdentifier(zero), request.name, request.args, ttl)
+      key = (request.name, request.args, ttl)
+      keyZero = zero
       do {
         live = try zero.liveQuery(request, ttl: ttl)
         materializeError = nil
