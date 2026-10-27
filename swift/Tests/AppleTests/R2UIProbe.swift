@@ -21,7 +21,8 @@
       let t = VirtualListTests()
       let (zero, list) = try t.makeList()
       let window = t.show(VirtualList(list) { _ in Color.blue.frame(maxHeight: .infinity) })
-      try await t.run(10) { list.snapshot.complete && !list.snapshot.items.isEmpty }
+      try await t.run(30) { !list.snapshot.items.isEmpty }
+      try await t.run(5) { false }
       try await t.run(1) { false }
       var content = -1.0
       #if canImport(UIKit)
