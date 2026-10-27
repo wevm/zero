@@ -293,7 +293,17 @@ struct HardenE2ETests {
     try await eventually("the ping timeout", timeout: .seconds(5)) {
       zero.connection.state.status != .connected
     }
-    #expect(await proxy.openConnections == 0)
+    // The stalled socket is closed. The proxy sees that a moment after the client gives up, by when the client may have opened the next one.
+    func stalledClosed() async -> Bool {
+      let open = await proxy.openConnections
+      let accepted = await proxy.accepted
+      return open == 0 || (open == 1 && accepted >= 2)
+    }
+    let deadline = ContinuousClock.now + .seconds(5)
+    while !(await stalledClosed()), ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    #expect(await stalledClosed(), "the stalled socket was left open")
     await proxy.set { $0.downstreamRate = nil }
     try await eventually("the row written behind the client's back") {
       open.data.first { $0.id == id }?.owner?.name == "Çağrı"

@@ -486,6 +486,15 @@ Vector storage and fuzzing:
 - A live differential harness (JS drives a Swift CLI over stdio with random
   seeds and shrinks failures) is deferred to v1.x.
 
+### JS bugs found, not yet reported upstream
+
+Where the oracle itself is wrong, Swift does what JS should and `JSParity.md` says so. Each bug is kept here, with what a report to `rocicorp/mono` needs, until it is filed.
+
+- **A flipped `whereExists` stopping a `limit` early.** In `FlippedJoin.#pushParent` (`packages/zql/src/ivm/flipped-join.ts`), a pushed parent row is checked for a related child by reading the first row of `this.#child.fetch({constraint})` and breaking out. When that fetch goes through a `Take` (or `Cap`) whose partition hasn't been fetched before, `#initialFetch` sees the early return and asserts "Unexpected early return prevented full hydration" (`take.ts`, `cap.ts`). The push throws, so the poke or mutation fails and the client's views stop updating.
+  - Repro: `pnpm exec vitest run src/ivm/harden-ivm.test.ts` in `packages/zero-conformance` (seed 1) writes `generated/harden-ivm-fuzz.json`, whose cases "seed 1 case 361" and "seed 1 case 751" fail with this assertion at a batch. Both are a flipped `whereExists` over a subquery with a `limit`, inside another `whereExists` or `related`. A hand-written minimal repro is still to do.
+  - Fix: the one the comment by the assertion proposes. When the downstream returns early, read the rest of the input up to the limit before writing the state, rather than asserting.
+  - Evidence: with `Take` and `Cap` patched that way, seeds 1–10 of `harden-ivm.test.ts` hit the path in 126 cases. In each, the patched JS's views matched a fresh hydration after every batch, and Swift matched the patched JS (changes, rows and notifications), as it did on 1,988 controls.
+
 ### Drift harness for apps
 
 Hand-written Swift queries and mutators can drift from their TS counterparts.
