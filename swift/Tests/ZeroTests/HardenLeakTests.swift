@@ -135,4 +135,34 @@ import ZeroTesting
     preload.cleanup()
     zero.close()
   }
+
+  /// An hour connected, answering every ping, leaves the engine with what
+  /// it had after the first minutes: the run loop's waits don't pile up.
+  @Test func anHourConnectedDoesNotGrow() throws {
+    let sockets = MockSocketFactory()
+    let zero = try makeZero(sockets)
+    let socket = try connect(sockets)
+    let manager = zero.engine.connectionManager
+    var pings = 0
+    func run(minutes: Int) {
+      for _ in 0..<(minutes * 60) {
+        scheduler.advance(by: 1_000)
+        if socket.messages.last?.hasPrefix(#"["ping""#) == true {
+          pings += 1
+          socket.receive(text: #"["pong",{}]"#)
+          scheduler.runDueTimers()
+        }
+      }
+    }
+    run(minutes: 1)
+    let waiters = manager.stateWaiters.count
+    let timers = scheduler.pendingTimers
+    run(minutes: 60)
+    #expect(pings > 600)
+    #expect(zero.connection.state.status == .connected)
+    #expect(manager.stateWaiters.count == waiters)
+    #expect(waiters <= 1)
+    #expect(scheduler.pendingTimers == timers)
+    zero.close()
+  }
 }
