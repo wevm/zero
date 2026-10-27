@@ -32,6 +32,9 @@ final class SQLiteDatabase {
   private var db: OpaquePointer?
   private var statements: [String: OpaquePointer] = [:]
 
+  /// How long a statement waits for another connection's lock.
+  static let busyTimeoutMs: Int32 = 5000
+
   init(path: String) throws(SQLiteError) {
     let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX
     let rc = sqlite3_open_v2(path, &db, flags, nil)
@@ -42,8 +45,10 @@ final class SQLiteDatabase {
       throw SQLiteError(code: rc, message: message)
     }
     sqlite3_extended_result_codes(db, 1)
-    sqlite3_busy_timeout(db, 5000)
+    sqlite3_busy_timeout(db, Self.busyTimeoutMs)
   }
+
+  func setBusyTimeout(ms: Int32) { sqlite3_busy_timeout(db, ms) }
 
   deinit { close() }
 

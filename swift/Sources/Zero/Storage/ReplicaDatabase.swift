@@ -263,6 +263,7 @@ final class ReplicaDatabase {
         } catch {
           throw readFailure(error)
         }
+        connection.setBusyTimeout(ms: SQLiteDatabase.busyTimeoutMs)
       }
     } catch {
       _ = store.close()
@@ -692,6 +693,8 @@ final class SQLiteStore: @unchecked Sendable {
   /// How many times `flush()` and `close()` try the writes kept because
   /// the database was busy, each waiting out the busy timeout.
   static let busyRetries = 1
+  /// How long opening and loading wait for another connection's lock.
+  static let openBusyTimeoutMs: Int32 = 250
 
   /// Databases a collection found unused, and when it started, in
   /// `ReplicaDatabase`'s count of opens and closes.
@@ -706,6 +709,8 @@ final class SQLiteStore: @unchecked Sendable {
     self.path = path
     self.directory = directory
     let db = try SQLiteDatabase(path: path)
+    // Opening runs on the main thread, in `Zero.init`: a lock held by another program fails it fast, and the client falls back to memory, rather than freezing the app for the busy timeout. `ReplicaDatabase.load` restores the timeout once the store is loaded.
+    db.setBusyTimeout(ms: Self.openBusyTimeoutMs)
     try db.execute(
       """
       PRAGMA journal_mode = WAL;
