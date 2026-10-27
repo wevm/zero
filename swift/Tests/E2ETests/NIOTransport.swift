@@ -56,11 +56,14 @@ public struct NIOTransport: Transport {
         headers.add(name: "Host", value: "\(host):\(port)")
         if let secProtocol { headers.add(name: "Sec-WebSocket-Protocol", value: secProtocol) }
         let head = HTTPRequestHead(version: .http1_1, method: .GET, uri: uri, headers: headers)
+        var configuration = NIOUpgradableHTTPClientPipelineConfiguration(
+          upgradeConfiguration: .init(
+            upgradeRequestHead: head, upgraders: [upgrader],
+            notUpgradingCompletionHandler: { $0.eventLoop.makeCompletedFuture { .declined } }))
+        // Frames that arrive in the same read as the 101 response belong to the WebSocket; the default drops them.
+        configuration.leftOverBytesStrategy = .forwardBytes
         return try channel.pipeline.syncOperations.configureUpgradableHTTPClientPipeline(
-          configuration: .init(
-            upgradeConfiguration: .init(
-              upgradeRequestHead: head, upgraders: [upgrader],
-              notUpgradingCompletionHandler: { $0.eventLoop.makeCompletedFuture { .declined } })))
+          configuration: configuration)
       }
     }
     switch try await upgrade.get() {
