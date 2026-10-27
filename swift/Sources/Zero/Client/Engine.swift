@@ -477,7 +477,8 @@ final class Engine {
 
   /// Wakes the loop on the next state change, unless the wait is over.
   private func onStateChange(_ token: Int, _ body: @escaping (ConnectionManager.State) -> Void) {
-    connectionManager.onNextStateChange { [weak self] state in
+    connectionManager.onNextStateChange(isCurrent: { [weak self] in self?.loopToken == token }) {
+      [weak self] state in
       guard let self, self.loopToken == token else { return }
       body(state)
     }

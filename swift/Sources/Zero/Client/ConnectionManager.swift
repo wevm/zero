@@ -52,7 +52,7 @@ final class ConnectionManager {
 
   private var subscribers: [(id: Int, listener: (State) -> Void)] = []
   private var nextSubscriberID = 0
-  private var stateWaiters: [(State) -> Void] = []
+  private(set) var stateWaiters: [(isCurrent: () -> Bool, waiter: (State) -> Void)] = []
   private var connectRequested = false
   private var connectRequestWaiters: [() -> Void] = []
 
@@ -85,9 +85,12 @@ final class ConnectionManager {
     return { [weak self] in self?.subscribers.removeAll { $0.id == id } }
   }
 
-  /// Calls `waiter` in a microtask after the next transition.
-  func onNextStateChange(_ waiter: @escaping (State) -> Void) {
-    stateWaiters.append(waiter)
+  /// Calls `waiter` in a microtask after the next transition. A waiter whose `isCurrent` turns false would do nothing then, and is dropped when the next one is added: while connected, the run loop waits again on every ping without a transition, and those waits would otherwise pile up for as long as it stays connected.
+  func onNextStateChange(
+    isCurrent: @escaping () -> Bool, _ waiter: @escaping (State) -> Void
+  ) {
+    stateWaiters.removeAll { !$0.isCurrent() }
+    stateWaiters.append((isCurrent, waiter))
   }
 
   func requestConnect() {
@@ -221,7 +224,7 @@ final class ConnectionManager {
     let state = self.state
     let waiters = stateWaiters
     stateWaiters = []
-    for w in waiters { microtask { w(state) } }
+    for (_, w) in waiters { microtask { w(state) } }
   }
 
   /// Pushes the disconnect deadline forward by however long timers were not
