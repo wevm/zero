@@ -151,3 +151,4 @@ list.
 - "rows of different heights page down and back without moving what is on
   screen", "paging works the same when the scroll view reports scrolls as
   they happen".
+- "a window whose rows were all deleted pages back to the rows before it": a behavior upstream lacks. At `f89c468`, `#evaluatePaging` and `#updatePaging` in `src/core/virtualizer.ts` both skip an empty window, so a list scrolled away from its start whose rows from the window's start row on are deleted stays empty, and scrolling doesn't bring it back.
