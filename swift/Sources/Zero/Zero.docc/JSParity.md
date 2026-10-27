@@ -151,6 +151,7 @@ is written or sent.
   notification that ran it, it runs once the current notification and the
   rest of its task are done, so every listener ends on the latest rows and
   every view sees each change. Its `client` outcome settles then.
+- **A token for a logged-out client.** `connect(auth:)` doesn't throw. Where JS's `connect({auth})` rejects because the client has no `userID`, Swift logs the error and ignores the call: the token isn't sent and the connection stays as it was.
 - **Queries that can't be built.** A query JS rejects when it is
   materialized, such as a flipped `whereExists` over a subquery with a
   `limit`, makes `materialize` and `liveQuery` throw and `run` reject with
