@@ -7,6 +7,16 @@ import Zero
 enum E2E {
   static let url = ProcessInfo.processInfo.environment["ZERO_E2E_URL"]
 
+  /// The transport the tests connect with: the shipped `URLSessionTransport` on Apple platforms, and `NIOTransport` elsewhere or when `ZERO_E2E_TRANSPORT` is `nio`.
+  static var transport: any Transport {
+    #if canImport(Darwin)
+      if ProcessInfo.processInfo.environment["ZERO_E2E_TRANSPORT"] != "nio" {
+        return URLSessionTransport()
+      }
+    #endif
+    return NIOTransport()
+  }
+
   /// The zql test schema the fixture database is built from
   /// (`packages/zql/src/query/test/test-schemas.ts`).
   static let schema = ZeroSchema(
@@ -67,7 +77,7 @@ struct WalkingSkeletonTests {
     let url = ConnectionURL(
       socketOrigin: E2E.url!, clientID: clientID, clientGroupID: "\(clientID)-group",
       timestamp: 0, lastMutationID: 0, wsid: "ws1", profileID: "p\(clientID)")
-    let socket = try await NIOTransport().connect(
+    let socket = try await E2E.transport.connect(
       url: url.string,
       secProtocol: SecProtocols.encode(initConnection: initConnection, authToken: nil))
 

@@ -93,7 +93,7 @@ struct Chaos {
     configure(&options)
     return try Zero(
       schema: .test, mutators: Self.mutators, options: options,
-      socketFactory: TransportSocketFactory(NIOTransport()))
+      socketFactory: TransportSocketFactory(E2E.transport))
   }
 
   func cleanUp() {
