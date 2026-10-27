@@ -1,5 +1,14 @@
 # zero-swift
 
+## 0.4.8
+
+### Patch Changes
+
+- f7e8a23: A mutate from inside a mutator runs after it, as in JS, instead of sharing its mutation ID and dropping it from the push. A poke's `desiredQueriesPatches` apply in the server's order. Closing a connecting socket aborts its handshake, so a timed-out attempt no longer leaks a socket. App errors drop falsy `details`, as JS does.
+- f7e8a23: A flipped `whereExists` over a subquery with a `limit` no longer crashes the app: `materialize` and `liveQuery` throw "Partitioned take does not allow unpartitioned fetches", and `run` rejects with it, as in JS. View listeners are notified as in JS when one of them changes the client: a `mutate` from a listener runs once the notification is done, so listeners after it no longer end on stale rows and other views see every change; a listener removed during a notification is skipped, one added is called in the same pass, and destroying a view from its own listener still lets its other listeners hear that change. A change a view can't take where JS throws, such as two rows for a `one` relationship or a new row reaching a flipped `whereExists` over a `limit`, no longer crashes the app either: as in JS, the poke fails and the connection goes to the `error` state, or the mutation's `client` outcome is the error, and later mutations, `materialize`, and `run` fail with it.
+- f7e8a23: Storage hardening. Collecting old databases no longer deletes one a client opens while the collection runs, files of a newer layout or format, or files that aren't Zero databases. A client of a group that is behind another no longer writes an older snapshot over a newer one. `zero.delete()` and `dropAllDatabases` also drop the memory databases clients fell back to after their SQLite store failed. Stored data that doesn't decode now makes the client delete the database and start a new one, calling `onClientStateNotFound` if set, instead of running on memory at every launch. Writes kept because the database was busy are written by `flush()` and `close()`, or reported as a storage failure, instead of being lost. Dropping a database twice no longer deletes the new one a replaced client started.
+- f7e8a23: Bad server data, storage contents, and options no longer crash the app. A poke whose last mutation ID isn't a safe integer, or whose row update moves a row off its primary key, is rejected and the client disconnects; stored mutations with invalid IDs are dropped at launch. Huge or non-finite timer delays fire at once, as `setTimeout` does. A query built with a negative or out-of-range `limit`, a `limit` or `orderBy` in a junction relationship, or `start` or `related` inside `exists` throws JS's message when materialized, run, or preloaded. An `Int` column holding -2^63 fails to read instead of trapping, and `minPageSize` is clamped.
+
 ## 0.4.7
 
 ### Patch Changes
