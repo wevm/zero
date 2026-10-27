@@ -139,7 +139,7 @@
     }
 
     /// How long a message waits to learn whether the connection ended right after it (see `receive`).
-    static let cutFrameWindow: Duration = .milliseconds(10)
+    static let cutFrameWindow: Duration = .milliseconds(5)
 
     /// The receive after the last message, asked for before that message was returned.
     private let next = Mutex<Task<URLSessionWebSocketTask.Message, any Error>?>(nil)
@@ -174,16 +174,18 @@
       }
     }
 
-    /// The outcome of `task` if it settles within `window`.
+    /// The outcome of `task` if it settles within `window`. A dispatch timer without leeway: `Task.sleep` can take many times as long, and every message waits on it when no other follows.
     private static func outcome(
       of task: Task<URLSessionWebSocketTask.Message, any Error>, within window: Duration
     ) async -> Result<URLSessionWebSocketTask.Message, any Error>? {
       await withCheckedContinuation { c in
         let first = FirstResume(c)
-        let timer = Task {
-          try? await Task.sleep(for: window)
-          first.resume(nil)
-        }
+        let timer = DispatchSource.makeTimerSource(queue: .global(qos: .userInitiated))
+        timer.schedule(
+          deadline: .now() + .nanoseconds(Int(window.components.attoseconds / 1_000_000_000)),
+          leeway: .nanoseconds(0))
+        timer.setEventHandler { first.resume(nil) }
+        timer.resume()
         Task {
           let result = await task.result
           timer.cancel()
