@@ -262,6 +262,11 @@ export const hardenConnectionScenarios: Scenario[] = [
     ],
   },
   {
+    name: 'auth: connect({auth}) right after the client is created',
+    options: {auth: 'token-1'},
+    steps: [{op: 'connect', auth: 'token-2'}, start, connected],
+  },
+  {
     name: 'auth: connect() twice while needs-auth',
     steps: [
       start,
