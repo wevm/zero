@@ -242,4 +242,30 @@ import ZeroTesting
     #expect(scheduler.pendingTimers <= timers)
     zero.close()
   }
+
+  /// A snapshot stream iterated a little and dropped, and a mutation
+  /// outcome stream likewise, let go of the view and the listener.
+  @Test func droppedStreamsLetGo() async throws {
+    let sockets = MockSocketFactory()
+    let zero = try makeZero(sockets)
+    weak var weakView: MaterializedView?
+    var outcomes = 0
+    do {
+      let view = try zero.materialize(Self.all())
+      weakView = view
+      var seen = 0
+      for await _ in view.snapshots {
+        seen += 1
+        if seen == 1 { zero.mutate(Self.create("a")) } else { break }
+      }
+      // Made and never iterated.
+      _ = zero.mutationOutcomes
+    }
+    for _ in 0..<100 where weakView != nil { await Task.yield() }
+    #expect(weakView == nil)
+    let listeners = Mirror(reflecting: zero).children.first { $0.label == "outcomeListeners" }
+    outcomes = (listeners?.value as? [Any])?.count ?? -1
+    #expect(outcomes == 0)
+    zero.close()
+  }
 }
