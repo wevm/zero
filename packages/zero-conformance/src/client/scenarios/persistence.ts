@@ -269,6 +269,12 @@ export const persistenceScenarios: Scenario[] = [
     'persistence: after SchemaVersionNotSupported the next client starts a new client group',
     'SchemaVersionNotSupported',
   ),
+  // The app must be updated, but the client group is kept: the updated
+  // app pushes the mutation.
+  serverErrorThenRestart(
+    'persistence: after VersionNotSupported the next client pushes the pending mutation',
+    'VersionNotSupported',
+  ),
   // The server is behind the client: the store is dropped.
   serverErrorThenRestart(
     'persistence: after InvalidConnectionRequestBaseCookie the next client starts from an empty store',
