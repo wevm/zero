@@ -122,14 +122,20 @@
     }
 
     func receive() async throws -> SocketMessage? {
+      let message: URLSessionWebSocketTask.Message
       do {
-        switch try await task.receive() {
-        case .string(let text): return .text(text)
-        case .data(let data): return .binary([UInt8](data))
-        @unknown default: return nil
-        }
+        message = try await task.receive()
       } catch {
         throw closeReason(error)
+      }
+      // When the connection ends partway through a frame, URLSession delivers the part it has as a whole message; a browser drops it and reports an abrupt close. A message that arrives once the task has ended without a close frame may be such a part, so it is dropped too.
+      if task.state != .running, task.closeCode == .invalid, state.withLock({ $0.close }) == nil {
+        throw closeReason(URLError(.networkConnectionLost))
+      }
+      switch message {
+      case .string(let text): return .text(text)
+      case .data(let data): return .binary([UInt8](data))
+      @unknown default: return nil
       }
     }
 
