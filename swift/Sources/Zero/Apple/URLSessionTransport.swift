@@ -41,7 +41,8 @@
 
   /// One `URLSessionWebSocketTask`. Its delegate reports the open and the
   /// close.
-  final class URLSessionSocket: NSObject, Socket, URLSessionWebSocketDelegate {
+  final class URLSessionSocket: NSObject, Socket, URLSessionWebSocketDelegate, DeliversPartialFrames
+  {
     private struct State {
       var opened: CheckedContinuation<Void, any Error>?
       var close: SocketClosed?

@@ -25,6 +25,9 @@ public protocol SocketEvents: AnyObject {
   func socketDidClose(code: Int, reason: String, wasClean: Bool)
 }
 
+/// A socket that, when the connection ends partway through a frame, can return the part it has as a whole message, as `URLSessionWebSocketTask` does. A browser `WebSocket` never does.
+package protocol DeliversPartialFrames {}
+
 /// Runs an async `Transport` as a `SocketFactory`.
 @MainActor
 public final class TransportSocketFactory: SocketFactory {
@@ -57,6 +60,8 @@ final class TransportConnection: SocketConnection {
   /// cancels it, which aborts the handshake, as closing a connecting JS
   /// `WebSocket` does.
   private var connecting: Task<Void, Never>?
+  /// The socket can deliver part of a frame cut off by the connection's end (`DeliversPartialFrames`).
+  private(set) var deliversPartialFrames = false
 
   init(transport: any Transport, url: String, secProtocol: String?, events: any SocketEvents) {
     self.events = events
@@ -71,6 +76,7 @@ final class TransportConnection: SocketConnection {
         return
       }
       self?.connecting = nil
+      self?.deliversPartialFrames = socket is any DeliversPartialFrames
       guard let self, !self.closed else {
         await socket.close(code: 1000, reason: "")
         return

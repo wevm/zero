@@ -277,7 +277,9 @@ final class Engine {
         guard let lmid = poke.lastMutationIDChanges[JSKey(self.clientID)] else { return }
         try self.mutationTracker.lmidAdvanced(lmid)
       },
-      onPokeError: { [weak self] message in self?.onPokeError(message) })
+      onPokeError: { [weak self] message, received in
+        self?.onPokeError(message, received: received)
+      })
 
     // Load the snapshot into the sources and replay the pending mutations
     // on it.
@@ -820,6 +822,8 @@ final class Engine {
 
   /// `#disconnect`: closes the socket and moves the connection status.
   func disconnect(_ reason: ConnectionError, closeCode: Int? = nil) {
+    badMessage?.timer.cancel()
+    badMessage = nil
     if let attempt = currentAttempt, !attempt.aborted {
       attempt.abortReason = reason
       attempt.aborted = true
@@ -854,6 +858,16 @@ final class Engine {
   ) {
     guard handle === socket else { return }
     loop.dispatch {
+      if let bad = badMessage, bad.handle === handle {
+        bad.timer.cancel()
+        badMessage = nil
+        // A close frame means the message was whole: its error stands.
+        if wasClean {
+          bad.log()
+          return disconnect(bad.error)
+        }
+        log.info("Dropped a message cut off by the connection's end")
+      }
       // 1005 and 1006 are how platforms report a close without a frame.
       if code <= 1001 || code == 1005 || code == 1006 {
         log.info("Got socket close event: code=\(code) reason=\(reason) wasClean=\(wasClean)")
@@ -885,12 +899,12 @@ final class Engine {
   }
 
   private func onMessage(_ message: SocketMessage) {
-    if repClosed { return }
+    if repClosed || badMessage != nil { return }
     let text: String
     switch message {
     case .binary(let bytes):
       guard bytes.first == PokeChunk.messageType else {
-        disconnect(
+        failOnMessage(
           .client(
             .invalidMessage,
             message: "Unknown binary message type: \(bytes.first.map(String.init) ?? "undefined")"
@@ -907,7 +921,7 @@ final class Engine {
     do {
       downstream = try Downstream(text: text)
     } catch {
-      disconnect(
+      failOnMessage(
         .client(
           .invalidMessage,
           message: "Invalid message received from server: \(valitaMessage(error, text))\(text)"))
@@ -1016,7 +1030,7 @@ final class Engine {
     }
   }
 
-  private func onPokeError(_ message: String) {
+  private func onPokeError(_ message: String, received: Bool) {
     guard !connectionManager.is(.disconnected) else { return }
     if message.contains("unexpected base cookie") {
       log.debug("clearing due to \(message)")
@@ -1024,9 +1038,41 @@ final class Engine {
         .client(
           .unexpectedBaseCookie, message: "Server returned unexpected base cookie during sync"))
     } else {
-      log.error("clearing due to unexpected poke error: \(message)")
-      disconnect(.client(.internal, message: "Poke processing error: \(message)"))
+      let error = ConnectionError.client(.internal, message: "Poke processing error: \(message)")
+      let log = self.log
+      let logError = { log.error("clearing due to unexpected poke error: \(message)") }
+      if received {
+        failOnMessage(error, log: logError)
+      } else {
+        logError()
+        disconnect(error)
+      }
     }
+  }
+
+  /// How long a message that doesn't make sense waits for the connection to end, on a socket that can deliver part of a frame.
+  static let partialFrameGraceMs: Double = 1000
+
+  /// A message that didn't make sense, from a socket that can deliver part of a frame, waiting to learn whether the connection ended right after it.
+  private var badMessage:
+    (handle: SocketHandle, error: ConnectionError, log: () -> Void, timer: any ScheduledTimer)?
+
+  /// Disconnects with `error` for a message that doesn't make sense. URLSession returns the part of a frame it has when the connection ends partway through it, where a browser drops the part and reports an abrupt close (1006), after which JS reconnects. So on such a socket the error waits up to `partialFrameGraceMs`: when the connection ends without a close frame by then, the message was cut off and the client reconnects; otherwise the error stands. Messages that make sense are never held.
+  private func failOnMessage(_ error: ConnectionError, log logError: @escaping () -> Void = {}) {
+    guard let handle = socket,
+      (handle.connection as? TransportConnection)?.deliversPartialFrames == true
+    else {
+      logError()
+      return disconnect(error)
+    }
+    guard badMessage == nil else { return }
+    let timer = scheduler.schedule(after: Self.partialFrameGraceMs) { [weak self] in
+      guard let self, let bad = self.badMessage, bad.handle === self.socket else { return }
+      self.badMessage = nil
+      bad.log()
+      self.disconnect(bad.error)
+    }
+    badMessage = (handle, error, logError, timer)
   }
 
   // MARK: - Auth

@@ -34,7 +34,8 @@ final class PokeHandler {
   private let scheduler: any Scheduler
   /// Applies a merged poke; throws when it does not apply.
   private let apply: (MergedPoke) throws -> Void
-  private let onPokeError: (String) -> Void
+  /// Called with the error, and whether it is about a message just received rather than applying a poke.
+  private let onPokeError: (_ message: String, _ received: Bool) -> Void
   private let onApplied: (MergedPoke) throws -> Void
 
   private var receiving: Receiving?
@@ -45,7 +46,7 @@ final class PokeHandler {
     clientID: String, schema: ZeroSchema, scheduler: any Scheduler,
     apply: @escaping (MergedPoke) throws -> Void,
     onApplied: @escaping (MergedPoke) throws -> Void,
-    onPokeError: @escaping (String) -> Void
+    onPokeError: @escaping (_ message: String, _ received: Bool) -> Void
   ) {
     self.clientID = clientID
     self.schema = schema
@@ -172,7 +173,7 @@ final class PokeHandler {
       try apply(merged)
       try onApplied(merged)
     } catch {
-      handlePokeError(Self.errorString(error))
+      handlePokeError(Self.errorString(error), received: false)
     }
   }
 
@@ -183,9 +184,9 @@ final class PokeHandler {
     return "Error: " + String(describing: error)
   }
 
-  private func handlePokeError(_ message: String) {
+  private func handlePokeError(_ message: String, received: Bool = true) {
     clear()
-    onPokeError(message)
+    onPokeError(message, received)
   }
 
   private func clear() {
