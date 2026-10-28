@@ -1,5 +1,16 @@
 # zero-swift
 
+## 0.5.4
+
+### Patch Changes
+
+- dcfc49f: `connection.connect(auth:)` no longer loses its token: a client replaced after `ClientNotFound` now connects with the last token the app gave instead of the one in `ZeroOptions.auth`, a token set right after `Zero` is created is no longer overwritten when the client starts connecting, and a logged-out client (no `userID`) ignores a token and logs an error, as the JS client rejects it, instead of sending it.
+- dcfc49f: A client that stays connected no longer keeps two closures per ping (about 35,000 a day) waiting for a connection state change that never comes. The run loop's superseded waits are now dropped when it waits again. JS keeps them too, as `.then` callbacks on its long-lived state-change promise.
+- dcfc49f: Dropping the last reference to a `Zero` without calling `close()` now closes it. Before, its engine was freed but its socket stayed open, a timer kept running while it was connecting, and a pending mutation's `server` outcome, a `run` waiting for the server, and a preload's `cached` and `complete` never settled.
+- dcfc49f: `URLSessionTransport` no longer follows an HTTP redirect of the WebSocket upgrade, which sent the auth token in `Sec-WebSocket-Protocol` to wherever the redirect pointed. The connect fails instead and the client retries, as a browser `WebSocket` does.
+- dcfc49f: A `ZeroVirtualizer` list scrolled away from its start no longer goes blank for good when every row from its loaded window's start on is deleted. The window now pages back to the rows before it; before, it stayed empty, and scrolling didn't bring the rows back. zero-virtual still stays empty there.
+- dcfc49f: `@ZeroQuery` now follows a new client in the environment even when it was made after the previous one was freed, as `zero = nil` followed by a new `Zero` in one update does. The new client can get the freed one's address, and the query used to keep showing the closed client's last rows.
+
 ## 0.5.3
 
 ### Patch Changes
