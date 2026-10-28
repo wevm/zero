@@ -39,23 +39,6 @@
     }
   }
 
-  /// Resumes a continuation with the first of several values.
-  private final class FirstResume<Value: Sendable>: Sendable {
-    private let continuation: Mutex<CheckedContinuation<Value, Never>?>
-
-    init(_ continuation: CheckedContinuation<Value, Never>) {
-      self.continuation = Mutex(continuation)
-    }
-
-    func resume(_ value: Value) {
-      let c = continuation.withLock { c in
-        defer { c = nil }
-        return c
-      }
-      c?.resume(returning: value)
-    }
-  }
-
   /// One `URLSessionWebSocketTask`. Its delegate reports the open and the
   /// close.
   final class URLSessionSocket: NSObject, Socket, URLSessionWebSocketDelegate {
@@ -138,59 +121,15 @@
       }
     }
 
-    /// How long a message waits to learn whether the connection ended right after it (see `receive`).
-    static let cutFrameWindow: Duration = .milliseconds(5)
-
-    /// The receive after the last message, asked for before that message was returned.
-    private let next = Mutex<Task<URLSessionWebSocketTask.Message, any Error>?>(nil)
-
     func receive() async throws -> SocketMessage? {
-      let pending = next.withLock { n in
-        defer { n = nil }
-        return n
-      }
-      let message: URLSessionWebSocketTask.Message
       do {
-        if let pending {
-          message = try await pending.value
-        } else {
-          message = try await task.receive()
+        switch try await task.receive() {
+        case .string(let text): return .text(text)
+        case .data(let data): return .binary([UInt8](data))
+        @unknown default: return nil
         }
       } catch {
         throw closeReason(error)
-      }
-      // When the connection ends partway through a frame, URLSession returns the part it has as a whole message, and only the receive after it tells that the connection ended; a browser drops the part and reports an abrupt close. So the next message is asked for now, and this one waits for it up to `cutFrameWindow`: when the connection ends without a close frame by then, this one is dropped.
-      let following = Task { [task] in try await task.receive() }
-      next.withLock { $0 = following }
-      if case .failure(let error)? = await Self.outcome(of: following, within: Self.cutFrameWindow)
-      {
-        let close = closeReason(error)
-        if !close.wasClean { throw close }
-      }
-      switch message {
-      case .string(let text): return .text(text)
-      case .data(let data): return .binary([UInt8](data))
-      @unknown default: return nil
-      }
-    }
-
-    /// The outcome of `task` if it settles within `window`. A dispatch timer without leeway: `Task.sleep` can take many times as long, and every message waits on it when no other follows.
-    private static func outcome(
-      of task: Task<URLSessionWebSocketTask.Message, any Error>, within window: Duration
-    ) async -> Result<URLSessionWebSocketTask.Message, any Error>? {
-      await withCheckedContinuation { c in
-        let first = FirstResume(c)
-        let timer = DispatchSource.makeTimerSource(queue: .global(qos: .userInitiated))
-        timer.schedule(
-          deadline: .now() + .nanoseconds(Int(window.components.attoseconds / 1_000_000_000)),
-          leeway: .nanoseconds(0))
-        timer.setEventHandler { first.resume(nil) }
-        timer.resume()
-        Task {
-          let result = await task.result
-          timer.cancel()
-          first.resume(result)
-        }
       }
     }
 
