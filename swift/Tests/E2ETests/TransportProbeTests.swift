@@ -212,7 +212,7 @@ struct TransportProbeTests {
     let end = await ending(of: socket)
     print(
       "[probe] \(kind) mid-frame: \(end.messages.count) messages, \(String(describing: end.close))")
-    // URLSession returns the part of the frame it has as a whole message, and a browser doesn't: a known difference, not fixed yet.
+    // URLSession returns the part of the frame it has as a whole message, and a browser doesn't. The client makes up for it (see `clientReconnectsAfterTheServerGoesAwayMidFrame`).
     withKnownIssue("URLSession delivers a cut frame", isIntermittent: true) {
       #expect(end.messages == [.text("hi")])
     } when: {
@@ -221,7 +221,7 @@ struct TransportProbeTests {
     #expect(end.close?.code == 1006)
   }
 
-  /// The server goes away partway through a frame while a client is connected: the client reconnects, as it does with a browser `WebSocket`, which never delivers the partial frame. Delivered as a message, the partial frame reads as an invalid message, which stops the client in `.error` until the app calls `connect()`.
+  /// The server goes away partway through a frame while a client is connected: the client reconnects, as it does with a browser `WebSocket`, which never delivers the partial frame. URLSession delivers the partial frame as a message; the client holds the error it causes until it learns the connection ended.
   @Test(arguments: TransportKind.allCases) @MainActor
   func clientReconnectsAfterTheServerGoesAwayMidFrame(_ kind: TransportKind) async throws {
     for binary in [false, true] {
@@ -266,13 +266,8 @@ struct TransportProbeTests {
       if !reconnected {
         for line in logs.all.suffix(8) { print("[probe]   \(line.prefix(300))") }
       }
-      // See `serverGoesAwayMidFrame`: URLSession delivers the cut frame, which stops the client in `.error`.
-      withKnownIssue("URLSession delivers a cut frame", isIntermittent: true) {
-        #expect(reconnected, "binary \(binary): \(zero.connection.state)")
-        #expect(!states.contains(.error), "binary \(binary)")
-      } when: {
-        kind != .nio
-      }
+      #expect(reconnected, "binary \(binary): \(zero.connection.state)")
+      #expect(!states.contains(.error), "binary \(binary)")
       unsubscribe()
       zero.close()
       await server.shutdown()

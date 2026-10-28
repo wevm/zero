@@ -1,3 +1,4 @@
+import Synchronization
 import Testing
 import ZeroTesting
 
@@ -271,6 +272,115 @@ import ZeroTesting
     scheduler.runDueTimers()
     #expect(sockets.sockets.count == 2)
     #expect(try authToken(sockets.sockets.last) == nil)
+    zero.close()
+  }
+
+  // MARK: - A message cut off by the connection's end
+
+  /// A socket the test feeds. `PartialFrameSocket` is one that can deliver part of a frame, as URLSession's does.
+  /// One reader at a time: `receive` is called by a single task.
+  class ScriptSocket: Socket, @unchecked Sendable {
+    let feed: AsyncThrowingStream<SocketMessage, any Error>.Continuation
+    private var messages: AsyncThrowingStream<SocketMessage, any Error>.AsyncIterator
+    init() {
+      let (stream, feed) = AsyncThrowingStream<SocketMessage, any Error>.makeStream()
+      self.feed = feed
+      messages = stream.makeAsyncIterator()
+    }
+    func send(_ message: SocketMessage) async throws {}
+    func receive() async throws -> SocketMessage? { try await messages.next() }
+    func close(code: Int, reason: String) async { feed.finish() }
+  }
+  final class PartialFrameSocket: ScriptSocket, DeliversPartialFrames, @unchecked Sendable {}
+
+  final class ScriptTransport: Transport, Sendable {
+    let partialFrames: Bool
+    let sockets = Mutex<[ScriptSocket]>([])
+    init(partialFrames: Bool) { self.partialFrames = partialFrames }
+    func connect(url: String, secProtocol: String?) async throws -> any Socket {
+      let socket = partialFrames ? PartialFrameSocket() : ScriptSocket()
+      sockets.withLock { $0.append(socket) }
+      return socket
+    }
+    var count: Int { sockets.withLock { $0.count } }
+    var last: ScriptSocket? { sockets.withLock { $0.last } }
+  }
+
+  final class StatusLog { var all: [ConnectionStatus] = [] }
+
+  /// Lets the socket tasks run, and fires the timers due, until `done`.
+  func settle(until done: () -> Bool) async {
+    for _ in 0..<200 where !done() {
+      await Task.yield()
+      scheduler.runDueTimers()
+    }
+  }
+
+  /// A cut-off `pokePart`: what URLSession returns when the connection ends partway through the frame.
+  static let cutMessage = #"["pokePart",{"pokeID":"p1","rowsPatch":[{"op":"put","tableName":"is"#
+
+  /// Opens a client on `transport` and waits for it to connect, then sends `cutMessage`.
+  func connectAndSendCutMessage(
+    _ transport: ScriptTransport
+  ) async throws -> (Zero<Void>, StatusLog) {
+    let zero = try makeZero(TransportSocketFactory(transport))
+    let states = StatusLog()
+    _ = zero.connection.subscribe { states.all.append($0.status) }
+    await settle { transport.count == 1 }
+    let socket = try #require(transport.last)
+    socket.feed.yield(.text(#"["connected",{"wsid":"w1"}]"#))
+    await settle { zero.connection.state.status == .connected }
+    try #require(zero.connection.state.status == .connected)
+    socket.feed.yield(.text(Self.cutMessage))
+    await settle { false }
+    return (zero, states)
+  }
+
+  /// URLSession returns the part of a frame it has when the connection ends partway through it; a browser drops the part and reports 1006, and JS reconnects. Here the client does too, rather than stopping in `.error` on the part.
+  @Test func aMessageCutOffByTheConnectionsEndReconnects() async throws {
+    let transport = ScriptTransport(partialFrames: true)
+    let (zero, states) = try await connectAndSendCutMessage(transport)
+    #expect(zero.connection.state.status == .connected, "the error waits for the connection")
+    transport.last?.feed.finish(
+      throwing: SocketClosed(code: 1006, reason: "reset", wasClean: false))
+    await settle { transport.count == 2 }
+    scheduler.advance(by: 5000)
+    await settle { transport.count == 2 }
+    try #require(transport.count == 2)
+    transport.last?.feed.yield(.text(#"["connected",{"wsid":"w2"}]"#))
+    await settle { zero.connection.state.status == .connected }
+    #expect(zero.connection.state.status == .connected)
+    #expect(!states.all.contains(.error))
+    zero.close()
+  }
+
+  /// A message that doesn't make sense on a socket that stays open is the server's error, as in JS, once the grace period is over.
+  @Test func aBadMessageOnASocketThatStaysOpenIsAnError() async throws {
+    let transport = ScriptTransport(partialFrames: true)
+    let (zero, _) = try await connectAndSendCutMessage(transport)
+    #expect(zero.connection.state.status == .connected)
+    scheduler.advance(by: Engine.partialFrameGraceMs)
+    await settle { zero.connection.state.status == .error }
+    #expect(zero.connection.state.status == .error)
+    #expect(transport.count == 1)
+    zero.close()
+  }
+
+  /// A close frame after the message means it arrived whole: its error stands.
+  @Test func aBadMessageBeforeACleanCloseIsAnError() async throws {
+    let transport = ScriptTransport(partialFrames: true)
+    let (zero, _) = try await connectAndSendCutMessage(transport)
+    transport.last?.feed.finish()
+    await settle { zero.connection.state.status == .error }
+    #expect(zero.connection.state.status == .error)
+    zero.close()
+  }
+
+  /// A socket that never delivers part of a frame, like a browser's, gets JS's behavior: the error at once.
+  @Test func aBadMessageFromAWholeFrameSocketIsAnErrorAtOnce() async throws {
+    let transport = ScriptTransport(partialFrames: false)
+    let (zero, _) = try await connectAndSendCutMessage(transport)
+    #expect(zero.connection.state.status == .error)
     zero.close()
   }
 }
