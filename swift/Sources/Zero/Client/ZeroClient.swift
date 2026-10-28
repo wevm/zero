@@ -131,8 +131,7 @@ public final class Zero<Context: Sendable> {
   func replaceClient() {
     let old = engine
     guard !old.closed else { return }
-    // The new client goes on with the token the app last gave, not the
-    // one it started with.
+    // The new client goes on with the token the app last gave, not the one it started with.
     var options = self.options
     options.auth = old.auth
     let new: Engine

@@ -166,8 +166,7 @@ export const persistenceScenarios: Scenario[] = [
       connected,
       mutate('m1', 'issue.create', {id: 'i1'}),
       persisted,
-      // A newer app version without some mutators: a new client group,
-      // which neither shows nor pushes the old group's mutation.
+      // A newer app version without some mutators: a new client group, which neither shows nor pushes the old group's mutation.
       {op: 'restart', mutators: 'issues'},
       {op: 'materialize', view: 'v', query: 'issues.all'},
       start,
@@ -269,8 +268,7 @@ export const persistenceScenarios: Scenario[] = [
     'persistence: after SchemaVersionNotSupported the next client starts a new client group',
     'SchemaVersionNotSupported',
   ),
-  // The app must be updated, but the client group is kept: the updated
-  // app pushes the mutation.
+  // The app must be updated, but the client group is kept: the updated app pushes the mutation.
   serverErrorThenRestart(
     'persistence: after VersionNotSupported the next client pushes the pending mutation',
     'VersionNotSupported',

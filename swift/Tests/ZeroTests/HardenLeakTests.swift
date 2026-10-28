@@ -3,10 +3,7 @@ import ZeroTesting
 
 @testable import Zero
 
-/// Long sessions compressed with a manual clock: reconnects, views and
-/// live queries made and dropped, preloads, mutations, a replaced client,
-/// and close. Each test asserts, with weak references, that what it dropped
-/// is freed, and that a closed client leaves no timer running.
+/// Long sessions compressed with a manual clock: reconnects, views and live queries made and dropped, preloads, mutations, a replaced client, and close. Each test asserts, with weak references, that what it dropped is freed, and that a closed client leaves no timer running.
 @Suite @MainActor struct HardenLeakTests {
   static let create = defineMutator("issue.create") { (tx, id: String) in
     try tx.mutate.issue.insert(
@@ -37,8 +34,7 @@ import ZeroTesting
     return socket
   }
 
-  /// A client used and closed, then dropped, is freed with its engine, and
-  /// leaves no timer behind.
+  /// A client used and closed, then dropped, is freed with its engine, and leaves no timer behind.
   @Test func closedClientIsFreed() throws {
     let sockets = MockSocketFactory()
     weak var weakZero: Zero<Void>?
@@ -63,9 +59,7 @@ import ZeroTesting
     #expect(scheduler.pendingTimers == 0)
   }
 
-  /// A client dropped without `close()`, while connecting or connected,
-  /// is freed, closes its socket, leaves no timer running, and settles
-  /// what was waiting on it, as `close()` does.
+  /// A client dropped without `close()`, while connecting or connected, is freed, closes its socket, leaves no timer running, and settles what was waiting on it, as `close()` does.
   @Test(arguments: [false, true]) func droppedClientIsFreed(connected: Bool) throws {
     let sockets = MockSocketFactory()
     weak var weakZero: Zero<Void>?
@@ -91,8 +85,7 @@ import ZeroTesting
     #expect(scheduler.pendingTimers == 0)
   }
 
-  /// A view dropped while a mutation is pending, on a client then closed
-  /// and dropped, is freed.
+  /// A view dropped while a mutation is pending, on a client then closed and dropped, is freed.
   @Test func viewDroppedWithPendingMutationIsFreed() throws {
     let sockets = MockSocketFactory()
     weak var weakArrayView: ArrayView?
@@ -112,8 +105,7 @@ import ZeroTesting
     #expect(weakArrayView == nil)
   }
 
-  /// After `replaceClient`, the old engine is freed and the views moved to
-  /// the new one keep working.
+  /// After `replaceClient`, the old engine is freed and the views moved to the new one keep working.
   @Test func replacedEngineIsFreed() throws {
     let sockets = MockSocketFactory()
     let zero = try makeZero(sockets)
@@ -138,8 +130,7 @@ import ZeroTesting
     zero.close()
   }
 
-  /// An hour connected, answering every ping, leaves the engine with what
-  /// it had after the first minutes: the run loop's waits don't pile up.
+  /// An hour connected, answering every ping, leaves the engine with what it had after the first minutes: the run loop's waits don't pile up.
   @Test func anHourConnectedDoesNotGrow() throws {
     let sockets = MockSocketFactory()
     let zero = try makeZero(sockets)
@@ -168,8 +159,7 @@ import ZeroTesting
     zero.close()
   }
 
-  /// The sizes of the collections the engine and its parts hold, by path,
-  /// read by reflection so private state counts too.
+  /// The sizes of the collections the engine and its parts hold, by path, read by reflection so private state counts too.
   func collectionSizes(_ engine: Engine) -> [String: Int] {
     var sizes: [String: Int] = [:]
     func visit(_ value: Any, _ path: String, depth: Int) {
@@ -192,10 +182,7 @@ import ZeroTesting
     return sizes
   }
 
-  /// Hours of churn: the server drops the connection every few minutes,
-  /// and between drops views and live queries come and go, preloads expire,
-  /// and mutations are confirmed. What the engine holds stays the same
-  /// from one cycle to the next.
+  /// Hours of churn: the server drops the connection every few minutes, and between drops views and live queries come and go, preloads expire, and mutations are confirmed. What the engine holds stays the same from one cycle to the next.
   @Test func reconnectAndViewChurnDoesNotGrow() throws {
     let sockets = MockSocketFactory()
     let zero = try makeZero(sockets)
@@ -243,8 +230,7 @@ import ZeroTesting
     zero.close()
   }
 
-  /// A snapshot stream iterated a little and dropped, and a mutation
-  /// outcome stream likewise, let go of the view and the listener.
+  /// A snapshot stream iterated a little and dropped, and a mutation outcome stream likewise, let go of the view and the listener.
   @Test func droppedStreamsLetGo() async throws {
     let sockets = MockSocketFactory()
     let zero = try makeZero(sockets)

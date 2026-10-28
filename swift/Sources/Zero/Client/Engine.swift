@@ -158,8 +158,7 @@ final class Engine {
     self.schema = schema
     self.options = options
     self.userID = options.userID
-    // Set now, as JS's constructor does, so a token from `connect(auth:)`
-    // right after init isn't replaced when the run loop starts.
+    // Set now, as JS's constructor does, so a token from `connect(auth:)` right after init isn't replaced when the run loop starts.
     self.auth = options.auth ?? ""
     self.mutators = mutators
     self.socketFactory = socketFactory
@@ -1043,8 +1042,7 @@ final class Engine {
   /// `connection.connect()`: resumes from needs-auth or error.
   func connect(auth: String??) {
     if case .some(let auth) = auth {
-      // JS's `#setAuth` throws this, so `connect` rejects before it does
-      // anything.
+      // JS's `#setAuth` throws this, so `connect` rejects before it does anything.
       do {
         try Self.checkAuthValid(userID, auth)
       } catch {

@@ -224,10 +224,7 @@ import ZeroTesting
     try SecProtocols.decode(#require(socket?.secProtocol))["authToken"]?.stringValue
   }
 
-  /// The client that replaces one the server lost (`replaceClient`, the
-  /// default `onClientStateNotFound`) connects with the token the app last
-  /// gave through `connect(auth:)`, not the one in the options: the old
-  /// token may be the expired one.
+  /// The client that replaces one the server lost (`replaceClient`, the default `onClientStateNotFound`) connects with the token the app last gave through `connect(auth:)`, not the one in the options: the old token may be the expired one.
   @Test func aReplacedClientKeepsTheRotatedToken() throws {
     let sockets = MockSocketFactory()
     var options = ZeroOptions(
@@ -249,9 +246,7 @@ import ZeroTesting
     zero.close()
   }
 
-  /// A logged-out client can't take a token: JS's `#setAuth` throws
-  /// `checkAuthValid`'s error, so `connect({auth})` rejects before it
-  /// resumes. The client stays in needs-auth and never sends the token.
+  /// A logged-out client can't take a token: JS's `#setAuth` throws `checkAuthValid`'s error, so `connect({auth})` rejects before it resumes. The client stays in needs-auth and never sends the token.
   @Test func connectWithAuthOnALoggedOutClientIsRejected() throws {
     let sockets = MockSocketFactory()
     var options = ZeroOptions(
