@@ -106,6 +106,14 @@
       resumeOpen(.failure(close))
     }
 
+    /// A browser `WebSocket` doesn't follow redirects (the WHATWG WebSockets standard fetches the handshake with redirect mode "error"), and following one would send the auth token in `Sec-WebSocket-Protocol` wherever it points. The upgrade fails instead.
+    func urlSession(
+      _ session: URLSession, task: URLSessionTask,
+      willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest
+    ) async -> URLRequest? {
+      nil
+    }
+
     func send(_ message: SocketMessage) async throws {
       switch message {
       case .text(let text): try await task.send(.string(text))

@@ -114,7 +114,8 @@ final class Engine {
   private(set) var queryManager: QueryManager!
   private var pokeHandler: PokeHandler!
 
-  private var auth: String?
+  /// The current token: `options.auth`, then the last one `connect(auth:)` set.
+  private(set) var auth: String?
   private var repClosed = false
   private var socket: SocketHandle?
   private var connectCookie: JSONValue = .null
@@ -157,6 +158,8 @@ final class Engine {
     self.schema = schema
     self.options = options
     self.userID = options.userID
+    // Set now, as JS's constructor does, so a token from `connect(auth:)` right after init isn't replaced when the run loop starts.
+    self.auth = options.auth ?? ""
     self.mutators = mutators
     self.socketFactory = socketFactory
     self.socketOrigin = try options.cacheURL.map(Self.socketOrigin)
@@ -367,7 +370,6 @@ final class Engine {
         .client(.noSocketOrigin, message: "No server socket origin provided"))
       return
     }
-    setAuth(options.auth)
     connectionManager.initialized()
     iterate()
   }
@@ -477,7 +479,8 @@ final class Engine {
 
   /// Wakes the loop on the next state change, unless the wait is over.
   private func onStateChange(_ token: Int, _ body: @escaping (ConnectionManager.State) -> Void) {
-    connectionManager.onNextStateChange { [weak self] state in
+    connectionManager.onNextStateChange(isCurrent: { [weak self] in self?.loopToken == token }) {
+      [weak self] state in
       guard let self, self.loopToken == token else { return }
       body(state)
     }
@@ -1038,7 +1041,16 @@ final class Engine {
 
   /// `connection.connect()`: resumes from needs-auth or error.
   func connect(auth: String??) {
-    if case .some(let auth) = auth { setAuth(auth) }
+    if case .some(let auth) = auth {
+      // JS's `#setAuth` throws this, so `connect` rejects before it does anything.
+      do {
+        try Self.checkAuthValid(userID, auth)
+      } catch {
+        log.error("connect(auth:) ignored: \(error)")
+        return
+      }
+      setAuth(auth)
+    }
     if case .disconnected(let r) = connectionManager.state, r.clientKind == .noSocketOrigin {
       log.error(
         "connect() called but the connection is disconnected due to a missing cacheURL. "

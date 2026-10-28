@@ -46,7 +46,7 @@ are arguments of
 | `zero.preload(query)`                                                                                                                                                                             | `zero.preload(_:ttl:)`, a ``Preload`` with `cleanup`, `cached`, and `complete`                          |
 | `zero.mutate(request)`                                                                                                                                                                            | `zero.mutate(_:)`, a ``MutatorResult`` whose `client` and `server` are ``Deferred`` outcomes              |
 | `zero.connection.state`, `.subscribe`, `.connect({auth})`                                                                                                                                         | ``Connection/state``, ``Connection/subscribe(_:)``, ``Connection/connect(auth:)``                           |
-| `zero.close()`                                                                                                                                                                                    | `zero.close()`                                                                                        |
+| `zero.close()`                                                                                                                                                                                    | `zero.close()`; dropping the last reference to a `Zero` closes it too |
 | `zero.mutate.issue.insert(...)` (CRUD mutators)                                                                                                                                                   | not ported: write a mutator                                                                           |
 | `zero.delete()`, `dropAllDatabases()` | `await zero.delete()`, `await dropAllDatabases(_:)`, which return the ``DroppedDatabases`` |
 | `zero.mutateBatch`, `zero.online`, `zero.onOnline`, `zero.inspector`, `zero.server`, `zero.storageKey`, `zero.idbName`, `zero.kvStore`, `zero.schemaVersion` | not ported |
@@ -151,6 +151,7 @@ is written or sent.
   notification that ran it, it runs once the current notification and the
   rest of its task are done, so every listener ends on the latest rows and
   every view sees each change. Its `client` outcome settles then.
+- **A token for a logged-out client.** `connect(auth:)` doesn't throw. Where JS's `connect({auth})` rejects because the client has no `userID`, Swift logs the error and ignores the call: the token isn't sent and the connection stays as it was.
 - **Queries that can't be built.** A query JS rejects when it is
   materialized, such as a flipped `whereExists` over a subquery with a
   `limit`, makes `materialize` and `liveQuery` throw and `run` reject with

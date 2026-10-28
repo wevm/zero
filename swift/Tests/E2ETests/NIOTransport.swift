@@ -42,7 +42,8 @@ public struct NIOTransport: Transport {
     .connect(host: host, port: port) { channel in
       opening.opened(channel)
       return channel.eventLoop.makeCompletedFuture {
-        let upgrader = NIOTypedWebSocketClientUpgrader<Upgrade>(maxFrameSize: 1 << 24) {
+        // The 64 MB of `URLSessionTransport`.
+        let upgrader = NIOTypedWebSocketClientUpgrader<Upgrade>(maxFrameSize: 64 << 20) {
           channel, _ in
           channel.eventLoop.makeCompletedFuture {
             try channel.pipeline.syncOperations.addHandler(
@@ -141,20 +142,24 @@ final class NIOSocket: Socket, @unchecked Sendable {
                       fin: true, opcode: .pong, maskKey: .random(), data: frame.unmaskedData))
                 case .connectionClose:
                   // A close other than a normal one is reported with its
-                  // code, as a browser's `CloseEvent` has it.
+                  // code, as a browser's `CloseEvent` has it: 1005 when the frame has none.
                   var data = frame.unmaskedData
-                  if let code = data.readWebSocketErrorCode() {
-                    let number = Int(UInt16(webSocketErrorCode: code))
-                    if number != 1000 {
-                      throw SocketClosed(
-                        code: number, reason: data.readString(length: data.readableBytes) ?? "",
-                        wasClean: true)
-                    }
+                  guard let code = data.readWebSocketErrorCode() else {
+                    throw SocketClosed(code: 1005, reason: "", wasClean: true)
+                  }
+                  let number = Int(UInt16(webSocketErrorCode: code))
+                  if number != 1000 {
+                    throw SocketClosed(
+                      code: number, reason: data.readString(length: data.readableBytes) ?? "",
+                      wasClean: true)
                   }
                   return
                 default: break
                 }
               }
+              // The connection ended without a close frame: an abrupt close, 1006 in a browser.
+              throw SocketClosed(
+                code: 1006, reason: "The connection closed without a close frame", wasClean: false)
             }
             try await group.next()
             group.cancelAll()

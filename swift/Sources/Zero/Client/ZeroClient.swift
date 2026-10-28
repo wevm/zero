@@ -68,6 +68,11 @@ public final class Zero<Context: Sendable> {
     #endif
   }
 
+  /// Dropping the last reference closes the client, as `close()` does: otherwise its socket would stay open, and its timers run, with no engine left to hear them.
+  isolated deinit {
+    close()
+  }
+
   public var clientID: String { engine.clientID }
   public var clientGroupID: String { engine.clientGroupID }
   public var userID: String? { engine.userID }
@@ -126,6 +131,9 @@ public final class Zero<Context: Sendable> {
   func replaceClient() {
     let old = engine
     guard !old.closed else { return }
+    // The new client goes on with the token the app last gave, not the one it started with.
+    var options = self.options
+    options.auth = old.auth
     let new: Engine
     do {
       new = try Engine(

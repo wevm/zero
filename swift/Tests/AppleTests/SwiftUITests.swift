@@ -3,7 +3,8 @@
   import SwiftUI
   import Testing
   import ZeroTesting
-  import ZeroUI
+
+  @testable import ZeroUI
 
   @testable import Zero
 
@@ -70,6 +71,31 @@
       zero.mutate(Notes.put(.init(id: "b", text: "2")))
       settle(host)
       #expect(seen.texts.last == ["1", "2"])
+    }
+
+    /// A client freed, then a new one made at its address (as `zero = nil` and then a new client, in one update, can do): `@ZeroQuery` reads the new one, not the closed one's last rows.
+    @Test func zeroQueryFollowsANewClientAtAFreedOnesAddress() throws {
+      func makeZero(_ text: String) throws -> Zero<Void> {
+        var options = ZeroOptions(userID: "u", storageKey: randomID(), storage: .memory)
+        options.logSink = RecordingLogSink()
+        let zero = try Zero(
+          schema: .notes, mutators: [Notes.put], options: options,
+          scheduler: ManualScheduler(now: 0), socketFactory: nil)
+        zero.mutate(Notes.put(.init(id: "a", text: text)))
+        return zero
+      }
+      let state = QueryState<[Note]>()
+      // On macOS each new client lands at the freed one's address.
+      for i in 0..<20 {
+        var old: Zero<Void>? = try makeZero("old \(i)")
+        state.update(old, Notes.all(), .defaultTTL)
+        let id = ObjectIdentifier(old!)
+        old = nil
+        let new = try makeZero("new \(i)")
+        state.update(new, Notes.all(), .defaultTTL)
+        #expect(
+          state.live?.data.map(\.text) == ["new \(i)"], "reused: \(ObjectIdentifier(new) == id)")
+      }
     }
   }
 #endif

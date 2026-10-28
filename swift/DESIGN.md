@@ -122,9 +122,9 @@ Rationale:
 ### Transport
 
 - The core defines a transport protocol and never touches a socket directly.
-- `URLSessionTransport` implements it with `URLSessionWebSocketTask` and is the default socket on Apple platforms. It accepts frames up to 64 MB (a poke can exceed URLSession's 1 MB default) and reports the server's close code and reason, which the client's error handling reads.
+- `URLSessionTransport` implements it with `URLSessionWebSocketTask` and is the default socket on Apple platforms. It accepts frames up to 64 MB (a poke can exceed URLSession's 1 MB default) and reports the server's close code and reason, which the client's error handling reads. Like a browser `WebSocket`, it doesn't follow redirects of the upgrade, so the auth token never goes to another server. Unlike a browser, when the connection ends partway through a frame, URLSession returns the part it has as a whole message; the client then reads it as an invalid message and stops in `.error` until the app calls `connect()`. That is not fixed yet.
 - One writer task per connection sends frames in order.
-- Tests use an in-memory transport that replays scenario vectors, and, on Linux end-to-end runs, `NIOTransport` in `Tests/E2ETests` (plain `ws://`). Linux needs it because corelibs Foundation's `URLSessionWebSocketTask` compiles but never completes a connection.
+- Tests use an in-memory transport that replays scenario vectors, and, on Linux end-to-end runs, `NIOTransport` in `Tests/E2ETests` (plain `ws://`). Linux needs it because corelibs Foundation's `URLSessionWebSocketTask` compiles but never completes a connection. On macOS the end-to-end tests use `URLSessionTransport` (`ZERO_E2E_TRANSPORT=nio` switches back).
 - Wire details follow `zero-protocol`: connect to `/sync/v53/connect`, put `initConnection` and the auth token in `Sec-WebSocket-Protocol` while they fit under `maxHeaderLength`, and accept binary poke chunks (protocol 52 and later).
 
 ### App lifecycle and recovery
@@ -294,7 +294,7 @@ A mutator that calls `Date.now()` or generates IDs internally can't be compared.
 ### CI
 
 - **Linux, every PR.** Swift build, unit tests, and conformance vectors; the vector and drift-vector staleness checks; `apps/zbugs-swift`'s drift test; an end-to-end run against a real `zero-cache` and Postgres; `apps/zbugs-swift` against zbugs' backend (`server/server.ts`); and the `Zero` and `ZeroTesting` docs, where a broken symbol link or an undocumented parameter fails.
-- **macOS, path-filtered to `swift/`, `packages/zero-conformance/`, and `apps/zbugs-swift/`.** The Apple layer (URLSession transport against a local mock WebSocket server, SwiftUI, UIKit, and AppKit helpers), iOS simulator tests, all three DocC catalogs, and the zbugs app built for iOS and macOS.
+- **macOS, path-filtered to `swift/`, `packages/zero-conformance/`, and `apps/zbugs-swift/`.** The Apple layer (URLSession transport against a local mock WebSocket server, SwiftUI, UIKit, and AppKit helpers), iOS simulator tests, all three DocC catalogs, and the zbugs app built for iOS and macOS. A second job runs the end-to-end and chaos tests with `URLSessionTransport` against a real `zero-cache` and Postgres, the transport probes that check it against a browser `WebSocket` (`Tests/E2ETests/TransportProbeTests.swift`), and the app lifecycle tests on macOS and the iOS simulator.
 - **zbugs screenshots, path-filtered to the app and `ZeroUI`.** The app on an iPhone and an iPad simulator and on macOS against zbugs' backend, through each screen and both the SwiftUI and the UIKit or AppKit list, with the screenshots kept as an artifact.
 - **Benchmarks.** Ports of the key JS benchmarks (`zero-client/src/client/zero.bench.ts`, the shared B-tree and hash benchmarks) plus Swift benchmarks for query hydration over N rows, poke apply, mutation round trip, and memory per 100k rows. Tracked next to the JS numbers, non-blocking in v1, with a goal of no slower than JS. CI builds them; [BENCHMARKS.md](BENCHMARKS.md) has how to run them and the latest numbers.
 

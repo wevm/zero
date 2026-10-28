@@ -125,6 +125,30 @@ import ZeroTesting
     #expect(h.items.first?.index == 0)
     #expect(h.visibleIndexes == range(57, 76))
   }
+
+  @Test(
+    "a window whose rows were all deleted pages back to the rows before it",
+    arguments: [VirtualAnchoring.manual, .native])
+  func windowEmptiedAwayFromTheStart(_ anchoring: VirtualAnchoring) {
+    let h = Harness(rowCount: 0) { $0.anchoring = anchoring }
+    // Ids in list order, so a deleted start row pages from where it was.
+    h.data = (0..<1000).map { TestRow(id: "r" + String(1000 + $0)) }
+    h.startsByValue = true
+    h.settle()
+    for _ in 0..<15 {
+      h.userScroll(h.scrollOffset + 600)
+      h.settle()
+    }
+    #expect(h.core.firstVisibleItem()!.index > 250)
+    // Every row from well above the viewport on is deleted.
+    h.data.removeSubrange(200...)
+    h.settle()
+    #expect(h.items.last?.key == "r1199")
+    #expect(h.items.last.map { h.visibleIndexes.contains($0.index) } == true)
+    h.userScroll(h.scrollOffset - 1000)
+    h.settle()
+    #expect(!h.visibleIndexes.isEmpty)
+  }
 }
 
 @MainActor

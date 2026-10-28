@@ -926,6 +926,13 @@ package final class VirtualizerCore<
         anchor = .top
         total -= rows.firstRowIndex
       }
+    } else if rowsSettled, !landing {
+      // The rows from the window's start row on are gone, as when they were deleted: page back toward the list's start, as paging, which works from the rows on screen, has none to work from. Zero-virtual stays empty there.
+      switch anchor {
+      case .forward(let index, let start?): anchor = .backward(index: index, startRow: start)
+      case .backward where rows.atStart: anchor = .top
+      default: break
+      }
     }
     if anchor != s.anchor || total != s.estimatedTotal || reachedStart != s.hasReachedStart
       || reachedEnd != s.hasReachedEnd

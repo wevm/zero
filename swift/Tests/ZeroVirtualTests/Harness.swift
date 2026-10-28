@@ -138,11 +138,18 @@ final class Harness {
     core.setOptions(options)
   }
 
+  /// A start row no longer in `data` pages from where its id would be, as a Zero query's `start` compares values, with `data` in id order. Otherwise such a page starts at the list's start (forward) or end (backward).
+  var startsByValue = false
+
   /// Zero-demo paging: an exclusive start, backward pages closest first.
   func page(_ start: TestRow?, _ direction: VirtualDirection, _ limit: Int) -> [TestRow] {
-    let startIndex =
+    var startIndex =
       start.flatMap { s in data.firstIndex { $0.id == s.id } }
       ?? (direction == .forward ? -1 : data.count)
+    if startsByValue, let start, !data.contains(start) {
+      let after = data.firstIndex { $0.id > start.id } ?? data.count
+      startIndex = direction == .forward ? after - 1 : after
+    }
     switch direction {
     case .forward:
       return Array(data[min(data.count, startIndex + 1)..<min(data.count, startIndex + 1 + limit)])

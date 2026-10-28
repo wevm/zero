@@ -217,4 +217,60 @@ import ZeroTesting
     view.destroy()
     zero.close()
   }
+
+  // MARK: - Auth
+
+  func authToken(_ socket: MockSocket?) throws -> String? {
+    try SecProtocols.decode(#require(socket?.secProtocol))["authToken"]?.stringValue
+  }
+
+  /// The client that replaces one the server lost (`replaceClient`, the default `onClientStateNotFound`) connects with the token the app last gave through `connect(auth:)`, not the one in the options: the old token may be the expired one.
+  @Test func aReplacedClientKeepsTheRotatedToken() throws {
+    let sockets = MockSocketFactory()
+    var options = ZeroOptions(
+      cacheURL: "http://zero.test", userID: "u", auth: "t1", storageKey: randomID(),
+      storage: .memory)
+    options.logSink = log
+    let zero = try Zero(
+      schema: .test, mutators: [Self.create], options: options, scheduler: scheduler,
+      socketFactory: sockets)
+    let first = try connect(sockets)
+    zero.connection.connect(auth: "t2")
+    scheduler.runDueTimers()
+    #expect(first.messages.contains(#"["updateAuth",{"auth":"t2"}]"#))
+    first.receive(
+      text: #"["error",{"kind":"ClientNotFound","message":"gone","origin":"zeroCache"}]"#)
+    scheduler.runDueTimers()
+    #expect(sockets.sockets.count == 2)
+    #expect(try authToken(sockets.sockets.last) == "t2")
+    zero.close()
+  }
+
+  /// A logged-out client can't take a token: JS's `#setAuth` throws `checkAuthValid`'s error, so `connect({auth})` rejects before it resumes. The client stays in needs-auth and never sends the token.
+  @Test func connectWithAuthOnALoggedOutClientIsRejected() throws {
+    let sockets = MockSocketFactory()
+    var options = ZeroOptions(
+      cacheURL: "http://zero.test", storageKey: randomID(), storage: .memory)
+    options.logSink = log
+    let zero = try Zero(
+      schema: .test, mutators: [Self.create], options: options, scheduler: scheduler,
+      socketFactory: sockets)
+    scheduler.runDueTimers()
+    try #require(sockets.sockets.last).receive(
+      text: #"["error",{"kind":"Unauthorized","message":"no","origin":"zeroCache"}]"#)
+    scheduler.runDueTimers()
+    #expect(zero.connection.state.status == .needsAuth)
+    zero.connection.connect(auth: "t")
+    scheduler.runDueTimers()
+    #expect(sockets.sockets.count == 1)
+    #expect(zero.connection.state.status == .needsAuth)
+    #expect(
+      log.entries.contains { $0.level == .error && $0.message.contains("userID is required") })
+    // Without a token it still resumes.
+    zero.connection.connect()
+    scheduler.runDueTimers()
+    #expect(sockets.sockets.count == 2)
+    #expect(try authToken(sockets.sockets.last) == nil)
+    zero.close()
+  }
 }
