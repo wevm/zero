@@ -178,6 +178,13 @@ public struct IssueListV2Args: Codable, Sendable, Hashable {
   }
 }
 
+public struct IssueListCountArgs: Codable, Sendable, Hashable {
+  public var listContext: ListContextParams
+  public init(listContext: ListContextParams) {
+    self.listContext = listContext
+  }
+}
+
 public struct ListIssueByIDArgs: Codable, Sendable, Hashable {
   public var listContext: ListContextParams
   public var idField: IDField
@@ -375,6 +382,13 @@ public enum Queries {
   }
 
   /// One issue, for the order to start a list at.
+  /// The number of issues in the list: the same filters and permissions as
+  /// `issueListV2`, reduced to a `count()`.
+  public static let issueListCount = defineQuery("issueListCount") {
+    (args: IssueListCountArgs, auth: AuthData?) in
+    filterListQuery(zql.issue, args.listContext, auth?.role).count()
+  }
+
   public static let listIssueByID = defineQuery("listIssueByID") {
     (args: ListIssueByIDArgs, auth: AuthData?) in
     buildListQuery(ListQueryArgs(listContext: args.listContext, role: auth?.role))
@@ -421,7 +435,8 @@ public enum Queries {
   /// Every query, for the server's registry and the drift test.
   public static let all: [any NamedQuery<AuthData?>] = [
     allLabels, allUsers, allProjects, user, crewUser, labels, labelsOrderByName, issuePreloadV2,
-    userPref, usersForProject, commentsPage, comment, issueDetail, issueListV2, listIssueByID,
+    userPref, usersForProject, commentsPage, comment, issueDetail, issueListV2, issueListCount,
+    listIssueByID,
     emojiChange, prevNext, issueList, userPicker,
   ]
 }
@@ -483,8 +498,6 @@ func buildListQuery(_ args: ListQueryArgs) -> Query<Issue, [Issue]> {
   guard let listContext = args.listContext else {
     return alwaysFalse(q)
   }
-  let projectName = (listContext.projectName ?? zeroProjectName).lowercased()
-  q = q.whereExists(\.project, scalar: true) { $0.where(\.lowerCaseName, projectName) }
 
   let dir: AST.Direction =
     args.dir == .forward
@@ -501,6 +514,17 @@ func buildListQuery(_ args: ListQueryArgs) -> Query<Issue, [Issue]> {
   if let limit = args.limit, limit != 0 {
     q = q.limit(limit)
   }
+
+  return filterListQuery(q, listContext, args.role)
+}
+
+/// Narrows `q` to the issues `listContext` selects that `role` may see
+/// (`filterListQuery`): shared by the list and its count.
+func filterListQuery(
+  _ q: Query<Issue, [Issue]>, _ listContext: ListContextParams, _ role: Role?
+) -> Query<Issue, [Issue]> {
+  let projectName = (listContext.projectName ?? zeroProjectName).lowercased()
+  var q = q.whereExists(\.project, scalar: true) { $0.where(\.lowerCaseName, projectName) }
 
   let text = truthy(listContext.textFilter).map { "%\(escapeLike($0))%" }
   q = q.where { issue in
@@ -532,7 +556,7 @@ func buildListQuery(_ args: ListQueryArgs) -> Query<Issue, [Issue]> {
   if let assignee = truthy(listContext.assignee) {
     q = q.whereExists(\.assignee, scalar: true) { $0.where(\.login, assignee) }
   }
-  return applyIssuePermissions(q, args.role)
+  return applyIssuePermissions(q, role)
 }
 
 extension Query {

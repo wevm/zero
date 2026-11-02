@@ -13,8 +13,6 @@ import ZeroTesting
         .appendingPathComponent("drift-vectors.json"), encoding: .utf8)
     let failures = try Drift.failures(
       vectors: vectors, schema: .zbugs, queries: Queries.all, mutators: Mutators.all)
-    // Not ported yet: issueListCount is a count(), and the Swift client has no
-    // aggregates. Exact, so this fails once it is ported and must be removed.
-    #expect(failures == ["query issueListCount: no Swift definition"])
+    #expect(failures == [])
   }
 }

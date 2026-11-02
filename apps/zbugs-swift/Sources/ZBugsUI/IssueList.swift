@@ -67,6 +67,58 @@
     }
   }
 
+  /// The number of issues in the list, as zbugs' list page shows it: the
+  /// server's `issueListCount` once it has counted the list, in this session
+  /// or a previous one, and until then the list's running total. A text
+  /// search isn't counted: matching it checks every issue's comments, and it
+  /// changes with every keystroke.
+  struct IssueCount: View {
+    let filter: IssueFilter
+    let list: IssueVirtualizer?
+
+    var body: some View {
+      if filter.text.isEmpty {
+        SyncedIssueCount(filter: filter, list: list)
+      } else {
+        IssueCountLabel(synced: nil, list: list)
+      }
+    }
+  }
+
+  private struct SyncedIssueCount: View {
+    let list: IssueVirtualizer?
+    @ZeroQuery<Issue, Int, AuthData?> var count: Int
+
+    init(filter: IssueFilter, list: IssueVirtualizer?) {
+      self.list = list
+      _count = ZeroQuery(
+        Queries.issueListCount(IssueListCountArgs(listContext: filter.listContext)),
+        ttl: .defaultTTL)
+    }
+
+    var body: some View {
+      let counted = $count.resultType == .complete || $count.resultType == .cached
+      IssueCountLabel(synced: counted ? count : nil, list: list)
+    }
+  }
+
+  private struct IssueCountLabel: View {
+    let synced: Int?
+    let list: IssueVirtualizer?
+
+    var body: some View {
+      let s = list?.snapshot
+      let total = synced ?? s?.total
+      if let total {
+        Text(total.formatted()).accessibilityIdentifier("IssueCount")
+      } else if let s, s.complete || s.estimatedTotal > 0 {
+        // Rounded down to 50 above 50, as the list page does.
+        let e = s.estimatedTotal
+        Text("\((e < 50 ? e : e - e % 50).formatted())+").accessibilityIdentifier("IssueCount")
+      }
+    }
+  }
+
   /// The issue list in SwiftUI.
   struct IssueList: View {
     let list: IssueVirtualizer
