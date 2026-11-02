@@ -81,6 +81,10 @@ func createPredicate(_ condition: AST.Condition) throws(PipelineError) -> RowPre
         let result = impl(l)
         return { _ in result }
       }
+      if case .json(let name, let path) = left {
+        let column = ColumnReader(name)
+        return { row in impl(AST.jsonValue(at: path, in: column.read(row))) }
+      }
       guard case .column(let name) = left else { preconditionFailure() }
       let column = ColumnReader(name)
       return { row in impl(column.read(row)) }
@@ -93,6 +97,30 @@ func createPredicate(_ condition: AST.Condition) throws(PipelineError) -> RowPre
       if l == .null { return { _ in false } }
       let result = impl(l)
       return { _ in result }
+    }
+    if case .json(let name, let path) = left {
+      // A JSON leaf is dynamically typed, so the comparison is type-strict: a
+      // leaf of another type than the literal's is a non-match, or a match
+      // for a negated operator, and never an error. LIKE compares text.
+      let required: String?
+      switch op {
+      case .like, .notLike, .ilike, .notIlike: required = "string"
+      default:
+        switch rhs.arrayValue?.first ?? rhs {
+        case .string: required = "string"
+        case .number: required = "number"
+        case .bool: required = "boolean"
+        default: required = nil
+        }
+      }
+      let negated = op == .ne || op == .notLike || op == .notIlike || op == .notIn
+      let column = ColumnReader(name)
+      return { row in
+        let lhs = AST.jsonValue(at: path, in: column.read(row))
+        if lhs == .null { return false }
+        guard let required, lhs.typeName == required else { return negated }
+        return impl(lhs)
+      }
     }
     guard case .column(let name) = left else { preconditionFailure() }
     let column = ColumnReader(name)

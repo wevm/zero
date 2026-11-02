@@ -48,6 +48,15 @@ export type Op =
 
 export type Expr =
   | {cmp: [field: string, op: SimpleOperator, value: JSONValue]}
+  /** `cmp(json(field, ...path), op, value)`. */
+  | {
+      cmpJson: [
+        field: string,
+        path: (string | number)[],
+        op: SimpleOperator,
+        value: JSONValue,
+      ];
+    }
   | {and: Expr[]}
   | {or: Expr[]}
   | {not: Expr}
@@ -125,6 +134,10 @@ function applyOp(q: AnyQuery, op: Op): AnyQuery {
 function buildExpr(eb: AnyEB, expr: Expr): unknown {
   if ('cmp' in expr) {
     return eb.cmp(expr.cmp[0], expr.cmp[1], expr.cmp[2]);
+  }
+  if ('cmpJson' in expr) {
+    const [field, path, op, value] = expr.cmpJson;
+    return eb.cmp(eb.json(field, ...path), op, value);
   }
   if ('and' in expr) {
     return eb.and(...expr.and.map(e => buildExpr(eb, e)));

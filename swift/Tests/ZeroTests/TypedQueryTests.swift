@@ -63,6 +63,29 @@ import Testing
   }
 
   /// `= NULL` matches nothing, so comparing with nil uses `IS`.
+  @Test func comparesValuesAtJSONPaths() {
+    let users = AnyQuery(.test, "user")
+    let typed = zql.user.where {
+      $0.json(\.metadata, "points") > 2 || $0.json(\.metadata, "tags", 0) == nil
+        || $0.json(\.metadata, "registrar").in(["github", "google"])
+    }
+    let untyped = users.where { eb in
+      eb.or(
+        eb.cmp(eb.json("metadata", "points"), .gt, 2),
+        eb.cmp(eb.json("metadata", "tags", 0), .is, nil),
+        eb.cmp(eb.json("metadata", "registrar"), .in, ["github", "google"]))
+    }
+    #expect(typed.ast == untyped.ast)
+    #expect(typed.any.invalid == nil)
+    // What JS's builder throws for makes the query invalid.
+    #expect(
+      zql.user.where { $0.json(\.metadata, "points").in([1, "1"]) }.any.invalid
+        == "IN against a JSON path requires a list of values of one type")
+    #expect(
+      zql.user.where { $0.json(\.metadata) == 1 }.any.invalid
+        == "json('metadata') requires at least one path segment")
+  }
+
   @Test func comparingWithNilUsesIs() {
     #expect(zql.issue.where(\.ownerId, nil).ast == base.where("ownerId", .is, nil).ast)
     #expect(zql.issue.where { $0.ownerId != nil }.ast == base.where("ownerId", .isNot, nil).ast)

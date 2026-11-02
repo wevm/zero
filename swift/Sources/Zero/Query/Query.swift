@@ -342,6 +342,46 @@ extension Column where Value == String? {
   public func notIlike(_ pattern: String) -> Condition { cmp(.notIlike, .string(pattern)) }
 }
 
+/// A value inside a `json` column in a `where` expression. Its JSON type
+/// isn't known, so it compares with any `JSONValue`: one of another type
+/// never equals it (`!=` and the other negated operators match it).
+/// Comparing with nil uses `IS`.
+public struct JSONPath: Sendable {
+  let builder: ExpressionBuilder
+  public let ref: JSONPathReference
+
+  public func compare(_ op: AST.SimpleOperator, _ value: JSONValue) -> Condition {
+    Condition(builder.cmp(ref, op, value))
+  }
+
+  public func compare(_ op: AST.SimpleOperator, _ param: StaticParameter) -> Condition {
+    Condition(builder.cmp(ref, op, param))
+  }
+
+  public static func == (p: JSONPath, v: JSONValue) -> Condition {
+    p.compare(v == .null ? .is : .eq, v)
+  }
+
+  public static func != (p: JSONPath, v: JSONValue) -> Condition {
+    p.compare(v == .null ? .isNot : .ne, v)
+  }
+
+  public static func < (p: JSONPath, v: JSONValue) -> Condition { p.compare(.lt, v) }
+  public static func <= (p: JSONPath, v: JSONValue) -> Condition { p.compare(.le, v) }
+  public static func > (p: JSONPath, v: JSONValue) -> Condition { p.compare(.gt, v) }
+  public static func >= (p: JSONPath, v: JSONValue) -> Condition { p.compare(.ge, v) }
+
+  public func `is`(_ v: JSONValue) -> Condition { compare(.is, v) }
+  public func isNot(_ v: JSONValue) -> Condition { compare(.isNot, v) }
+  /// `values` must be of one JSON type.
+  public func `in`(_ values: [JSONValue]) -> Condition { compare(.in, .array(values)) }
+  public func notIn(_ values: [JSONValue]) -> Condition { compare(.notIn, .array(values)) }
+  public func like(_ pattern: String) -> Condition { compare(.like, .string(pattern)) }
+  public func notLike(_ pattern: String) -> Condition { compare(.notLike, .string(pattern)) }
+  public func ilike(_ pattern: String) -> Condition { compare(.ilike, .string(pattern)) }
+  public func notIlike(_ pattern: String) -> Condition { compare(.notIlike, .string(pattern)) }
+}
+
 /// The row a `where` expression is about: its columns by key path, and
 /// `exists` over its relationships.
 @dynamicMemberLookup
@@ -350,6 +390,13 @@ public struct RowExpression<Row: ZeroRow>: Sendable {
 
   public subscript<V: ZeroValue>(dynamicMember column: KeyPath<Row, V>) -> Column<V> {
     Column(Row.column(column))
+  }
+
+  /// A value inside a `json` column: `$0.json(\.metadata, "tags", 0) == "bug"`.
+  public func json<V: ZeroValue>(
+    _ column: KeyPath<Row, V>, _ path: AST.JSONPathSegment...
+  ) -> JSONPath {
+    JSONPath(builder: builder, ref: builder.json(Row.column(column), path))
   }
 
   public func exists<R: ZeroRow>(

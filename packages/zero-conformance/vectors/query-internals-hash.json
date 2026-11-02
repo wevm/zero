@@ -1,0 +1,117 @@
+{
+  "formatVersion": 1,
+  "kind": "query-internals-hash",
+  "description": "hashOfQueryInternals(ast, format, \"client\", undefined, undefined, undefined) for formats with aggregates.",
+  "cases": [
+    {
+      "ast": {
+        "table": "issue",
+        "aggregate": {
+          "fn": "count"
+        }
+      },
+      "format": {
+        "singular": true,
+        "relationships": {},
+        "aggregate": {
+          "fn": "count"
+        }
+      },
+      "hash": "18j2xmk15jdns7"
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "aggregate": {
+          "fn": "count"
+        }
+      },
+      "format": {
+        "singular": true,
+        "relationships": {},
+        "aggregate": {
+          "fn": "count"
+        }
+      },
+      "hash": "18j2xmk15jdns7"
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "aggregate": {
+          "fn": "count"
+        }
+      },
+      "format": {
+        "singular": true,
+        "relationships": {},
+        "aggregate": {
+          "fn": "sum",
+          "field": "n"
+        }
+      },
+      "hash": "0jmpz361y8uyh7"
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "aggregate": {
+          "fn": "count"
+        }
+      },
+      "format": {
+        "singular": true,
+        "relationships": {},
+        "aggregate": {
+          "fn": "min",
+          "field": "metadata",
+          "path": [
+            "a",
+            0
+          ]
+        }
+      },
+      "hash": "1hy67xx0l7j1en"
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "aggregate": {
+          "fn": "count"
+        }
+      },
+      "format": {
+        "singular": true,
+        "relationships": {},
+        "aggregate": {
+          "fn": "count",
+          "distinct": [
+            "ownerId"
+          ]
+        }
+      },
+      "hash": "1wxei591pwsif4"
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "aggregate": {
+          "fn": "count"
+        }
+      },
+      "format": {
+        "singular": false,
+        "relationships": {
+          "comments": {
+            "singular": true,
+            "relationships": {},
+            "aggregate": {
+              "fn": "count"
+            }
+          }
+        }
+      },
+      "hash": "0m6dezd12lug2g"
+    }
+  ]
+}

@@ -74,6 +74,7 @@ same error at once; such a preload registers nothing. A `run` with
 | `.where('title', 'LIKE', '%x%')`                                     | `.where(\.title, .like, "%x%")`                                                                |
 | `.where('open', true)`                                               | `.where(\.open, true)`                                                                         |
 | `.where(({cmp, and, or, not, exists}) => ...)`                       | `.where { $0.open == true && $0.exists(\.labels) }` (``RowExpression``)                          |
+| `.where(({cmp, json}) => cmp(json('metadata', 'tags', 0), 'bug'))`  | `.where { $0.json(\.metadata, "tags", 0) == "bug" }` (``JSONPath``)                             |
 | `.whereExists('labels', q => ...)`                                   | `.whereExists(\.labels) { $0.where(...) }`                                                     |
 | `.related('comments', q => q.limit(10))`                             | `.related(\.comments) { $0.limit(10) }`                                                        |
 | `.orderBy('created', 'desc')`                                        | `.orderBy(\.created, .desc)`                                                                   |
@@ -87,6 +88,14 @@ Comparing with nil differs by form. The two-argument
 `where(\.ownerID, nil)` uses `IS`, since `= NULL` matches nothing. The
 three-argument form compares as JS compares `undefined`, so
 `where(\.ownerID, .eq, nil)` matches no row.
+
+A value at a JSON path has no type the builder knows, so ``JSONPath``
+compares it with any `JSONValue`; as in JS, a value of another JSON type
+never equals it, and matches the negated operators (`!=`, `notIn`,
+`notLike`, `notIlike`). Its path is keys and integer indices, so the
+fractional index JS's builder rejects can't be written; a negative or too
+large index, an empty path, or an `in` list of mixed types makes the query
+invalid with JS's message.
 
 An unnamed query, a `Query` such as `zql.issue` rather than a
 ``QueryRequest`` from `defineQuery`, only sees local data, as in JS without

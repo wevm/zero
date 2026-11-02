@@ -23,6 +23,12 @@ extension AST: JSONCodable {
       return Bound(
         row: try b.required("row", JSONDecode.object), exclusive: try b.bool("exclusive"))
     }
+    aggregate = try r.optional("aggregate", Aggregate.init(json:))
+    groupBy = try r.optional("groupBy") { (v) throws(DecodingError) in
+      let columns = try JSONDecode.array(v, JSONDecode.string)
+      if columns.isEmpty { throw DecodingError("expected groupBy to name a column") }
+      return columns
+    }
   }
 
   package var json: JSONValue {
@@ -41,6 +47,66 @@ extension AST: JSONCodable {
       orderBy.map {
         JSONValue.array($0.map { .array([.string($0.field), .string($0.direction.rawValue)]) })
       })
+    o.set("aggregate", aggregate?.json)
+    o.set("groupBy", groupBy.map { JSONValue.array($0.map { .string($0) }) })
+    return o.value
+  }
+}
+
+extension AST.JSONPathSegment {
+  var json: JSONValue {
+    switch self {
+    case .key(let k): .string(k)
+    case .index(let i): .number(Double(i))
+    }
+  }
+
+  /// `jsonPathSchema`: a non-empty list of keys and array indices.
+  static func path(json v: JSONValue) throws(DecodingError) -> [AST.JSONPathSegment] {
+    let path = try JSONDecode.array(v) { (e) throws(DecodingError) -> AST.JSONPathSegment in
+      switch e {
+      case .string(let k): return .key(k)
+      case .number(let n):
+        guard n.rounded() == n, n >= 0, n <= Double(AST.maxJSONPathIndex) else {
+          throw DecodingError("expected a non-negative integer array index")
+        }
+        return .index(Int(n))
+      default: throw DecodingError("Expected string or number")
+      }
+    }
+    if path.isEmpty { throw DecodingError("expected a non-empty JSON path") }
+    return path
+  }
+}
+
+extension AST.Aggregate: JSONCodable {
+  package init(json: JSONValue) throws(DecodingError) {
+    let r = try JSONObjectReader(json, "aggregate")
+    let fnName = try r.string("fn")
+    guard let fn = AST.AggregateFunction(rawValue: fnName) else {
+      throw DecodingError("Invalid aggregate function \"\(fnName)\"", path: ["fn"])
+    }
+    self.fn = fn
+    field = try r.optionalString("field")
+    path = try r.optional("path", AST.JSONPathSegment.path(json:))
+    distinct = try r.optional("distinct") { (v) throws(DecodingError) in
+      try JSONDecode.array(v, JSONDecode.string)
+    }
+    if path != nil && (field == nil || fn == .count) {
+      throw DecodingError("expected an aggregate JSON path to have a field and not be a count")
+    }
+    if let distinct, fn != .count || field != nil || distinct.isEmpty {
+      throw DecodingError(
+        "expected an aggregate over distinct columns to be a count of at least one")
+    }
+  }
+
+  package var json: JSONValue {
+    var o = JSONObjectBuilder()
+    o.set("fn", .string(fn.rawValue))
+    o.set("field", field)
+    o.set("path", path.map { JSONValue.array($0.map(\.json)) })
+    o.set("distinct", distinct.map { JSONValue.array($0.map { .string($0) }) })
     return o.value
   }
 }
@@ -63,6 +129,7 @@ extension AST.CorrelatedSubquery: JSONCodable {
       return system
     }
     hidden = try r.optionalBool("hidden")
+    aggregate = try r.optional("aggregate", AST.Aggregate.init(json:))
   }
 
   package var json: JSONValue {
@@ -75,6 +142,7 @@ extension AST.CorrelatedSubquery: JSONCodable {
     o.set("subquery", subquery.json)
     o.set("system", system?.rawValue)
     o.set("hidden", hidden)
+    o.set("aggregate", aggregate?.json)
     return o.value
   }
 }
@@ -102,6 +170,13 @@ extension AST.ValuePosition: JSONCodable {
       self = .literal(value)
     case "column":
       self = .column(try r.string("name"))
+    case "json":
+      let column = try r.required("value") { (v) throws(DecodingError) -> String in
+        let c = try JSONObjectReader(v, "column reference")
+        try c.literal("type", "column")
+        return try c.string("name")
+      }
+      self = .json(column: column, path: try r.required("path", AST.JSONPathSegment.path(json:)))
     case "static":
       let anchorName = try r.string("anchor")
       guard let anchor = AST.Anchor(rawValue: anchorName) else {
@@ -124,9 +199,22 @@ extension AST.ValuePosition: JSONCodable {
     switch self {
     case .literal(let v): ["type": "literal", "value": v]
     case .column(let name): ["type": "column", "name": .string(name)]
+    case .json(let column, let path):
+      [
+        "type": "json", "value": ["type": "column", "name": .string(column)],
+        "path": .array(path.map(\.json)),
+      ]
     case .static(let anchor, let field):
       ["type": "static", "anchor": .string(anchor.rawValue), "field": field.json]
     }
+  }
+}
+
+extension AST {
+  /// `isHomogeneousList`: every element has the JS type of the first.
+  static func isHomogeneous(_ list: [JSONValue]) -> Bool {
+    guard let first = list.first else { return true }
+    return list.allSatisfy { $0.typeName == first.typeName }
   }
 }
 
@@ -142,8 +230,22 @@ extension AST.Condition: JSONCodable {
       }
       let left = try r.required("left", AST.ValuePosition.init(json:))
       let right = try r.required("right", AST.ValuePosition.init(json:))
-      if case .column = right {
+      switch right {
+      case .column, .json:
         throw DecodingError("The right side of a condition can't be a column", path: ["right"])
+      default: break
+      }
+      if case .json = left, case .literal(let value) = right {
+        // `hasJsonLeafLiteralShape` and `hasHomogeneousJsonInList`.
+        let isList = value.arrayValue != nil
+        if op == .in || op == .notIn ? !(isList || value == .null) : isList {
+          throw DecodingError(
+            "expected a list for IN/NOT IN against a JSON path and a scalar for other operators")
+        }
+        if (op == .in || op == .notIn), let list = value.arrayValue, !AST.isHomogeneous(list) {
+          throw DecodingError(
+            "expected a list of values of one type for IN/NOT IN against a JSON path")
+        }
       }
       self = .simple(op: op, left: left, right: right)
     case "and", "or":

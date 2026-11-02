@@ -334,6 +334,52 @@ public struct ExpressionBuilder: Sendable {
     cmpCondition(field, .eq, .literal(value))
   }
 
+  /// A value inside the `json` column `column`, for `cmp`: `path` is object
+  /// keys and array indices, applied in order. At least one segment is
+  /// needed, and an index must be from 0 to `AST.maxJSONPathIndex`.
+  public func json(_ column: String, _ path: AST.JSONPathSegment...) -> JSONPathReference {
+    json(column, path)
+  }
+
+  public func json(_ column: String, _ path: [AST.JSONPathSegment]) -> JSONPathReference {
+    if path.isEmpty {
+      record("json('\(column)') requires at least one path segment")
+    }
+    for case .index(let i) in path where i < 0 || i > AST.maxJSONPathIndex {
+      record(
+        "Invalid JSON path segment \(i) in json('\(column)', ...): a numeric segment is an array index and must be a non-negative integer no larger than \(AST.maxJSONPathIndex)"
+      )
+    }
+    return JSONPathReference(column: column, path: path)
+  }
+
+  /// Compares the value at a JSON path with a value of the same JSON type;
+  /// a value of another type never equals it. An `IN` list must hold values
+  /// of one type.
+  public func cmp(
+    _ ref: JSONPathReference, _ op: AST.SimpleOperator, _ value: JSONValue
+  ) -> AST.Condition {
+    if op == .in || op == .notIn, let list = value.arrayValue, !AST.isHomogeneous(list) {
+      record("\(op.rawValue) against a JSON path requires a list of values of one type")
+    }
+    return .simple(op: op, left: ref.position, right: .literal(value))
+  }
+
+  public func cmp(_ ref: JSONPathReference, _ value: JSONValue) -> AST.Condition {
+    cmp(ref, .eq, value)
+  }
+
+  public func cmp(
+    _ ref: JSONPathReference, _ op: AST.SimpleOperator, _ param: StaticParameter
+  ) -> AST.Condition {
+    .simple(op: op, left: ref.position, right: param.position)
+  }
+
+  /// Records the first misuse JS's builder throws for.
+  func record(_ message: String) {
+    if invalid.message == nil { invalid.message = message }
+  }
+
   public func cmp(
     _ field: String, _ op: AST.SimpleOperator, _ param: StaticParameter
   )
@@ -378,9 +424,18 @@ public struct ExpressionBuilder: Sendable {
     _ sub: ((AnyQuery) -> AnyQuery)? = nil
   ) -> AST.Condition {
     let (condition, message) = query.existsCondition(relationship, flip: flip, scalar: scalar, sub)
-    if invalid.message == nil { invalid.message = message }
+    if let message { record(message) }
     return condition
   }
+}
+
+/// A value inside a `json` column, made by `ExpressionBuilder.json`
+/// (`ColumnRef` in `packages/zql/src/query/expression.ts`).
+public struct JSONPathReference: Sendable, Hashable {
+  public let column: String
+  public let path: [AST.JSONPathSegment]
+
+  var position: AST.ValuePosition { .json(column: column, path: path) }
 }
 
 func cmpCondition(

@@ -10,6 +10,8 @@ package struct NameMapper: Sendable {
     var tableName: String
     var columns: [String: String]
     var allColumnsSame: Bool
+    /// The source names of the table's `json` columns.
+    var jsonColumns: Set<String>
   }
 
   let tables: [String: Destination]
@@ -29,18 +31,17 @@ package struct NameMapper: Sendable {
     for (name, table) in schema.tables {
       var allColumnsSame = true
       var columns: [String: String] = [:]
+      var jsonColumns: Set<String> = []
       for (column, c) in table.columns {
         if let serverName = c.serverName, serverName != column { allColumnsSame = false }
-        if fromClient {
-          columns[column] = c.serverName ?? column
-        } else {
-          columns[c.serverName ?? column] = column
-        }
+        let src = fromClient ? column : c.serverName ?? column
+        columns[src] = fromClient ? c.serverName ?? column : column
+        if c.type == .json { jsonColumns.insert(src) }
       }
       let serverName = table.serverName ?? name
       tables[fromClient ? name : serverName] = Destination(
         tableName: fromClient ? serverName : name, columns: columns,
-        allColumnsSame: allColumnsSame)
+        allColumnsSame: allColumnsSame, jsonColumns: jsonColumns)
     }
     self.tables = tables
   }
@@ -63,6 +64,17 @@ package struct NameMapper: Sendable {
       throw NameMappingError(description: "unknown column \"\(src)\" of \"\(table)\" table")
     }
     return dst
+  }
+
+  /// `jsonColumnName`: the column a JSON path reads, which must be a `json`
+  /// column.
+  package func jsonColumnName(_ table: String, _ src: String) throws(NameMappingError) -> String {
+    guard try self.table(table).jsonColumns.contains(src) else {
+      // An unknown column fails the same way as a known one that isn't json.
+      throw NameMappingError(
+        description: "column \"\(src)\" of \"\(table)\" table is not a json column")
+    }
+    return try columnName(table, src)
   }
 
   /// Renames the known columns of `row`; others keep their names.
@@ -91,6 +103,11 @@ package struct NameMapper: Sendable {
         var r2 = r
         r2.correlation = try map(r.correlation, parent: ast.table, child: r.subquery.table)
         r2.subquery = try map(r.subquery)
+        // A junction aggregate's field is a column of the destination.
+        let fieldTable = r.subquery.related?.first?.subquery.table ?? r.subquery.table
+        r2.aggregate = try r.aggregate.map { (a) throws(NameMappingError) in
+          try map(a, table: fieldTable)
+        }
         mapped.append(r2)
       }
       out.related = mapped
@@ -107,7 +124,28 @@ package struct NameMapper: Sendable {
       }
       out.orderBy = mapped
     }
+    out.aggregate = try ast.aggregate.map { (a) throws(NameMappingError) in
+      try map(a, table: ast.table)
+    }
+    if let groupBy = ast.groupBy {
+      var mapped: [String] = []
+      for c in groupBy { mapped.append(try columnName(ast.table, c)) }
+      out.groupBy = mapped
+    }
     return out
+  }
+
+  /// `transformAggregate`: the field maps, and must be a `json` column when
+  /// there is a path; the path is data.
+  private func map(_ a: AST.Aggregate, table: String) throws(NameMappingError) -> AST.Aggregate {
+    if let distinct = a.distinct {
+      var mapped: [String] = []
+      for c in distinct { mapped.append(try columnName(table, c)) }
+      return AST.Aggregate(a.fn, distinct: mapped)
+    }
+    guard let field = a.field else { return AST.Aggregate(a.fn) }
+    guard let path = a.path else { return AST.Aggregate(a.fn, field: try columnName(table, field)) }
+    return AST.Aggregate(a.fn, field: try jsonColumnName(table, field), path: path)
   }
 
   /// `mapCondition`. Only the left side of a comparison names a column.
@@ -118,10 +156,15 @@ package struct NameMapper: Sendable {
   {
     switch condition {
     case .simple(let op, let left, let right):
-      if case .column(let name) = left {
+      switch left {
+      case .column(let name):
         return .simple(op: op, left: .column(try columnName(table, name)), right: right)
+      case .json(let column, let path):
+        return .simple(
+          op: op, left: .json(column: try jsonColumnName(table, column), path: path), right: right)
+      default:
+        return condition
       }
-      return condition
     case .correlatedSubquery(var related, let op, let flip, let scalar):
       related.correlation = try map(
         related.correlation, parent: table, child: related.subquery.table)
