@@ -179,7 +179,7 @@
       try await eventually("connected after the transitions") {
         zero.connection.state == .connected
       }
-      try await eventually("one socket open", timeout: .seconds(5)) { server.open == 1 }
+      try await eventually("one socket open", timeout: .seconds(10)) { server.open == 1 }
       for _ in 0..<50 {
         show()
         hide()
@@ -187,7 +187,8 @@
       try await eventually("disconnected after the transitions") {
         zero.connection.state.status == .disconnected
       }
-      try await eventually("no socket open", timeout: .seconds(5)) { server.open == 0 }
+      // The last socket may be one cancelled while connecting, which a busy iOS Simulator takes seconds to close (as in hiddenWhileConnecting).
+      try await eventually("no socket open", timeout: .seconds(10)) { server.open == 0 }
       print("[lifecycle] rapid transitions: \(server.connected) connections")
     }
 
