@@ -46,7 +46,12 @@
 
     private let list: Virtualizer
     private let row: (VirtualItem<Row, Key>, Bool) -> RowContent
-    private let selection: Binding<Key?>?
+    /// A `Binding` stored as is, not optional: SwiftUI refreshes it before
+    /// each `body`, as a dynamic property. In an optional, it keeps the
+    /// value it had when the list was made, and the list would set the
+    /// selection back to it whenever `body` runs again.
+    private let selection: Binding<Key?>
+    private let selectable: Bool
     private let header: AnyView?
     private let footer: AnyView?
     @State private var model = VirtualListModel()
@@ -61,7 +66,8 @@
     ) {
       self.list = list
       self.row = { item, _ in row(item) }
-      selection = nil
+      selection = .constant(nil)
+      selectable = false
       self.header = Self.accessory(header)
       self.footer = Self.accessory(footer)
     }
@@ -88,6 +94,7 @@
       self.list = list
       self.row = row
       self.selection = selection
+      selectable = true
       self.header = Self.accessory(header)
       self.footer = Self.accessory(footer)
     }
@@ -103,12 +110,11 @@
         source: { [list] in RowsSource(list.snapshot) },
         row: { [row] in AnyView(row($0 as! VirtualItem<Row, Key>, $1)) }, header: header,
         footer: footer,
-        selection: selection.map { selection in
-          (
+        selection: selectable
+          ? (
             selection.wrappedValue.map { AnyHashable($0) },
-            { key in selection.wrappedValue = key.base as? Key }
-          )
-        }, model: model
+            { [selection] key in selection.wrappedValue = key.base as? Key }
+          ) : nil, model: model
       )
       .onAppear { model.attach(list) }
       .onDisappear { model.detach(list) }
