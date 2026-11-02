@@ -2,7 +2,7 @@
 
 Synced aggregates (`count/sum/avg/min/max`), JSON paths in aggregates and in `where`, `distinct()`, and `groupBy()`: sync protocol 53 → 57, upstream commits c9d1b15fc, e2ecf69ce, 0a1a0f3d4, 642aece86, 8b716b3fe, effd2da27, 5493ba549, fe168e640, 523d3b97e (in wevm/zero PR #65, branch `sync-upstream-6`).
 
-Status: plan done; implementation in progress, with the decisions below taken (the user asked for the recommendation on each to be taken and recorded here).
+Status: implemented as five stacked PRs, [#68](https://github.com/wevm/zero/pull/68) ← [#69](https://github.com/wevm/zero/pull/69) ← [#70](https://github.com/wevm/zero/pull/70) ← [#71](https://github.com/wevm/zero/pull/71) ← [#72](https://github.com/wevm/zero/pull/72). The decisions below were taken as recommended (the user asked for that, and for each to be recorded here); §6 records what changed during implementation.
 
 ## TL;DR
 
@@ -180,6 +180,19 @@ Every PR: Linux Swift, vectors staleness, CLI, api-breaks, zbugs, e2e, and macOS
 | Synced-row shapes drift from zero-cache (stamped `_0_version`, server column names) | Scenario rows come from JS's compute pipeline; e2e against real zero-cache |
 | JS assertion bugs (like the flipped-join one in DESIGN.md) in new operators | Fuzz vectors; any JS bug found is recorded in DESIGN.md's list, and Swift does what JS should |
 | `ViewValue` new case breaks apps' exhaustive switches | Declared minor; release notes say to add a `.value` case |
-| Performance of grouped hydration on large tables | `groupCounts`/`count` source fast paths ported; benchmarks unchanged otherwise |
+| Performance of grouped hydration on large tables | Not ported: Swift's `MemorySource` has no `count`/`groupCounts` fast paths, so grouped hydration scans, as the rest of Swift's IVM does. A follow-up if benchmarks show it |
 
 Nothing here needs the user's decision before implementation; D1–D7 are taken as recommended. Before 1.0 each is changeable with a minor release. The one to look at first is D2 (`aggregates` on generated rows), the least JS-like.
+
+## 6. Implementation notes (what the plan didn't foresee)
+
+| Where | Note |
+| --- | --- |
+| CI (#69) | `pull_request` triggers in swift.yml, swift-macos.yml, zbugs-screenshots.yml and public-js.yml dropped `branches: [main]`, so stacked PRs get checks. Revert if you'd rather keep it main-only. |
+| Synced client (#70) | **Swift-only rebase on registration.** JS persists a pending mutation's writes, so its views keep the mutation's aggregate moves after a restart. Swift replays pending mutations at launch, before any query registers its optimistic aggregate, so their deltas would be lost. The client rebases pending mutations once a synced aggregate's optimism is first registered. The restart scenario covers it. |
+| Synced client (#70) | `tx.run` picks the synced or computing path by `g/<queryID>` (JS's `MutatorContext`). |
+| D3 (#71) | A `GroupRow`'s aggregate is `value`, where JS names the field after the function (`count`, `sum`, ...), which a generic struct can't spell. |
+| D2 (#71) | A column or relationship named `aggregates` becomes `aggregates_` (wire name kept); `aggregates`' own coding key moves aside. Covered by a sweep-codegen case. Only tables with relationships get the property. |
+| D1 (#71) | `ZeroValue` and `ZeroRow` refine `OptionalQueryElement`; `ZeroRow` refines `QueryElement`. `LiveQuery` keeps its row-reuse cache for queries of rows only. |
+| zbugs (#72) | The drift samples never ran `issueListCount`, so the drift test only checked its name. Three samples now cover it. The list's toolbar shows the count, falling back to the virtualizer's total as `list-page.tsx` does. |
+
