@@ -478,6 +478,35 @@ struct TransportProbeTests {
     }
   }
 
+  /// Connects cancelled just as the server writes the 101: every socket is closed. A `URLSessionWebSocketTask` cancelled as its 101 arrives completes as cancelled but kept about a third of these connections open, owned by nothing, until the server closed them.
+  @Test(arguments: TransportKind.allCases)
+  func cancellingAsThe101ArrivesClosesTheSocket(_ kind: TransportKind) async throws {
+    let (written, signal) = AsyncStream<Void>.makeStream()
+    let server = try await ScriptedServer { c in
+      await c.write(c.accept())
+      signal.yield()
+      await c.drain()
+      await c.closeTCP()
+    }
+    defer { Task { await server.shutdown() } }
+    let transport = kind.transport
+    let url = server.url
+    var signals = written.makeAsyncIterator()
+    for n in 0..<100 {
+      let connecting = Task { try await transport.connect(url: url, secProtocol: "p") }
+      _ = await signals.next()
+      // 0 to 600 µs after the write, spinning: a sleep overshoots the window.
+      if n % 4 > 0 {
+        let until = ContinuousClock.now + .microseconds(n % 4 * 200)
+        while ContinuousClock.now < until {}
+      }
+      connecting.cancel()
+      if let socket = try? await connecting.value { await socket.close(code: 1000, reason: "") }
+    }
+    #expect(
+      await server.allClosed(within: .seconds(5)), "\(server.openConnections) sockets left open")
+  }
+
   // MARK: - Leaks
 
   /// Sockets opened and closed through `TransportSocketFactory`, some mid-handshake: every one is closed, and none is kept alive.
