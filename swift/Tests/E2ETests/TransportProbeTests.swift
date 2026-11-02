@@ -280,7 +280,7 @@ struct TransportProbeTests {
   func clientCloseSendsTheCode(_ kind: TransportKind) async throws {
     let got = Box<ScriptedServer.Frame?>(nil)
     let server = try await ScriptedServer { c in
-      await c.write(c.accept())
+      await c.write(c.accept() + ScriptedServer.text("ready"))
       let f = await c.next()
       got.withLock { $0 = f }
       await c.write(ScriptedServer.close(f?.closeCode ?? 1000))
@@ -289,6 +289,8 @@ struct TransportProbeTests {
     }
     defer { Task { await server.shutdown() } }
     let socket = try await kind.transport.connect(url: server.url, secProtocol: nil)
+    // A message first: URLSession can return from the upgrade before it has switched the connection to WebSocket, and a close then ends the TCP connection without a close frame (DESIGN.md).
+    #expect(try await socket.receive() == .text("ready"))
     await socket.close(code: 4123, reason: "")
     #expect(await server.allClosed(within: .seconds(5)), "the socket stayed open after its close")
     // The server's script records the frame a moment after the connection closes.
