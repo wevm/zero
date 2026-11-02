@@ -102,6 +102,14 @@ final class ChaosProxy: @unchecked Sendable {
     get async { (try? await loop.submit { self.links.count }.get()) ?? -1 }
   }
 
+  /// One line for each open connection: what has crossed it so far.
+  var openConnectionReport: [String] {
+    get async {
+      (try? await loop.submit { self.links.values.sorted { $0.index < $1.index }.map(\.report) }
+        .get()) ?? []
+    }
+  }
+
   /// The connections accepted so far.
   var accepted: Int {
     get async { (try? await loop.submit { self.acceptedCount }.get()) ?? -1 }
@@ -125,13 +133,13 @@ final class ChaosProxy: @unchecked Sendable {
       client.close(promise: nil)
       return
     case .blackhole:
-      let link = Link(proxy: self, client: client, silent: .all)
+      let link = Link(proxy: self, client: client, silent: .all, index: acceptedCount)
       links[ObjectIdentifier(link)] = link
       try client.pipeline.syncOperations.addHandler(ClientSide(link))
     case .pass, .silentAfterUpgrade:
       let link = Link(
         proxy: self, client: client,
-        silent: knobs.accept == .silentAfterUpgrade ? .afterHeaders : .none)
+        silent: knobs.accept == .silentAfterUpgrade ? .afterHeaders : .none, index: acceptedCount)
       links[ObjectIdentifier(link)] = link
       try client.pipeline.syncOperations.addHandler(ClientSide(link))
       ClientBootstrap(group: loop)
@@ -172,11 +180,26 @@ final class ChaosProxy: @unchecked Sendable {
     var budget = 0
     var closed = false
     var serverGone = false
+    let index: Int
+    let opened = NIODeadline.now()
+    var upBytes = 0
+    var downBytes = 0
+    var upChunks: [String] = []
+    var downHead = ""
 
-    init(proxy: ChaosProxy, client: any Channel, silent: Silence) {
+    init(proxy: ChaosProxy, client: any Channel, silent: Silence, index: Int) {
       self.proxy = proxy
       self.client = client
       self.silent = silent
+      self.index = index
+    }
+
+    var report: String {
+      let age = (NIODeadline.now() - opened).nanoseconds / 1_000_000
+      return
+        "#\(index) age=\(age)ms server=\(server != nil) serverGone=\(serverGone) "
+        + "up=\(upBytes)B chunks=\(upChunks) down=\(downBytes)B downHead=\(downHead.debugDescription) "
+        + "clientActive=\(client.isActive)"
     }
 
     func serverConnected(_ channel: any Channel) {
@@ -189,12 +212,21 @@ final class ChaosProxy: @unchecked Sendable {
     }
 
     func fromClient(_ buffer: ByteBuffer) {
+      upBytes += buffer.readableBytes
+      if upChunks.count < 8 {
+        let head = buffer.getBytes(at: buffer.readerIndex, length: min(buffer.readableBytes, 2)) ?? []
+        upChunks.append("\(buffer.readableBytes):" + head.map { String($0, radix: 16) }.joined(separator: ","))
+      }
       guard silent != .all else { return }
       up.append(buffer)
       pump(tick: false)
     }
 
     func fromServer(_ buffer: ByteBuffer) {
+      downBytes += buffer.readableBytes
+      if downHead.isEmpty {
+        downHead = String(decoding: buffer.readableBytesView.prefix(16), as: UTF8.self)
+      }
       var buffer = buffer
       switch silent {
       case .all: return

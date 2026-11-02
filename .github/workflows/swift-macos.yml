@@ -133,6 +133,23 @@ jobs:
           done
           cat "$RUNNER_TEMP/server.log"
           exit 1
+      - name: Diagnose rapidOpenClose (temporary)
+        working-directory: swift
+        continue-on-error: true
+        env:
+          ZERO_E2E_URL: ws://127.0.0.1:4848
+        run: |
+          fails=0
+          for i in $(seq 1 25); do
+            swift test --skip-build --filter rapidOpenCloseLeavesNoSockets > "$RUNNER_TEMP/iso-$i.log" 2>&1 || { fails=$((fails+1)); echo "isolated run $i failed"; grep '\[rapidOpenClose\]' "$RUNNER_TEMP/iso-$i.log"; }
+          done
+          echo "isolated: $fails/25 failed"
+          fails=0
+          for i in $(seq 1 4); do
+            swift test --skip-build --filter E2ETests > "$RUNNER_TEMP/full-$i.log" 2>&1 || true
+            if grep -q '✘ Test rapidOpenCloseLeavesNoSockets' "$RUNNER_TEMP/full-$i.log"; then fails=$((fails+1)); echo "full run $i failed"; grep '\[rapidOpenClose\]' "$RUNNER_TEMP/full-$i.log"; fi
+          done
+          echo "full suite: $fails/4 failed"
       - name: Test
         working-directory: swift
         env:

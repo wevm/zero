@@ -496,11 +496,15 @@ struct HardenE2ETests {
       _ = try zero.liveQuery(E2EApp.open())
       try await Task.sleep(for: .milliseconds(n * 5))
       zero.close()
+      print("[rapidOpenClose] closed \(n) after \(n * 5)ms; accepted \(await proxy.accepted)")
     }
     let deadline = ContinuousClock.now + .seconds(5)
     while await proxy.openConnections > 0, ContinuousClock.now < deadline {
       try await Task.sleep(for: .milliseconds(50))
     }
+    let report = await proxy.openConnectionReport
+    print("[rapidOpenClose] accepted \(await proxy.accepted), open \(report.count)")
+    for line in report { print("[rapidOpenClose] open \(line)") }
     #expect(await proxy.openConnections == 0)
     await proxy.shutdown()
   }
