@@ -46,7 +46,14 @@
     private struct State {
       var opened: CheckedContinuation<Void, any Error>?
       var close: SocketClosed?
+      /// The connect was cancelled before the handshake ended.
+      var abandoned = false
+      /// The handshake ended: the task opened or completed.
+      var settled = false
     }
+
+    /// How long a handshake abandoned by its connect may still finish, so that it ends with a close frame rather than a cancel.
+    static let abandonedHandshakeGrace: DispatchTimeInterval = .seconds(1)
 
     let task: URLSessionWebSocketTask
     private let state = Mutex(State())
@@ -56,15 +63,40 @@
     }
 
     /// Starts the task and waits for the handshake.
+    ///
+    /// Cancelling returns at once, as closing a connecting JS `WebSocket` does, but the handshake isn't cancelled while it may be finishing: a `URLSessionWebSocketTask` cancelled as its 101 arrives completes with `NSURLErrorCancelled` yet keeps the upgraded TCP connection open, owned by no task or session, until the server closes it. So the abandoned handshake gets `abandonedHandshakeGrace` to end. If it opens, it closes with a close frame, as RFC 6455 has a client failing an established connection do. If it hasn't ended by then (a server that doesn't answer), it is cancelled; only a 101 that arrives just then can still be kept open.
     func open() async throws {
       try await withTaskCancellationHandler {
         try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, any Error>) in
-          state.withLock { $0.opened = c }
+          let abandoned = state.withLock { s in
+            if !s.abandoned { s.opened = c }
+            return s.abandoned
+          }
+          if abandoned {
+            // Cancelled before it started: there's no handshake to finish.
+            task.cancel()
+            c.resume(throwing: CancellationError())
+            return
+          }
           task.delegate = self
           task.resume()
         }
       } onCancel: {
-        task.cancel()
+        abandon()
+      }
+    }
+
+    private func abandon() {
+      let c = state.withLock { s in
+        s.abandoned = true
+        defer { s.opened = nil }
+        return s.opened
+      }
+      // Not started yet (`open` cancels it), or the handshake already ended.
+      guard let c else { return }
+      c.resume(throwing: CancellationError())
+      DispatchQueue.global().asyncAfter(deadline: .now() + Self.abandonedHandshakeGrace) {
+        if !self.state.withLock({ $0.settled }) { self.task.cancel() }
       }
     }
 
@@ -80,7 +112,17 @@
       _ session: URLSession, webSocketTask: URLSessionWebSocketTask,
       didOpenWithProtocol protocol: String?
     ) {
-      resumeOpen(.success(()))
+      let c = state.withLock { s in
+        s.settled = true
+        defer { s.opened = nil }
+        return s.opened
+      }
+      if let c {
+        c.resume()
+      } else {
+        // Abandoned: the connect already returned.
+        webSocketTask.cancel(with: .normalClosure, reason: nil)
+      }
     }
 
     func urlSession(
@@ -98,6 +140,7 @@
       _ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?
     ) {
       let close = state.withLock { s in
+        s.settled = true
         if s.close == nil {
           s.close = SocketClosed(
             code: 1006, reason: error.map { $0.localizedDescription } ?? "", wasClean: false)

@@ -487,7 +487,8 @@ struct HardenE2ETests {
   }
 
   /// Clients opened and closed in a burst, some mid-handshake: every
-  /// socket is closed.
+  /// socket is closed, including one closed just as its 101 arrives, which
+  /// a cancelled `URLSessionWebSocketTask` kept open.
   @Test func rapidOpenCloseLeavesNoSockets() async throws {
     defer { chaos.cleanUp() }
     let proxy = try await ChaosProxy(upstream: E2E.url!)
@@ -501,7 +502,10 @@ struct HardenE2ETests {
     while await proxy.openConnections > 0, ContinuousClock.now < deadline {
       try await Task.sleep(for: .milliseconds(50))
     }
-    #expect(await proxy.openConnections == 0)
+    let report = await proxy.openConnectionReport
+    #expect(
+      await proxy.openConnections == 0,
+      "left open: \(report.joined(separator: "; "))")
     await proxy.shutdown()
   }
 

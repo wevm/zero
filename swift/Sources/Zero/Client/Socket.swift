@@ -57,8 +57,9 @@ final class TransportConnection: SocketConnection {
   private var closed = false
   private let outgoing: AsyncStream<Outgoing>.Continuation
   /// The task waiting for `Transport.connect`, until it returns. Closing
-  /// cancels it, which aborts the handshake, as closing a connecting JS
-  /// `WebSocket` does.
+  /// cancels it, which ends the handshake, as closing a connecting JS
+  /// `WebSocket` does: the transport aborts it, or closes the socket if it
+  /// opens anyway.
   private var connecting: Task<Void, Never>?
   /// The socket can deliver part of a frame cut off by the connection's end (`DeliversPartialFrames`).
   private(set) var deliversPartialFrames = false
