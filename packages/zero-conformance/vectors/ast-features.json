@@ -1,0 +1,2641 @@
+{
+  "formatVersion": 1,
+  "kind": "ast-features",
+  "description": "ASTs with aggregates, groupBy and JSON paths: whether strictASTSchema accepts each, and for those it accepts normalizeAST(ast) (as JSON), hashOfAST(ast), and mapAST(ast) to the zql test schema server names or its error.",
+  "cases": [
+    {
+      "ast": {
+        "table": "issue",
+        "aggregate": {
+          "fn": "count"
+        }
+      },
+      "valid": true,
+      "normalized": {
+        "table": "issue",
+        "aggregate": {
+          "fn": "count"
+        }
+      },
+      "hash": "1nuthqf1sf47pw",
+      "mapped": {
+        "table": "issues",
+        "aggregate": {
+          "fn": "count"
+        }
+      }
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "where": {
+          "type": "simple",
+          "op": "=",
+          "left": {
+            "type": "column",
+            "name": "closed"
+          },
+          "right": {
+            "type": "literal",
+            "value": false
+          }
+        },
+        "aggregate": {
+          "fn": "sum",
+          "field": "createdAt"
+        }
+      },
+      "valid": true,
+      "normalized": {
+        "table": "issue",
+        "where": {
+          "type": "simple",
+          "op": "=",
+          "left": {
+            "type": "column",
+            "name": "closed"
+          },
+          "right": {
+            "type": "literal",
+            "value": false
+          }
+        },
+        "aggregate": {
+          "fn": "sum",
+          "field": "createdAt"
+        }
+      },
+      "hash": "16tadnc1vdlbnb",
+      "mapped": {
+        "table": "issues",
+        "where": {
+          "type": "simple",
+          "op": "=",
+          "left": {
+            "type": "column",
+            "name": "closed"
+          },
+          "right": {
+            "type": "literal",
+            "value": false
+          }
+        },
+        "aggregate": {
+          "fn": "sum",
+          "field": "createdAt"
+        }
+      }
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "orderBy": [
+          [
+            "createdAt",
+            "desc"
+          ]
+        ],
+        "limit": 10,
+        "aggregate": {
+          "fn": "max",
+          "field": "title"
+        }
+      },
+      "valid": true,
+      "normalized": {
+        "table": "issue",
+        "limit": 10,
+        "orderBy": [
+          [
+            "createdAt",
+            "desc"
+          ]
+        ],
+        "aggregate": {
+          "fn": "max",
+          "field": "title"
+        }
+      },
+      "hash": "1udf9hs08wbqs1",
+      "mapped": {
+        "table": "issues",
+        "limit": 10,
+        "orderBy": [
+          [
+            "createdAt",
+            "desc"
+          ]
+        ],
+        "aggregate": {
+          "fn": "max",
+          "field": "title"
+        }
+      }
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "aggregate": {
+          "fn": "count",
+          "field": "title"
+        }
+      },
+      "valid": true,
+      "normalized": {
+        "table": "issue",
+        "aggregate": {
+          "fn": "count",
+          "field": "title"
+        }
+      },
+      "hash": "1yp79bv1l9rdom",
+      "mapped": {
+        "table": "issues",
+        "aggregate": {
+          "fn": "count",
+          "field": "title"
+        }
+      }
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "aggregate": {
+          "fn": "min",
+          "field": "ownerId"
+        }
+      },
+      "valid": true,
+      "normalized": {
+        "table": "issue",
+        "aggregate": {
+          "fn": "min",
+          "field": "ownerId"
+        }
+      },
+      "hash": "0yh5tqh0uhq71r",
+      "mapped": {
+        "table": "issues",
+        "aggregate": {
+          "fn": "min",
+          "field": "owner_id"
+        }
+      }
+    },
+    {
+      "ast": {
+        "table": "user",
+        "aggregate": {
+          "fn": "avg",
+          "field": "metadata",
+          "path": [
+            "points"
+          ]
+        }
+      },
+      "valid": true,
+      "normalized": {
+        "table": "user",
+        "aggregate": {
+          "fn": "avg",
+          "field": "metadata",
+          "path": [
+            "points"
+          ]
+        }
+      },
+      "hash": "15y6vr61a5d9qu",
+      "mapped": {
+        "table": "users",
+        "aggregate": {
+          "fn": "avg",
+          "field": "metadata",
+          "path": [
+            "points"
+          ]
+        }
+      }
+    },
+    {
+      "ast": {
+        "table": "user",
+        "aggregate": {
+          "fn": "min",
+          "field": "metadata",
+          "path": [
+            "a",
+            0
+          ]
+        }
+      },
+      "valid": true,
+      "normalized": {
+        "table": "user",
+        "aggregate": {
+          "fn": "min",
+          "field": "metadata",
+          "path": [
+            "a",
+            0
+          ]
+        }
+      },
+      "hash": "0km6n9g1ue0xx4",
+      "mapped": {
+        "table": "users",
+        "aggregate": {
+          "fn": "min",
+          "field": "metadata",
+          "path": [
+            "a",
+            0
+          ]
+        }
+      }
+    },
+    {
+      "ast": {
+        "table": "user",
+        "aggregate": {
+          "fn": "max",
+          "field": "metadata",
+          "path": [
+            "0"
+          ]
+        }
+      },
+      "valid": true,
+      "normalized": {
+        "table": "user",
+        "aggregate": {
+          "fn": "max",
+          "field": "metadata",
+          "path": [
+            "0"
+          ]
+        }
+      },
+      "hash": "0n64n771sgvzs5",
+      "mapped": {
+        "table": "users",
+        "aggregate": {
+          "fn": "max",
+          "field": "metadata",
+          "path": [
+            "0"
+          ]
+        }
+      }
+    },
+    {
+      "ast": {
+        "table": "user",
+        "aggregate": {
+          "fn": "max",
+          "field": "metadata",
+          "path": [
+            0
+          ]
+        }
+      },
+      "valid": true,
+      "normalized": {
+        "table": "user",
+        "aggregate": {
+          "fn": "max",
+          "field": "metadata",
+          "path": [
+            0
+          ]
+        }
+      },
+      "hash": "1mfgp0k08wpdvd",
+      "mapped": {
+        "table": "users",
+        "aggregate": {
+          "fn": "max",
+          "field": "metadata",
+          "path": [
+            0
+          ]
+        }
+      }
+    },
+    {
+      "ast": {
+        "table": "user",
+        "aggregate": {
+          "fn": "sum",
+          "field": "metadata",
+          "path": [
+            2147483647
+          ]
+        }
+      },
+      "valid": true,
+      "normalized": {
+        "table": "user",
+        "aggregate": {
+          "fn": "sum",
+          "field": "metadata",
+          "path": [
+            2147483647
+          ]
+        }
+      },
+      "hash": "1cbd9e102s39dc",
+      "mapped": {
+        "table": "users",
+        "aggregate": {
+          "fn": "sum",
+          "field": "metadata",
+          "path": [
+            2147483647
+          ]
+        }
+      }
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "groupBy": [
+          "ownerId"
+        ]
+      },
+      "valid": true,
+      "normalized": {
+        "table": "issue",
+        "groupBy": [
+          "ownerId"
+        ]
+      },
+      "hash": "0j03msr16ebvwx",
+      "mapped": {
+        "table": "issues",
+        "groupBy": [
+          "owner_id"
+        ]
+      }
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "groupBy": [
+          "closed",
+          "ownerId"
+        ]
+      },
+      "valid": true,
+      "normalized": {
+        "table": "issue",
+        "groupBy": [
+          "closed",
+          "ownerId"
+        ]
+      },
+      "hash": "1w3jtqn1hqgmzs",
+      "mapped": {
+        "table": "issues",
+        "groupBy": [
+          "closed",
+          "owner_id"
+        ]
+      }
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "groupBy": [
+          "ownerId",
+          "closed"
+        ],
+        "orderBy": [
+          [
+            "closed",
+            "desc"
+          ]
+        ],
+        "aggregate": {
+          "fn": "count"
+        }
+      },
+      "valid": true,
+      "normalized": {
+        "table": "issue",
+        "orderBy": [
+          [
+            "closed",
+            "desc"
+          ]
+        ],
+        "aggregate": {
+          "fn": "count"
+        },
+        "groupBy": [
+          "ownerId",
+          "closed"
+        ]
+      },
+      "hash": "1q9rlne0pvjhxs",
+      "mapped": {
+        "table": "issues",
+        "orderBy": [
+          [
+            "closed",
+            "desc"
+          ]
+        ],
+        "aggregate": {
+          "fn": "count"
+        },
+        "groupBy": [
+          "owner_id",
+          "closed"
+        ]
+      }
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "where": {
+          "type": "simple",
+          "op": "=",
+          "left": {
+            "type": "column",
+            "name": "closed"
+          },
+          "right": {
+            "type": "literal",
+            "value": false
+          }
+        },
+        "groupBy": [
+          "ownerId"
+        ],
+        "aggregate": {
+          "fn": "avg",
+          "field": "createdAt"
+        }
+      },
+      "valid": true,
+      "normalized": {
+        "table": "issue",
+        "where": {
+          "type": "simple",
+          "op": "=",
+          "left": {
+            "type": "column",
+            "name": "closed"
+          },
+          "right": {
+            "type": "literal",
+            "value": false
+          }
+        },
+        "aggregate": {
+          "fn": "avg",
+          "field": "createdAt"
+        },
+        "groupBy": [
+          "ownerId"
+        ]
+      },
+      "hash": "08tfax418leooh",
+      "mapped": {
+        "table": "issues",
+        "where": {
+          "type": "simple",
+          "op": "=",
+          "left": {
+            "type": "column",
+            "name": "closed"
+          },
+          "right": {
+            "type": "literal",
+            "value": false
+          }
+        },
+        "aggregate": {
+          "fn": "avg",
+          "field": "createdAt"
+        },
+        "groupBy": [
+          "owner_id"
+        ]
+      }
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "aggregate": {
+          "fn": "count",
+          "distinct": [
+            "ownerId"
+          ]
+        }
+      },
+      "valid": true,
+      "normalized": {
+        "table": "issue",
+        "aggregate": {
+          "fn": "count",
+          "distinct": [
+            "ownerId"
+          ]
+        }
+      },
+      "hash": "0rgdt820vxcx7o",
+      "mapped": {
+        "table": "issues",
+        "aggregate": {
+          "fn": "count",
+          "distinct": [
+            "owner_id"
+          ]
+        }
+      }
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "aggregate": {
+          "fn": "count",
+          "distinct": [
+            "ownerId",
+            "closed"
+          ]
+        }
+      },
+      "valid": true,
+      "normalized": {
+        "table": "issue",
+        "aggregate": {
+          "fn": "count",
+          "distinct": [
+            "ownerId",
+            "closed"
+          ]
+        }
+      },
+      "hash": "0s0aqhe0gubnbs",
+      "mapped": {
+        "table": "issues",
+        "aggregate": {
+          "fn": "count",
+          "distinct": [
+            "owner_id",
+            "closed"
+          ]
+        }
+      }
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "related": [
+          {
+            "correlation": {
+              "parentField": [
+                "id"
+              ],
+              "childField": [
+                "issueId"
+              ]
+            },
+            "subquery": {
+              "table": "comment",
+              "alias": "comments"
+            },
+            "aggregate": {
+              "fn": "count"
+            }
+          }
+        ]
+      },
+      "valid": true,
+      "normalized": {
+        "table": "issue",
+        "related": [
+          {
+            "correlation": {
+              "parentField": [
+                "id"
+              ],
+              "childField": [
+                "issueId"
+              ]
+            },
+            "subquery": {
+              "table": "comment",
+              "alias": "comments"
+            },
+            "aggregate": {
+              "fn": "count"
+            }
+          }
+        ]
+      },
+      "hash": "00t9gol1wy8m2e",
+      "mapped": {
+        "table": "issues",
+        "related": [
+          {
+            "correlation": {
+              "parentField": [
+                "id"
+              ],
+              "childField": [
+                "issue_id"
+              ]
+            },
+            "subquery": {
+              "table": "comments",
+              "alias": "comments"
+            },
+            "aggregate": {
+              "fn": "count"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "related": [
+          {
+            "correlation": {
+              "parentField": [
+                "id"
+              ],
+              "childField": [
+                "issueId"
+              ]
+            },
+            "subquery": {
+              "table": "comment",
+              "alias": "comments",
+              "where": {
+                "type": "simple",
+                "op": "=",
+                "left": {
+                  "type": "column",
+                  "name": "authorId"
+                },
+                "right": {
+                  "type": "literal",
+                  "value": "u1"
+                }
+              }
+            },
+            "aggregate": {
+              "fn": "sum",
+              "field": "createdAt"
+            }
+          }
+        ]
+      },
+      "valid": true,
+      "normalized": {
+        "table": "issue",
+        "related": [
+          {
+            "correlation": {
+              "parentField": [
+                "id"
+              ],
+              "childField": [
+                "issueId"
+              ]
+            },
+            "subquery": {
+              "table": "comment",
+              "alias": "comments",
+              "where": {
+                "type": "simple",
+                "op": "=",
+                "left": {
+                  "type": "column",
+                  "name": "authorId"
+                },
+                "right": {
+                  "type": "literal",
+                  "value": "u1"
+                }
+              }
+            },
+            "aggregate": {
+              "fn": "sum",
+              "field": "createdAt"
+            }
+          }
+        ]
+      },
+      "hash": "1oou1d81tdg7ql",
+      "mapped": {
+        "table": "issues",
+        "related": [
+          {
+            "correlation": {
+              "parentField": [
+                "id"
+              ],
+              "childField": [
+                "issue_id"
+              ]
+            },
+            "subquery": {
+              "table": "comments",
+              "alias": "comments",
+              "where": {
+                "type": "simple",
+                "op": "=",
+                "left": {
+                  "type": "column",
+                  "name": "authorId"
+                },
+                "right": {
+                  "type": "literal",
+                  "value": "u1"
+                }
+              }
+            },
+            "aggregate": {
+              "fn": "sum",
+              "field": "createdAt"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "related": [
+          {
+            "correlation": {
+              "parentField": [
+                "ownerId"
+              ],
+              "childField": [
+                "id"
+              ]
+            },
+            "subquery": {
+              "table": "user",
+              "alias": "owner"
+            }
+          },
+          {
+            "correlation": {
+              "parentField": [
+                "id"
+              ],
+              "childField": [
+                "issueId"
+              ]
+            },
+            "subquery": {
+              "table": "comment",
+              "alias": "comments"
+            },
+            "aggregate": {
+              "fn": "max",
+              "field": "text"
+            }
+          }
+        ]
+      },
+      "valid": true,
+      "normalized": {
+        "table": "issue",
+        "related": [
+          {
+            "correlation": {
+              "parentField": [
+                "id"
+              ],
+              "childField": [
+                "issueId"
+              ]
+            },
+            "subquery": {
+              "table": "comment",
+              "alias": "comments"
+            },
+            "aggregate": {
+              "fn": "max",
+              "field": "text"
+            }
+          },
+          {
+            "correlation": {
+              "parentField": [
+                "ownerId"
+              ],
+              "childField": [
+                "id"
+              ]
+            },
+            "subquery": {
+              "table": "user",
+              "alias": "owner"
+            }
+          }
+        ]
+      },
+      "hash": "1jrv4da1xct0y6",
+      "mapped": {
+        "table": "issues",
+        "related": [
+          {
+            "correlation": {
+              "parentField": [
+                "owner_id"
+              ],
+              "childField": [
+                "id"
+              ]
+            },
+            "subquery": {
+              "table": "users",
+              "alias": "owner"
+            }
+          },
+          {
+            "correlation": {
+              "parentField": [
+                "id"
+              ],
+              "childField": [
+                "issue_id"
+              ]
+            },
+            "subquery": {
+              "table": "comments",
+              "alias": "comments"
+            },
+            "aggregate": {
+              "fn": "max",
+              "field": "text"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "related": [
+          {
+            "correlation": {
+              "parentField": [
+                "id"
+              ],
+              "childField": [
+                "issueId"
+              ]
+            },
+            "subquery": {
+              "table": "issueLabel",
+              "alias": "labels",
+              "related": [
+                {
+                  "correlation": {
+                    "parentField": [
+                      "labelId"
+                    ],
+                    "childField": [
+                      "id"
+                    ]
+                  },
+                  "subquery": {
+                    "table": "comment",
+                    "alias": "labels"
+                  }
+                }
+              ]
+            },
+            "aggregate": {
+              "fn": "min",
+              "field": "issueId"
+            }
+          }
+        ]
+      },
+      "valid": true,
+      "normalized": {
+        "table": "issue",
+        "related": [
+          {
+            "correlation": {
+              "parentField": [
+                "id"
+              ],
+              "childField": [
+                "issueId"
+              ]
+            },
+            "subquery": {
+              "table": "issueLabel",
+              "alias": "labels",
+              "related": [
+                {
+                  "correlation": {
+                    "parentField": [
+                      "labelId"
+                    ],
+                    "childField": [
+                      "id"
+                    ]
+                  },
+                  "subquery": {
+                    "table": "comment",
+                    "alias": "labels"
+                  }
+                }
+              ]
+            },
+            "aggregate": {
+              "fn": "min",
+              "field": "issueId"
+            }
+          }
+        ]
+      },
+      "hash": "066xvz0120pz9d",
+      "mapped": {
+        "table": "issues",
+        "related": [
+          {
+            "correlation": {
+              "parentField": [
+                "id"
+              ],
+              "childField": [
+                "issueId"
+              ]
+            },
+            "subquery": {
+              "table": "issueLabel",
+              "alias": "labels",
+              "related": [
+                {
+                  "correlation": {
+                    "parentField": [
+                      "labelId"
+                    ],
+                    "childField": [
+                      "id"
+                    ]
+                  },
+                  "subquery": {
+                    "table": "comments",
+                    "alias": "labels"
+                  }
+                }
+              ]
+            },
+            "aggregate": {
+              "fn": "min",
+              "field": "issue_id"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "related": [
+          {
+            "correlation": {
+              "parentField": [
+                "id"
+              ],
+              "childField": [
+                "issueId"
+              ]
+            },
+            "subquery": {
+              "table": "comment",
+              "alias": "comments",
+              "related": [
+                {
+                  "correlation": {
+                    "parentField": [
+                      "authorId"
+                    ],
+                    "childField": [
+                      "id"
+                    ]
+                  },
+                  "subquery": {
+                    "table": "user",
+                    "alias": "author"
+                  },
+                  "aggregate": {
+                    "fn": "avg",
+                    "field": "metadata",
+                    "path": [
+                      "n"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "valid": true,
+      "normalized": {
+        "table": "issue",
+        "related": [
+          {
+            "correlation": {
+              "parentField": [
+                "id"
+              ],
+              "childField": [
+                "issueId"
+              ]
+            },
+            "subquery": {
+              "table": "comment",
+              "alias": "comments",
+              "related": [
+                {
+                  "correlation": {
+                    "parentField": [
+                      "authorId"
+                    ],
+                    "childField": [
+                      "id"
+                    ]
+                  },
+                  "subquery": {
+                    "table": "user",
+                    "alias": "author"
+                  },
+                  "aggregate": {
+                    "fn": "avg",
+                    "field": "metadata",
+                    "path": [
+                      "n"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "hash": "0f0e44i0ovhjxc",
+      "mapped": {
+        "table": "issues",
+        "related": [
+          {
+            "correlation": {
+              "parentField": [
+                "id"
+              ],
+              "childField": [
+                "issue_id"
+              ]
+            },
+            "subquery": {
+              "table": "comments",
+              "alias": "comments",
+              "related": [
+                {
+                  "correlation": {
+                    "parentField": [
+                      "authorId"
+                    ],
+                    "childField": [
+                      "id"
+                    ]
+                  },
+                  "subquery": {
+                    "table": "users",
+                    "alias": "author"
+                  },
+                  "aggregate": {
+                    "fn": "avg",
+                    "field": "metadata",
+                    "path": [
+                      "n"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "ast": {
+        "table": "user",
+        "where": {
+          "type": "simple",
+          "op": "=",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": [
+              "registrar"
+            ]
+          },
+          "right": {
+            "type": "literal",
+            "value": "x"
+          }
+        }
+      },
+      "valid": true,
+      "normalized": {
+        "table": "user",
+        "where": {
+          "type": "simple",
+          "op": "=",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": [
+              "registrar"
+            ]
+          },
+          "right": {
+            "type": "literal",
+            "value": "x"
+          }
+        }
+      },
+      "hash": "1uen4p21ambmp4",
+      "mapped": {
+        "table": "users",
+        "where": {
+          "type": "simple",
+          "op": "=",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": [
+              "registrar"
+            ]
+          },
+          "right": {
+            "type": "literal",
+            "value": "x"
+          }
+        }
+      }
+    },
+    {
+      "ast": {
+        "table": "user",
+        "where": {
+          "type": "simple",
+          "op": "LIKE",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": [
+              "altContacts",
+              0
+            ]
+          },
+          "right": {
+            "type": "literal",
+            "value": "a%"
+          }
+        }
+      },
+      "valid": true,
+      "normalized": {
+        "table": "user",
+        "where": {
+          "type": "simple",
+          "op": "LIKE",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": [
+              "altContacts",
+              0
+            ]
+          },
+          "right": {
+            "type": "literal",
+            "value": "a%"
+          }
+        }
+      },
+      "hash": "1we1lof1jn0wqo",
+      "mapped": {
+        "table": "users",
+        "where": {
+          "type": "simple",
+          "op": "LIKE",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": [
+              "altContacts",
+              0
+            ]
+          },
+          "right": {
+            "type": "literal",
+            "value": "a%"
+          }
+        }
+      }
+    },
+    {
+      "ast": {
+        "table": "user",
+        "where": {
+          "type": "simple",
+          "op": "IN",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": [
+              "n"
+            ]
+          },
+          "right": {
+            "type": "literal",
+            "value": [
+              1,
+              2.5,
+              0
+            ]
+          }
+        }
+      },
+      "valid": true,
+      "normalized": {
+        "table": "user",
+        "where": {
+          "type": "simple",
+          "op": "IN",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": [
+              "n"
+            ]
+          },
+          "right": {
+            "type": "literal",
+            "value": [
+              1,
+              2.5,
+              0
+            ]
+          }
+        }
+      },
+      "hash": "03es6yo12u4ncr",
+      "mapped": {
+        "table": "users",
+        "where": {
+          "type": "simple",
+          "op": "IN",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": [
+              "n"
+            ]
+          },
+          "right": {
+            "type": "literal",
+            "value": [
+              1,
+              2.5,
+              0
+            ]
+          }
+        }
+      }
+    },
+    {
+      "ast": {
+        "table": "user",
+        "where": {
+          "type": "simple",
+          "op": "NOT IN",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": [
+              "n"
+            ]
+          },
+          "right": {
+            "type": "literal",
+            "value": null
+          }
+        }
+      },
+      "valid": true,
+      "normalized": {
+        "table": "user",
+        "where": {
+          "type": "simple",
+          "op": "NOT IN",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": [
+              "n"
+            ]
+          },
+          "right": {
+            "type": "literal",
+            "value": null
+          }
+        }
+      },
+      "hash": "115fpiv0om48sy",
+      "mapped": {
+        "table": "users",
+        "where": {
+          "type": "simple",
+          "op": "NOT IN",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": [
+              "n"
+            ]
+          },
+          "right": {
+            "type": "literal",
+            "value": null
+          }
+        }
+      }
+    },
+    {
+      "ast": {
+        "table": "user",
+        "where": {
+          "type": "simple",
+          "op": "IN",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": [
+              "n"
+            ]
+          },
+          "right": {
+            "type": "literal",
+            "value": []
+          }
+        }
+      },
+      "valid": true,
+      "normalized": {
+        "table": "user",
+        "where": {
+          "type": "simple",
+          "op": "IN",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": [
+              "n"
+            ]
+          },
+          "right": {
+            "type": "literal",
+            "value": []
+          }
+        }
+      },
+      "hash": "0ugvt5u0z1qn4b",
+      "mapped": {
+        "table": "users",
+        "where": {
+          "type": "simple",
+          "op": "IN",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": [
+              "n"
+            ]
+          },
+          "right": {
+            "type": "literal",
+            "value": []
+          }
+        }
+      }
+    },
+    {
+      "ast": {
+        "table": "user",
+        "where": {
+          "type": "simple",
+          "op": "IS",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": [
+              "n"
+            ]
+          },
+          "right": {
+            "type": "literal",
+            "value": null
+          }
+        }
+      },
+      "valid": true,
+      "normalized": {
+        "table": "user",
+        "where": {
+          "type": "simple",
+          "op": "IS",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": [
+              "n"
+            ]
+          },
+          "right": {
+            "type": "literal",
+            "value": null
+          }
+        }
+      },
+      "hash": "0e79m431etp7qo",
+      "mapped": {
+        "table": "users",
+        "where": {
+          "type": "simple",
+          "op": "IS",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": [
+              "n"
+            ]
+          },
+          "right": {
+            "type": "literal",
+            "value": null
+          }
+        }
+      }
+    },
+    {
+      "ast": {
+        "table": "user",
+        "where": {
+          "type": "simple",
+          "op": "=",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": [
+              "login"
+            ]
+          },
+          "right": {
+            "type": "static",
+            "anchor": "authData",
+            "field": "sub"
+          }
+        }
+      },
+      "valid": true,
+      "normalized": {
+        "table": "user",
+        "where": {
+          "type": "simple",
+          "op": "=",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": [
+              "login"
+            ]
+          },
+          "right": {
+            "type": "static",
+            "anchor": "authData",
+            "field": "sub"
+          }
+        }
+      },
+      "hash": "0h9rzej1owws5m",
+      "mapped": {
+        "table": "users",
+        "where": {
+          "type": "simple",
+          "op": "=",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": [
+              "login"
+            ]
+          },
+          "right": {
+            "type": "static",
+            "anchor": "authData",
+            "field": "sub"
+          }
+        }
+      }
+    },
+    {
+      "ast": {
+        "table": "user",
+        "where": {
+          "type": "and",
+          "conditions": [
+            {
+              "type": "simple",
+              "op": "=",
+              "left": {
+                "type": "literal",
+                "value": 1
+              },
+              "right": {
+                "type": "literal",
+                "value": 1
+              }
+            },
+            {
+              "type": "simple",
+              "op": "=",
+              "left": {
+                "type": "json",
+                "value": {
+                  "type": "column",
+                  "name": "metadata"
+                },
+                "path": [
+                  "b"
+                ]
+              },
+              "right": {
+                "type": "literal",
+                "value": 1
+              }
+            },
+            {
+              "type": "simple",
+              "op": "=",
+              "left": {
+                "type": "json",
+                "value": {
+                  "type": "column",
+                  "name": "metadata"
+                },
+                "path": [
+                  "a",
+                  1
+                ]
+              },
+              "right": {
+                "type": "literal",
+                "value": 1
+              }
+            },
+            {
+              "type": "simple",
+              "op": "=",
+              "left": {
+                "type": "json",
+                "value": {
+                  "type": "column",
+                  "name": "metadata"
+                },
+                "path": [
+                  "a",
+                  "1"
+                ]
+              },
+              "right": {
+                "type": "literal",
+                "value": 1
+              }
+            },
+            {
+              "type": "simple",
+              "op": "=",
+              "left": {
+                "type": "json",
+                "value": {
+                  "type": "column",
+                  "name": "metadata"
+                },
+                "path": [
+                  "a",
+                  0
+                ]
+              },
+              "right": {
+                "type": "literal",
+                "value": 1
+              }
+            },
+            {
+              "type": "simple",
+              "op": "=",
+              "left": {
+                "type": "json",
+                "value": {
+                  "type": "column",
+                  "name": "id"
+                },
+                "path": [
+                  "a"
+                ]
+              },
+              "right": {
+                "type": "literal",
+                "value": 1
+              }
+            },
+            {
+              "type": "simple",
+              "op": "=",
+              "left": {
+                "type": "column",
+                "name": "name"
+              },
+              "right": {
+                "type": "literal",
+                "value": "n"
+              }
+            }
+          ]
+        }
+      },
+      "valid": true,
+      "normalized": {
+        "table": "user",
+        "where": {
+          "type": "and",
+          "conditions": [
+            {
+              "type": "simple",
+              "op": "=",
+              "left": {
+                "type": "column",
+                "name": "name"
+              },
+              "right": {
+                "type": "literal",
+                "value": "n"
+              }
+            },
+            {
+              "type": "simple",
+              "op": "=",
+              "left": {
+                "type": "json",
+                "value": {
+                  "type": "column",
+                  "name": "id"
+                },
+                "path": [
+                  "a"
+                ]
+              },
+              "right": {
+                "type": "literal",
+                "value": 1
+              }
+            },
+            {
+              "type": "simple",
+              "op": "=",
+              "left": {
+                "type": "json",
+                "value": {
+                  "type": "column",
+                  "name": "metadata"
+                },
+                "path": [
+                  "a",
+                  0
+                ]
+              },
+              "right": {
+                "type": "literal",
+                "value": 1
+              }
+            },
+            {
+              "type": "simple",
+              "op": "=",
+              "left": {
+                "type": "json",
+                "value": {
+                  "type": "column",
+                  "name": "metadata"
+                },
+                "path": [
+                  "a",
+                  1
+                ]
+              },
+              "right": {
+                "type": "literal",
+                "value": 1
+              }
+            },
+            {
+              "type": "simple",
+              "op": "=",
+              "left": {
+                "type": "json",
+                "value": {
+                  "type": "column",
+                  "name": "metadata"
+                },
+                "path": [
+                  "a",
+                  "1"
+                ]
+              },
+              "right": {
+                "type": "literal",
+                "value": 1
+              }
+            },
+            {
+              "type": "simple",
+              "op": "=",
+              "left": {
+                "type": "json",
+                "value": {
+                  "type": "column",
+                  "name": "metadata"
+                },
+                "path": [
+                  "b"
+                ]
+              },
+              "right": {
+                "type": "literal",
+                "value": 1
+              }
+            },
+            {
+              "type": "simple",
+              "op": "=",
+              "left": {
+                "type": "literal",
+                "value": 1
+              },
+              "right": {
+                "type": "literal",
+                "value": 1
+              }
+            }
+          ]
+        }
+      },
+      "hash": "0fm392108mwq2c",
+      "mapError": "column \"id\" of \"user\" table is not a json column"
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "where": {
+          "type": "simple",
+          "op": "=",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "title"
+            },
+            "path": [
+              "a"
+            ]
+          },
+          "right": {
+            "type": "literal",
+            "value": "x"
+          }
+        }
+      },
+      "valid": true,
+      "normalized": {
+        "table": "issue",
+        "where": {
+          "type": "simple",
+          "op": "=",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "title"
+            },
+            "path": [
+              "a"
+            ]
+          },
+          "right": {
+            "type": "literal",
+            "value": "x"
+          }
+        }
+      },
+      "hash": "149ghp310rsbmp",
+      "mapError": "column \"title\" of \"issue\" table is not a json column"
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "aggregate": {
+          "fn": "sum",
+          "field": "title",
+          "path": [
+            "a"
+          ]
+        }
+      },
+      "valid": true,
+      "normalized": {
+        "table": "issue",
+        "aggregate": {
+          "fn": "sum",
+          "field": "title",
+          "path": [
+            "a"
+          ]
+        }
+      },
+      "hash": "1llizsg014bw4t",
+      "mapError": "column \"title\" of \"issue\" table is not a json column"
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "aggregate": {
+          "fn": "sum",
+          "field": "nope"
+        }
+      },
+      "valid": true,
+      "normalized": {
+        "table": "issue",
+        "aggregate": {
+          "fn": "sum",
+          "field": "nope"
+        }
+      },
+      "hash": "09ym7vy1nrig18",
+      "mapError": "unknown column \"nope\" of \"issue\" table"
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "groupBy": [
+          "nope"
+        ]
+      },
+      "valid": true,
+      "normalized": {
+        "table": "issue",
+        "groupBy": [
+          "nope"
+        ]
+      },
+      "hash": "1p951d706094az",
+      "mapError": "unknown column \"nope\" of \"issue\" table"
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "aggregate": {
+          "fn": "count",
+          "distinct": [
+            "nope"
+          ]
+        }
+      },
+      "valid": true,
+      "normalized": {
+        "table": "issue",
+        "aggregate": {
+          "fn": "count",
+          "distinct": [
+            "nope"
+          ]
+        }
+      },
+      "hash": "0q51ihw1isgp8a",
+      "mapError": "unknown column \"nope\" of \"issue\" table"
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "aggregate": {
+          "fn": "median"
+        }
+      },
+      "valid": false,
+      "error": "Expected literal value \"count\", \"sum\", \"avg\", \"min\" or \"max\" at aggregate.fn Got \"median\""
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "aggregate": {}
+      },
+      "valid": false,
+      "error": "Missing property fn at aggregate"
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "aggregate": {
+          "fn": "count",
+          "extra": 1
+        }
+      },
+      "valid": false,
+      "error": "Unexpected property extra at aggregate"
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "aggregate": {
+          "fn": "sum",
+          "field": 1
+        }
+      },
+      "valid": false,
+      "error": "Expected string at aggregate.field. Got 1"
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "aggregate": {
+          "fn": "sum",
+          "field": null
+        }
+      },
+      "valid": false,
+      "error": "Expected string at aggregate.field. Got null"
+    },
+    {
+      "ast": {
+        "table": "user",
+        "aggregate": {
+          "fn": "sum",
+          "field": "metadata",
+          "path": []
+        }
+      },
+      "valid": false,
+      "error": "expected a non-empty JSON path at aggregate.path. Got array"
+    },
+    {
+      "ast": {
+        "table": "user",
+        "aggregate": {
+          "fn": "sum",
+          "field": "metadata",
+          "path": [
+            -1
+          ]
+        }
+      },
+      "valid": false,
+      "error": "expected a non-negative integer array index at aggregate.path.0. Got -1"
+    },
+    {
+      "ast": {
+        "table": "user",
+        "aggregate": {
+          "fn": "sum",
+          "field": "metadata",
+          "path": [
+            1.5
+          ]
+        }
+      },
+      "valid": false,
+      "error": "expected a non-negative integer array index at aggregate.path.0. Got 1.5"
+    },
+    {
+      "ast": {
+        "table": "user",
+        "aggregate": {
+          "fn": "sum",
+          "field": "metadata",
+          "path": [
+            2147483648
+          ]
+        }
+      },
+      "valid": false,
+      "error": "expected a non-negative integer array index at aggregate.path.0. Got 2147483648"
+    },
+    {
+      "ast": {
+        "table": "user",
+        "aggregate": {
+          "fn": "sum",
+          "field": "metadata",
+          "path": [
+            true
+          ]
+        }
+      },
+      "valid": false,
+      "error": "Expected string or number at aggregate.path.0. Got true"
+    },
+    {
+      "ast": {
+        "table": "user",
+        "aggregate": {
+          "fn": "sum",
+          "path": [
+            "a"
+          ]
+        }
+      },
+      "valid": false,
+      "error": "expected an aggregate JSON path to have a field and not be a count at aggregate. Got object"
+    },
+    {
+      "ast": {
+        "table": "user",
+        "aggregate": {
+          "fn": "count",
+          "field": "metadata",
+          "path": [
+            "a"
+          ]
+        }
+      },
+      "valid": false,
+      "error": "expected an aggregate JSON path to have a field and not be a count at aggregate. Got object"
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "aggregate": {
+          "fn": "count",
+          "distinct": []
+        }
+      },
+      "valid": false,
+      "error": "expected an aggregate over distinct columns to be a count of at least one at aggregate. Got object"
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "aggregate": {
+          "fn": "sum",
+          "distinct": [
+            "ownerId"
+          ]
+        }
+      },
+      "valid": false,
+      "error": "expected an aggregate over distinct columns to be a count of at least one at aggregate. Got object"
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "aggregate": {
+          "fn": "count",
+          "field": "id",
+          "distinct": [
+            "id"
+          ]
+        }
+      },
+      "valid": false,
+      "error": "expected an aggregate over distinct columns to be a count of at least one at aggregate. Got object"
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "aggregate": {
+          "fn": "count",
+          "distinct": [
+            1
+          ]
+        }
+      },
+      "valid": false,
+      "error": "Expected string at aggregate.distinct.0. Got 1"
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "groupBy": []
+      },
+      "valid": false,
+      "error": "expected groupBy to name a column at groupBy. Got array"
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "groupBy": "ownerId"
+      },
+      "valid": false,
+      "error": "Expected array at groupBy. Got \"ownerId\""
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "groupBy": [
+          null
+        ]
+      },
+      "valid": false,
+      "error": "Expected string at groupBy.0. Got null"
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "related": [
+          {
+            "correlation": {
+              "parentField": [
+                "id"
+              ],
+              "childField": [
+                "issueId"
+              ]
+            },
+            "subquery": {
+              "table": "comment",
+              "alias": "comments"
+            },
+            "aggregate": {
+              "fn": "mode"
+            }
+          }
+        ]
+      },
+      "valid": false,
+      "error": "Expected literal value \"count\", \"sum\", \"avg\", \"min\" or \"max\" at related.0.aggregate.fn Got \"mode\""
+    },
+    {
+      "ast": {
+        "table": "issue",
+        "related": [
+          {
+            "correlation": {
+              "parentField": [
+                "id"
+              ],
+              "childField": [
+                "issueId"
+              ]
+            },
+            "subquery": {
+              "table": "comment",
+              "alias": "comments"
+            },
+            "aggregate": {
+              "fn": "count",
+              "distinct": []
+            }
+          }
+        ]
+      },
+      "valid": false,
+      "error": "expected an aggregate over distinct columns to be a count of at least one at related.0.aggregate. Got object"
+    },
+    {
+      "ast": {
+        "table": "user",
+        "where": {
+          "type": "simple",
+          "op": "=",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": []
+          },
+          "right": {
+            "type": "literal",
+            "value": 1
+          }
+        }
+      },
+      "valid": false,
+      "error": "expected a non-empty JSON path at where.left.path. Got array"
+    },
+    {
+      "ast": {
+        "table": "user",
+        "where": {
+          "type": "simple",
+          "op": "=",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": [
+              -1
+            ]
+          },
+          "right": {
+            "type": "literal",
+            "value": 1
+          }
+        }
+      },
+      "valid": false,
+      "error": "expected a non-negative integer array index at where.left.path.0. Got -1"
+    },
+    {
+      "ast": {
+        "table": "user",
+        "where": {
+          "type": "simple",
+          "op": "=",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": [
+              0.5
+            ]
+          },
+          "right": {
+            "type": "literal",
+            "value": 1
+          }
+        }
+      },
+      "valid": false,
+      "error": "expected a non-negative integer array index at where.left.path.0. Got 0.5"
+    },
+    {
+      "ast": {
+        "table": "user",
+        "where": {
+          "type": "simple",
+          "op": "=",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": [
+              null
+            ]
+          },
+          "right": {
+            "type": "literal",
+            "value": 1
+          }
+        }
+      },
+      "valid": false,
+      "error": "Expected string or number at where.left.path.0. Got null"
+    },
+    {
+      "ast": {
+        "table": "user",
+        "where": {
+          "type": "simple",
+          "op": "=",
+          "left": {
+            "type": "column",
+            "name": "id"
+          },
+          "right": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": [
+              "a"
+            ]
+          }
+        }
+      },
+      "valid": false,
+      "error": "Expected literal value \"static\" or \"literal\" at where.right.type Got \"json\""
+    },
+    {
+      "ast": {
+        "table": "user",
+        "where": {
+          "type": "simple",
+          "op": "IN",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": [
+              "a"
+            ]
+          },
+          "right": {
+            "type": "literal",
+            "value": "x"
+          }
+        }
+      },
+      "valid": false,
+      "error": "expected a list for IN/NOT IN against a JSON path and a scalar for other operators at where. Got object"
+    },
+    {
+      "ast": {
+        "table": "user",
+        "where": {
+          "type": "simple",
+          "op": "NOT IN",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": [
+              "a"
+            ]
+          },
+          "right": {
+            "type": "literal",
+            "value": 1
+          }
+        }
+      },
+      "valid": false,
+      "error": "expected a list for IN/NOT IN against a JSON path and a scalar for other operators at where. Got object"
+    },
+    {
+      "ast": {
+        "table": "user",
+        "where": {
+          "type": "simple",
+          "op": "=",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": [
+              "a"
+            ]
+          },
+          "right": {
+            "type": "literal",
+            "value": [
+              "x"
+            ]
+          }
+        }
+      },
+      "valid": false,
+      "error": "expected a list for IN/NOT IN against a JSON path and a scalar for other operators at where. Got object"
+    },
+    {
+      "ast": {
+        "table": "user",
+        "where": {
+          "type": "simple",
+          "op": "IN",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": [
+              "a"
+            ]
+          },
+          "right": {
+            "type": "literal",
+            "value": [
+              "x",
+              1
+            ]
+          }
+        }
+      },
+      "valid": false,
+      "error": "expected a list of values of one type for IN/NOT IN against a JSON path at where. Got object"
+    },
+    {
+      "ast": {
+        "table": "user",
+        "where": {
+          "type": "simple",
+          "op": "NOT IN",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": [
+              "a"
+            ]
+          },
+          "right": {
+            "type": "literal",
+            "value": [
+              true,
+              "true"
+            ]
+          }
+        }
+      },
+      "valid": false,
+      "error": "expected a list of values of one type for IN/NOT IN against a JSON path at where. Got object"
+    },
+    {
+      "ast": {
+        "table": "user",
+        "where": {
+          "type": "simple",
+          "op": "=",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "literal",
+              "value": "metadata"
+            },
+            "path": [
+              "a"
+            ]
+          },
+          "right": {
+            "type": "literal",
+            "value": 1
+          }
+        }
+      },
+      "valid": false,
+      "error": "Expected literal value \"column\" at where.left.value.type Got \"literal\""
+    },
+    {
+      "ast": {
+        "table": "user",
+        "where": {
+          "type": "simple",
+          "op": "=",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata"
+            },
+            "path": [
+              "a"
+            ],
+            "extra": 1
+          },
+          "right": {
+            "type": "literal",
+            "value": 1
+          }
+        }
+      },
+      "valid": false,
+      "error": "Unexpected property extra at where.left"
+    },
+    {
+      "ast": {
+        "table": "user",
+        "where": {
+          "type": "simple",
+          "op": "=",
+          "left": {
+            "type": "json",
+            "value": {
+              "type": "column",
+              "name": "metadata",
+              "extra": 1
+            },
+            "path": [
+              "a"
+            ]
+          },
+          "right": {
+            "type": "literal",
+            "value": 1
+          }
+        }
+      },
+      "valid": false,
+      "error": "Unexpected property extra at where.left.value"
+    },
+    {
+      "ast": {
+        "table": "user",
+        "where": {
+          "type": "simple",
+          "op": "=",
+          "left": {
+            "type": "json",
+            "path": [
+              "a"
+            ]
+          },
+          "right": {
+            "type": "literal",
+            "value": 1
+          }
+        }
+      },
+      "valid": false,
+      "error": "Missing property value at where.left"
+    }
+  ]
+}

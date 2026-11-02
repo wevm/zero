@@ -110,6 +110,9 @@ struct IVMConformanceTests {
     if let c = e["cmp"]?.arrayValue {
       return eb.cmp(c[0].stringValue!, op(c[1]), c[2])
     }
+    if let c = e["cmpJson"]?.arrayValue {
+      return eb.cmp(eb.json(c[0].stringValue!, path(c[1])!), op(c[2]), c[3])
+    }
     if let c = e["and"]?.arrayValue { return eb.and(c.map { expr(eb, $0) }) }
     if let c = e["or"]?.arrayValue { return eb.or(c.map { expr(eb, $0) }) }
     if let c = e["not"] { return eb.not(expr(eb, c)) }
@@ -118,8 +121,42 @@ struct IVMConformanceTests {
       sub(e["sub"]))
   }
 
+  /// A JSON path of a program, or nil when it has a segment Swift can't
+  /// write, such as a fractional index.
+  static func path(_ v: JSONValue) -> [AST.JSONPathSegment]? {
+    var path: [AST.JSONPathSegment] = []
+    for s in v.arrayValue! {
+      if let k = s.stringValue {
+        path.append(.key(k))
+      } else if let n = s.numberValue, n.rounded() == n {
+        path.append(.index(Int(n)))
+      } else {
+        return nil
+      }
+    }
+    return path
+  }
+
+  /// Whether the program has a JSON path Swift can't write.
+  static func hasUnwritablePath(_ v: JSONValue) -> Bool {
+    switch v {
+    case .object(let o):
+      if let c = o["cmpJson"]?.arrayValue, path(c[1]) == nil { return true }
+      return o.values.contains(where: hasUnwritablePath)
+    case .array(let a): return a.contains(where: hasUnwritablePath)
+    default: return false
+    }
+  }
+
   /// Runs one case; returns a description of the first mismatch.
   static func run(_ c: JSONValue, schema: ZeroSchema, datasets: [JSONValue]) throws -> String? {
+    if let expected = c["builderError"]?.stringValue {
+      // Swift's types rule out a fractional index; JS throws for it.
+      if hasUnwritablePath(c["program"]!) { return nil }
+      let built = build(schema, c["program"]!)
+      return built.invalid == expected
+        ? nil : "builder error \(built.invalid ?? "none") != \(expected)"
+    }
     let dataset = datasets[Int(c["dataset"]!.numberValue!)]
     var sources: [String: MemorySource] = [:]
     for name in schema.tableNames {
@@ -186,7 +223,7 @@ struct IVMConformanceTests {
       if let mismatch = try run(c, schema: schema, datasets: datasets) {
         failures += 1
         if failures <= 5 {
-          Issue.record("\(c["name"]!.stringValue!): \(c["ast"]!)\n\(mismatch)")
+          Issue.record("\(c["name"]!.stringValue!): \(c["ast"] ?? c["program"]!)\n\(mismatch)")
         }
       }
     }
@@ -195,6 +232,10 @@ struct IVMConformanceTests {
 
   @Test func curated() throws {
     try Self.runAll(try Vectors.file("ivm"))
+  }
+
+  @Test func features() throws {
+    try Self.runAll(try Vectors.file("ivm-features"))
   }
 
   @Test(.enabled(if: Vectors.generatedAvailable)) func fuzz() throws {

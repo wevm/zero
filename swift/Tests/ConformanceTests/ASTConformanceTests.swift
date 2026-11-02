@@ -21,6 +21,40 @@ struct ASTConformanceTests {
     for c in try Vectors.generatedCases("ast-fuzz") { try Self.check(c) }
   }
 
+  /// Aggregates, groupBy and JSON paths: the wire schema's verdict, and for
+  /// the ASTs it accepts, the normalized form, the hash, and the server
+  /// names.
+  @Test func features() throws {
+    let mapper = NameMapper.clientToServer(.test)
+    for c in try Vectors.cases("ast-features") {
+      let json = c["ast"]!
+      guard c["valid"] == .bool(true) else {
+        #expect(throws: DecodingError.self, "accepts \(json)") { try StrictAST.decode(json) }
+        continue
+      }
+      let ast = try StrictAST.decode(json)
+      try Self.check(c)
+      do {
+        let mapped = try mapper.map(ast)
+        #expect(mapped.json == c["mapped"], "map \(json)")
+      } catch {
+        #expect(error.description == c["mapError"]?.stringValue, "map \(json)")
+      }
+    }
+  }
+
+  @Test func queryInternalsHash() throws {
+    for c in try Vectors.cases("query-internals-hash") {
+      let ast = try AST(json: c["ast"]!)
+      let format = try Format(json: c["format"]!)
+      #expect(format.json == c["format"]!)
+      let hash = QueryHash.hashOfQueryInternals(
+        ast: ast, format: format.json, system: .client, currentJunction: nil,
+        customQueryName: nil, customQueryArgs: nil)
+      #expect(hash == c["hash"]!.stringValue!, "\(c["format"]!)")
+    }
+  }
+
   @Test func nameAndArgsHash() throws {
     for c in try Vectors.cases("name-args-hash") {
       let name = c["name"]!.stringValue!

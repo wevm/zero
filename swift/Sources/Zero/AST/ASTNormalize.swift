@@ -114,6 +114,7 @@ extension AST {
     switch v {
     case .literal: "literal"
     case .column: "column"
+    case .json: "json"
     case .static: "static"
     }
   }
@@ -124,6 +125,10 @@ extension AST {
       return cmpLiteralValue(x, y)
     case (.column(let x), .column(let y)):
       return StringCompare.utf8(x, y)
+    case (.json(let ac, let ap), .json(let bc, let bp)):
+      let c = StringCompare.utf8(ac, bc)
+      if c != 0 { return c }
+      return cmpLiteralValue(.array(ap.map(\.json)), .array(bp.map(\.json)))
     case (.static(let aa, let af), .static(let ba, let bf)):
       let c = StringCompare.utf8(aa.rawValue, ba.rawValue)
       if c != 0 { return c }

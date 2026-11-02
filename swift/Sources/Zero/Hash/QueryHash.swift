@@ -73,6 +73,10 @@ package enum QueryHash {
   static let tagSystemClient: UInt32 = 0x200b
   static let tagSystemTest: UInt32 = 0x200c
   static let tagJunction: UInt32 = 0x200d
+  static let tagAggregate: UInt32 = 0x200e
+  static let tagJSON: UInt32 = 0x200f
+  static let tagGroupBy: UInt32 = 0x2010
+  static let tagDistinct: UInt32 = 0x2011
 
   static let strMark: UInt32 = 0x4000_0000
 
@@ -257,6 +261,12 @@ extension QueryHash.State {
     case .column(let name):
       mix(H.tagColumn)
       mixString(name)
+    case .json(let column, let path):
+      // The wrapped column, then the path as a value.
+      mix(H.tagJSON)
+      mix(H.tagColumn)
+      mixString(column)
+      visitValue(.array(path.map(\.json)))
     case .static(let anchor, let field):
       mix(H.tagStatic)
       mixString(anchor.rawValue)
@@ -292,7 +302,27 @@ extension QueryHash.State {
     visitCompoundKey(csq.correlation.childField)
     mixOptionalBool(csq.hidden)
     if let system = csq.system { mixSystem(system) } else { mix(H.tagUndef) }
+    // Before the subquery, so an absent aggregate, which writes nothing, is
+    // never confused with a present one.
+    visitAggregate(csq.aggregate)
     visitAST(csq.subquery)
+  }
+
+  /// An absent aggregate, path, or distinct writes nothing, so the hashes of
+  /// queries without them are what they were before they existed.
+  mutating func visitAggregate(_ aggregate: AST.Aggregate?) {
+    guard let aggregate else { return }
+    mix(H.tagAggregate)
+    mixString(aggregate.fn.rawValue)
+    visitOptionalString(aggregate.field)
+    if let path = aggregate.path {
+      mix(H.tagJSON)
+      visitValue(.array(path.map(\.json)))
+    }
+    if let distinct = aggregate.distinct {
+      mix(H.tagDistinct)
+      visitCompoundKey(distinct)
+    }
   }
 
   mutating func visitAST(_ ast: AST) {
@@ -320,6 +350,11 @@ extension QueryHash.State {
       mix(H.tagUndef)
     }
     visitOrdering(ast.orderBy)
+    visitAggregate(ast.aggregate)
+    if let groupBy = ast.groupBy {
+      mix(H.tagGroupBy)
+      visitCompoundKey(groupBy)
+    }
     mix(H.tagEnd)
   }
 }

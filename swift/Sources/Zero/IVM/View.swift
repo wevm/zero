@@ -3,10 +3,17 @@
 package struct Format: Sendable, Hashable {
   package var singular: Bool
   package var relationships: [String: Format]
+  /// Set when the query or relationship is an aggregate: it materializes as
+  /// the aggregate's value rather than rows. Implies `singular`.
+  package var aggregate: AST.Aggregate?
 
-  package init(singular: Bool = false, relationships: [String: Format] = [:]) {
+  package init(
+    singular: Bool = false, relationships: [String: Format] = [:],
+    aggregate: AST.Aggregate? = nil
+  ) {
     self.singular = singular
     self.relationships = relationships
+    self.aggregate = aggregate
   }
 }
 
@@ -508,12 +515,15 @@ extension Format: JSONCodable {
       try JSONDecode.record(v) { (f) throws(DecodingError) in try Format(json: f) }
     }
     self.init(
-      singular: try o.optionalBool("singular") ?? false, relationships: relationships ?? [:])
+      singular: try o.optionalBool("singular") ?? false, relationships: relationships ?? [:],
+      aggregate: try o.optional("aggregate", AST.Aggregate.init(json:)))
   }
 
   package var json: JSONValue {
     let rels = JSONObject(relationships.mapValues(\.json))
-    return ["singular": .bool(singular), "relationships": .object(rels)]
+    var o: JSONObject = ["singular": .bool(singular), "relationships": .object(rels)]
+    if let aggregate { o["aggregate"] = aggregate.json }
+    return .object(o)
   }
 }
 

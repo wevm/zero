@@ -68,7 +68,13 @@ enum StrictAST {
 
   private static func checkAST(_ v: JSONValue) throws(DecodingError) {
     guard case .object(let o) = v else { return }
-    try only(o, ["schema", "table", "alias", "where", "related", "limit", "orderBy", "start"])
+    try only(
+      o,
+      [
+        "schema", "table", "alias", "where", "related", "limit", "orderBy", "start", "aggregate",
+        "groupBy",
+      ])
+    if let a = o["aggregate"] { try checkAggregate(a) }
     if let w = o["where"] { try checkCondition(w) }
     if case .array(let related)? = o["related"] {
       for r in related { try checkCorrelatedSubquery(r) }
@@ -78,9 +84,15 @@ enum StrictAST {
 
   private static func checkCorrelatedSubquery(_ v: JSONValue) throws(DecodingError) {
     guard case .object(let o) = v else { return }
-    try only(o, ["correlation", "hidden", "system", "subquery"])
+    try only(o, ["correlation", "hidden", "system", "subquery", "aggregate"])
+    if let a = o["aggregate"] { try checkAggregate(a) }
     if case .object(let c)? = o["correlation"] { try only(c, ["parentField", "childField"]) }
     if let s = o["subquery"] { try checkAST(s) }
+  }
+
+  private static func checkAggregate(_ v: JSONValue) throws(DecodingError) {
+    guard case .object(let o) = v else { return }
+    try only(o, ["fn", "field", "path", "distinct"])
   }
 
   private static func checkCondition(_ v: JSONValue) throws(DecodingError) {
@@ -108,6 +120,9 @@ enum StrictAST {
     switch o["type"]?.stringValue {
     case "literal": try only(o, ["type", "value"])
     case "column": try only(o, ["type", "name"])
+    case "json":
+      try only(o, ["type", "value", "path"])
+      if let c = o["value"] { try checkValuePosition(c) }
     case "static": try only(o, ["type", "anchor", "field"])
     default: return
     }

@@ -42,6 +42,9 @@ package func buildPipeline(
   throws(PipelineError) -> any Input
 {
   var ast = delegate.mapAst(ast)
+  if ast.hasAggregate {
+    throw PipelineError("Aggregates, distinct() and groupBy() are not supported yet")
+  }
   ast = try completeOrdering(ast) { (table) throws(PipelineError) in
     guard let source = delegate.getSource(table) else {
       throw PipelineError("Source not found: \(table)")
@@ -435,6 +438,7 @@ func valuePosName(_ v: AST.ValuePosition) -> String {
   case .static(_, .path(let p)): p.joined(separator: ",")
   case .literal(let value): JSString.from(value)
   case .column(let name): name
+  case .json(let column, let path): AST.formatJSONPath(column, path)
   }
 }
 
@@ -597,4 +601,21 @@ func addPrimaryKeys(_ primaryKey: [String], _ orderBy: AST.Ordering?) -> AST.Ord
   for part in orderBy { toAdd.removeAll { $0 == part.field } }
   if toAdd.isEmpty { return orderBy }
   return orderBy + toAdd.map { AST.OrderPart($0, .asc) }
+}
+
+extension AST {
+  /// Whether the AST or a subquery has an aggregate or a `groupBy`, which
+  /// the pipeline builder doesn't build yet.
+  var hasAggregate: Bool {
+    func condition(_ c: Condition) -> Bool {
+      switch c {
+      case .simple: false
+      case .and(let cs), .or(let cs): cs.contains(where: condition)
+      case .correlatedSubquery(let r, _, _, _): r.aggregate != nil || r.subquery.hasAggregate
+      }
+    }
+    return aggregate != nil || groupBy != nil
+      || related?.contains { $0.aggregate != nil || $0.subquery.hasAggregate } == true
+      || self.where.map(condition) == true
+  }
 }
