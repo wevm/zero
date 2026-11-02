@@ -3,6 +3,23 @@
  */
 export type ValueType = 'string' | 'number' | 'boolean' | 'null' | 'json';
 
+/** The {@link ValueType} of `value` as it appears in a row. */
+export function valueTypeOf(value: unknown): ValueType {
+  if (value === null) {
+    return 'null';
+  }
+  switch (typeof value) {
+    case 'string':
+      return 'string';
+    case 'number':
+      return 'number';
+    case 'boolean':
+      return 'boolean';
+    default:
+      return 'json';
+  }
+}
+
 /**
  * Schema value definition with optional custom type support.
  */
@@ -21,7 +38,7 @@ export type SchemaValueWithCustomType<T> = {
   customType: T;
 };
 
-export type TypeNameToTypeMap = {
+type TypeNameToTypeMap = {
   string: string;
   number: number;
   boolean: boolean;
@@ -30,8 +47,9 @@ export type TypeNameToTypeMap = {
   json: any;
 };
 
-export type ColumnTypeName<T extends SchemaValue | ValueType> =
-  T extends SchemaValue ? T['type'] : T;
+type ColumnTypeName<T extends SchemaValue | ValueType> = T extends SchemaValue
+  ? T['type']
+  : T;
 
 /**
  * Given a schema value, return the TypeScript type.

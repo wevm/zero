@@ -21,11 +21,15 @@ export type HandoffSpec<P> = {
  *
  * Similarly, an error can be handled by throwing synchronously from the
  * function, or invoking the `onerror` callback.
+ *
+ * Alternatively, `accept` completes the upgrade in this process (with
+ * optional additional response `headers`) instead of handing it off.
  */
 export type WebSocketHandoff<P> = (
   message: IncomingMessageSubset,
   callback: (h: HandoffSpec<P>) => void,
   onerror: (reason: unknown) => void,
+  accept: (onConnection: (ws: WebSocket) => void, headers?: string[]) => void,
 ) => HandoffSpec<P> | void;
 
 export type WebSocketReceiver<P> = (
@@ -45,7 +49,7 @@ export type WebSocketHandoffHandler = (
  * receiving requests, or a parent Worker process
  * that is handing off requests to this process.
  */
-export function createWebSocketHandoffHandler<P>(
+function createWebSocketHandoffHandler<P>(
   lc: LogContext,
   handoff: WebSocketHandoff<P>,
   serverOptions?: ServerOptions,
@@ -55,6 +59,10 @@ export function createWebSocketHandoffHandler<P>(
       noServer: true,
     },
   );
+  const extraHeaders = new WeakMap<IncomingMessage, string[]>();
+  wss.on('headers', (headers, req) => {
+    headers.push(...(extraHeaders.get(req) ?? []));
+  });
   return (
     message: IncomingMessageSubset,
     socket: Socket,
@@ -88,12 +96,30 @@ export function createWebSocketHandoffHandler<P>(
         message as IncomingMessage,
         socket,
         Buffer.from(head),
-        ws => closeWithError(lc, ws, error, PROTOCOL_ERROR),
+        ws => {
+          ws.on('error', error => {
+            lc.warn?.('error while rejecting websocket handoff', error);
+            ws.terminate();
+          });
+          closeWithError(lc, ws, error, PROTOCOL_ERROR);
+        },
+      );
+    }
+
+    function accept(onConnection: (ws: WebSocket) => void, headers?: string[]) {
+      if (headers?.length) {
+        extraHeaders.set(message as IncomingMessage, headers);
+      }
+      wss.handleUpgrade(
+        message as IncomingMessage,
+        socket,
+        Buffer.from(head),
+        onConnection,
       );
     }
 
     try {
-      const spec = handoff(message, send, onError);
+      const spec = handoff(message, send, onError, accept);
       if (spec) {
         send(spec);
       }

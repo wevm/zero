@@ -15,12 +15,12 @@ export type CaughtNode =
     }
   | 'yield';
 
-export type CaughtAddChange = {
+type CaughtAddChange = {
   type: 'add';
   node: CaughtNode;
 };
 
-export type CaughtRemoveChange = {
+type CaughtRemoveChange = {
   type: 'remove';
   node: CaughtNode;
 };
@@ -90,7 +90,7 @@ export class Catch implements Output {
   }
 }
 
-export function expandChange(change: Change): CaughtChange {
+function expandChange(change: Change): CaughtChange {
   switch (change[ChangeIndex.TYPE]) {
     case ChangeType.ADD:
       return {

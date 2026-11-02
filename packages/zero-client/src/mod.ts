@@ -54,6 +54,7 @@ export type {
   Disjunction,
   EqualityOps,
   InOps,
+  JsonPathReference,
   LikeOps,
   LiteralReference,
   LiteralValue,
@@ -161,6 +162,7 @@ export {
 export {createBuilder} from '../../zql/src/query/create-builder.ts';
 export {escapeLike} from '../../zql/src/query/escape-like.ts';
 export type {
+  ColumnRef,
   ExpressionBuilder,
   ExpressionFactory,
 } from '../../zql/src/query/expression.ts';
@@ -199,7 +201,9 @@ export {
 } from '../../zql/src/query/query-registry.ts';
 export {type MaterializeOptions} from '../../zql/src/query/query.ts';
 export type {
+  AggregateResult,
   AnyQuery,
+  GroupedQuery,
   HumanReadable,
   PullRow,
   Query,

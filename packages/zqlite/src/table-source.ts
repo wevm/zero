@@ -20,6 +20,7 @@ import {
   type NoSubqueryCondition as StrictNoSubqueryCondition,
 } from '../../zql/src/builder/filter.ts';
 import {ChangeType} from '../../zql/src/ivm/change-type.ts';
+import type {Constraint} from '../../zql/src/ivm/constraint.ts';
 import {
   makeComparator,
   type Comparator,
@@ -39,6 +40,7 @@ import {SourceChangeIndex} from '../../zql/src/ivm/source-change-index.ts';
 import {
   type Source,
   type SourceChange,
+  type GroupCount,
   type SourceInput,
 } from '../../zql/src/ivm/source.ts';
 import type {Stream} from '../../zql/src/ivm/stream.ts';
@@ -54,7 +56,11 @@ import {
   NOT_OVERRIDDEN,
   PendingDelta,
 } from './pending-delta.ts';
-import {toSQLiteType} from './query-builder.ts';
+import {
+  buildCountQuery,
+  buildGroupCountsQuery,
+  toSQLiteType,
+} from './query-builder.ts';
 
 type Statements = {
   readonly cache: StatementCache;
@@ -349,6 +355,9 @@ export class TableSource implements Source {
     const input: SourceInput = {
       getSchema: () => schema,
       fetch: req => this.#fetch(req, connection, fetchSQL),
+      count: constraint => this.#count(constraint, transformedFilters.filters),
+      groupCounts: columns =>
+        this.#groupCounts(columns, transformedFilters.filters),
       setOutput: output => {
         connection.output = output;
       },
@@ -391,6 +400,68 @@ export class TableSource implements Source {
         toSQLiteType(value, this.#columns[key].type),
       ]),
     ) as Row;
+  }
+
+  /**
+   * The number of rows a fetch with `constraint` would return, counted by
+   * SQLite. `undefined` while a push is in flight: the overlay and pending
+   * writes are applied row by row, so the caller fetches instead.
+   */
+  #count(
+    constraint: Constraint | undefined,
+    filters: StrictNoSubqueryCondition | undefined,
+  ): number | undefined {
+    if (
+      this.#overlay !== undefined ||
+      (this.#delta !== undefined && !this.#delta.isEmpty)
+    ) {
+      return undefined;
+    }
+    const {text, values} = format(
+      buildCountQuery(this.#table, this.#columns, constraint, filters),
+    );
+    return this.#stmts.cache.use(text, ({statement}) => {
+      const count = statement
+        .safeIntegers(false)
+        .pluck(true)
+        .get<number>(...values);
+      recordIndexUsage(statement, this.#table);
+      return count;
+    });
+  }
+
+  /**
+   * The distinct values of `columns` among the rows that pass `filters`, each
+   * with its number of rows, grouped by SQLite. `undefined` while a push is in
+   * flight, as for {@link #count}.
+   */
+  #groupCounts(
+    columns: readonly string[],
+    filters: StrictNoSubqueryCondition | undefined,
+  ): GroupCount[] | undefined {
+    if (
+      this.#overlay !== undefined ||
+      (this.#delta !== undefined && !this.#delta.isEmpty)
+    ) {
+      return undefined;
+    }
+    const rawColumns = columns.map(c =>
+      rawColumn(this.#columns, c, this.#table),
+    );
+    const {text, values} = format(
+      buildGroupCountsQuery(this.#table, columns, filters),
+    );
+    return this.#stmts.cache.use(text, ({statement}) => {
+      const rows = statement
+        .safeIntegers(true)
+        .raw(true)
+        .all<SQLiteValue[]>(...values);
+      recordIndexUsage(statement, this.#table);
+      return rows.map(values => ({
+        row: fromSQLiteRawRow(rawColumns, values, this.#table),
+        count: Number(values[columns.length]),
+      }));
+    });
   }
 
   *#fetch(
@@ -849,7 +920,7 @@ export class TableSource implements Source {
     const synced: Writable<SQLiteRow> = {};
     for (const [col, value] of Object.entries(rowKey)) {
       if (Object.hasOwn(this.#columns, col)) {
-        synced[col] = value;
+        assignProperty(synced, col, value);
       }
     }
     return Object.entries(fromSQLiteTypes(this.#columns, synced, this.#table));
@@ -1034,7 +1105,7 @@ function getUniqueIndexes(
   );
 }
 
-export function toSQLiteTypes(
+function toSQLiteTypes(
   columns: readonly string[],
   row: Row,
   columnTypes: Record<string, SchemaValue>,
@@ -1077,7 +1148,11 @@ export function fromSQLiteTypes(
     if (valueType === undefined) {
       throw invalidColumnError(valueTypes, key, tableName);
     }
-    newRow[key] = fromSQLiteType(valueType.type, row[key], key, tableName);
+    assignProperty(
+      newRow,
+      key,
+      fromSQLiteType(valueType.type, row[key], key, tableName),
+    );
   }
   return newRow;
 }

@@ -1,6 +1,6 @@
 import {LogContext} from '@rocicorp/logger';
-import {resolver} from '@rocicorp/resolver';
 import {randomUint64} from '../../shared/src/random-uint64.ts';
+import {resolver} from '../../shared/src/resolver.ts';
 import {
   jsonArrayTestData,
   type TestDataObject,
@@ -30,10 +30,6 @@ export function setBenchKVStore(
   kvStore: 'mem' | 'idb' | StoreProvider | undefined,
 ): void {
   benchKVStore = kvStore;
-}
-
-export function getBenchKVStore(): 'mem' | 'idb' | StoreProvider | undefined {
-  return benchKVStore;
 }
 
 function benchKVStoreProvider(): StoreProvider {
@@ -91,7 +87,7 @@ export function setPopulateValues(values: readonly TestDataObject[]): void {
   populateValues = values;
 }
 
-export async function populate(
+async function populate(
   tx: WriteTransaction,
   {numKeys}: {numKeys: number},
 ): Promise<void> {
@@ -193,7 +189,7 @@ export function sleep(ms: number): Promise<void> {
   return new Promise<void>(resolve => setTimeout(resolve, ms));
 }
 
-export function* rangeIter(end: number): Generator<number> {
+function* rangeIter(end: number): Generator<number> {
   for (let i = 0; i < end; i++) yield i;
 }
 
@@ -205,7 +201,7 @@ export function sampleSize<T>(arr: Iterable<T>, n: number): T[] {
   return shuffle(arr).slice(0, n);
 }
 
-export function shuffle<T>(arr: Iterable<T>): T[] {
+function shuffle<T>(arr: Iterable<T>): T[] {
   const shuffled = [...arr];
   for (let i = shuffled.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));

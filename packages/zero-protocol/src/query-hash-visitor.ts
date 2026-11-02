@@ -57,6 +57,7 @@ import type {Format} from '../../zero-types/src/format.ts';
  * JSON: a literal's value and a bound's row.
  */
 import type {
+  Aggregate,
   AST,
   Condition,
   CorrelatedSubquery,
@@ -151,6 +152,10 @@ const TAG_SYSTEM_PERMISSIONS = 0x200a;
 const TAG_SYSTEM_CLIENT = 0x200b;
 const TAG_SYSTEM_TEST = 0x200c;
 const TAG_JUNCTION = 0x200d;
+const TAG_AGGREGATE = 0x200e;
+const TAG_JSON = 0x200f;
+const TAG_GROUP_BY = 0x2010;
+const TAG_DISTINCT = 0x2011;
 
 // Set on a string's length word. High enough that no array length reaches it.
 const STR_MARK = 0x40000000;
@@ -309,6 +314,14 @@ function visitValuePosition(v: ValuePosition): void {
       }
       return;
     }
+    case 'json':
+      // The wrapped column, then the path as a value: a string segment and a
+      // numeric one are tagged differently there, so `['0']` and `[0]` (an
+      // object key and an array index) never fold together.
+      mix(TAG_JSON);
+      visitValuePosition(v.value);
+      visitValue(v.path);
+      return;
     default:
       unreachable(v);
   }
@@ -347,7 +360,41 @@ function visitCorrelatedSubquery(csq: CorrelatedSubquery): void {
   visitCompoundKey(csq.correlation.childField);
   mix(csq.hidden === undefined ? TAG_UNDEF : csq.hidden ? TAG_TRUE : TAG_FALSE);
   mixOptionalSystem(csq.system);
+  // Before the subquery, whose first word is TAG_OBJ, so an absent aggregate
+  // (which writes nothing) is never confusable with a present one.
+  visitAggregate(csq.aggregate);
   visitAST(csq.subquery);
+}
+
+/**
+ * An absent aggregate writes nothing, unlike the other optionals, so that the
+ * hash of every query without one is unchanged by the field's addition. That
+ * is unambiguous because of where it is written: an aggregate is always
+ * followed by a word no aggregate could begin with (TAG_END on an AST, TAG_OBJ
+ * on a correlated subquery), and a present one leads with its own tag.
+ */
+function visitAggregate(aggregate: Aggregate | undefined): void {
+  if (aggregate === undefined) {
+    return;
+  }
+  mix(TAG_AGGREGATE);
+  mixString(aggregate.fn);
+  visitOptionalString(aggregate.field);
+  // Like the aggregate itself, an absent path writes nothing, so aggregates
+  // without one hash as before; a present one leads with TAG_JSON, which no
+  // following word (TAG_END, TAG_OBJ) can be confused with.
+  if (aggregate.path !== undefined) {
+    mix(TAG_JSON);
+    visitValue(aggregate.path);
+  }
+  // Absent, it writes nothing too.
+  if (aggregate.distinct !== undefined) {
+    mix(TAG_DISTINCT);
+    mix(aggregate.distinct.length);
+    for (const col of aggregate.distinct) {
+      mixString(col);
+    }
+  }
 }
 
 function visitAST(ast: AST): void {
@@ -394,6 +441,16 @@ function visitAST(ast: AST): void {
   }
 
   visitOrdering(ast.orderBy);
+  visitAggregate(ast.aggregate);
+  // Like the aggregate, an absent groupBy writes nothing, so other queries
+  // hash as before.
+  if (ast.groupBy !== undefined) {
+    mix(TAG_GROUP_BY);
+    mix(ast.groupBy.length);
+    for (const col of ast.groupBy) {
+      mixString(col);
+    }
+  }
   mix(TAG_END);
 }
 

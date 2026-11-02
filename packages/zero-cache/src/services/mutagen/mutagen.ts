@@ -1,9 +1,9 @@
 import {PG_SERIALIZATION_FAILURE} from '@drdgvhbh/postgres-error-codes';
 import type {LogContext} from '@rocicorp/logger';
-import {resolver} from '@rocicorp/resolver';
 import type {JWTPayload} from 'jose';
 import postgres from 'postgres';
 import {assert, unreachable} from '../../../../shared/src/asserts.ts';
+import {resolver} from '../../../../shared/src/resolver.ts';
 import * as v from '../../../../shared/src/valita.ts';
 import {ErrorKind} from '../../../../zero-protocol/src/error-kind.ts';
 import {ErrorOrigin} from '../../../../zero-protocol/src/error-origin.ts';
@@ -329,7 +329,7 @@ export async function processMutation(
   return result;
 }
 
-export async function processMutationWithTx(
+async function processMutationWithTx(
   lc: LogContext,
   tx: PostgresTransaction,
   authData: JWTPayload | undefined,
@@ -402,7 +402,7 @@ export async function processMutationWithTx(
   await Promise.all(tasks.map(task => task()));
 }
 
-export function getInsertSQL(
+function getInsertSQL(
   tx: postgres.TransactionSql,
   create: InsertOp,
 ): postgres.PendingQuery<postgres.Row[]> {
@@ -412,7 +412,7 @@ export function getInsertSQL(
   `;
 }
 
-export function getUpsertSQL(
+function getUpsertSQL(
   tx: postgres.TransactionSql,
   set: UpsertOp,
 ): postgres.PendingQuery<postgres.Row[]> {

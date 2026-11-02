@@ -1,4 +1,5 @@
 import {newArray} from '../../../shared/src/arrays.ts';
+import {unreachable} from '../../../shared/src/asserts.ts';
 import {getOrInsertComputed} from '../../../shared/src/map.ts';
 import type * as v from '../../../shared/src/valita.ts';
 import type {
@@ -9,10 +10,11 @@ import type {
   PlanDebugEventJSON,
   planFailedEventJSONSchema,
 } from '../../../zero-protocol/src/analyze-query-result.ts';
-import type {
-  Condition,
-  Ordering,
-  ValuePosition,
+import {
+  formatJsonPathReference,
+  type Condition,
+  type Ordering,
+  type ValuePosition,
 } from '../../../zero-protocol/src/ast.ts';
 import type {PlannerConstraint} from './planner-constraint.ts';
 import type {PlanState} from './planner-graph.ts';
@@ -27,12 +29,12 @@ import type {CostEstimate, JoinType} from './planner-node.ts';
 /**
  * Starting a new planning attempt with a different root connection.
  */
-export type AttemptStartEvent = v.Infer<typeof attemptStartEventJSONSchema>;
+type AttemptStartEvent = v.Infer<typeof attemptStartEventJSONSchema>;
 
 /**
  * Snapshot of connection costs before selecting the next connection.
  */
-export type ConnectionCostsEvent = {
+type ConnectionCostsEvent = {
   type: 'connection-costs';
   attemptNumber: number;
   costs: Array<{
@@ -48,14 +50,14 @@ export type ConnectionCostsEvent = {
 /**
  * A connection was chosen and pinned.
  */
-export type ConnectionSelectedEvent = v.Infer<
+type ConnectionSelectedEvent = v.Infer<
   typeof connectionSelectedEventJSONSchema
 >;
 
 /**
  * Constraints have been propagated through the graph.
  */
-export type ConstraintsPropagatedEvent = {
+type ConstraintsPropagatedEvent = {
   type: 'constraints-propagated';
   attemptNumber: number;
   connectionConstraints: Array<{
@@ -68,7 +70,7 @@ export type ConstraintsPropagatedEvent = {
 /**
  * A complete plan was found for this attempt.
  */
-export type PlanCompleteEvent = {
+type PlanCompleteEvent = {
   type: 'plan-complete';
   attemptNumber: number;
   totalCost: number;
@@ -84,21 +86,19 @@ export type PlanCompleteEvent = {
 /**
  * Planning attempt failed (e.g., unflippable join).
  */
-export type PlanFailedEvent = v.Infer<typeof planFailedEventJSONSchema>;
+type PlanFailedEvent = v.Infer<typeof planFailedEventJSONSchema>;
 
 /**
  * The best plan across all attempts was selected.
  */
-export type BestPlanSelectedEvent = v.Infer<
-  typeof bestPlanSelectedEventJSONSchema
->;
+type BestPlanSelectedEvent = v.Infer<typeof bestPlanSelectedEventJSONSchema>;
 
 /**
  * A node computed its cost estimate during planning.
  * Emitted by nodes during estimateCost() traversal.
  * attemptNumber is added by the debugger.
  */
-export type NodeCostEvent = {
+type NodeCostEvent = {
   type: 'node-cost';
   attemptNumber?: number;
   nodeType:
@@ -122,7 +122,7 @@ export type NodeCostEvent = {
  * Emitted by nodes during propagateConstraints() traversal.
  * attemptNumber is added by the debugger.
  */
-export type NodeConstraintEvent = v.Infer<typeof nodeConstraintEventJSONSchema>;
+type NodeConstraintEvent = v.Infer<typeof nodeConstraintEventJSONSchema>;
 
 /**
  * Union of all debug event types.
@@ -207,6 +207,8 @@ function formatValuePosition(value: ValuePosition): string {
   switch (value.type) {
     case 'column':
       return value.name;
+    case 'json':
+      return formatJsonPathReference(value);
     case 'literal':
       // Format literal values with SQL-style quoting for strings
       if (typeof value.value === 'string') {
@@ -215,6 +217,8 @@ function formatValuePosition(value: ValuePosition): string {
       return JSON.stringify(value.value);
     case 'static':
       return `@${value.anchor}.${Array.isArray(value.field) ? value.field.join('.') : value.field}`;
+    default:
+      unreachable(value);
   }
 }
 

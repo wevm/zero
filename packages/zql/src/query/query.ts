@@ -1,10 +1,12 @@
 /* oxlint-disable @typescript-eslint/no-explicit-any */
-import type {Expand, ExpandRecursive} from '../../../shared/src/expand.ts';
+import type {Expand} from '../../../shared/src/expand.ts';
+import type {ReadonlyJSONValue} from '../../../shared/src/json.ts';
 import {type SimpleOperator} from '../../../zero-protocol/src/ast.ts';
 import type {DefaultSchema} from '../../../zero-types/src/default-types.ts';
 import type {
   SchemaValueToTSType,
   SchemaValueWithCustomType,
+  ValueType,
 } from '../../../zero-types/src/schema-value.ts';
 import type {
   LastInTuple,
@@ -12,18 +14,74 @@ import type {
   Schema as ZeroSchema,
 } from '../../../zero-types/src/schema.ts';
 import type {ViewFactory} from '../ivm/view.ts';
-import type {ExpressionFactory, ParameterReference} from './expression.ts';
+import type {
+  ColumnRef,
+  ExpressionBuilder,
+  ExpressionFactory,
+  ParameterReference,
+} from './expression.ts';
 import type {TTL} from './ttl.ts';
 import type {TypedView} from './typed-view.ts';
 
 type Selector<E extends TableSchema> = keyof E['columns'];
+
+/**
+ * The argument of an aggregate's callback form: just the `json` accessor, e.g.
+ * `c.sum(({json}) => json('metadata', 'points'))`.
+ */
+type JsonAggregateBuilder<
+  TTable extends keyof TSchema['tables'] & string,
+  TSchema extends ZeroSchema,
+> = Pick<ExpressionBuilder<TTable, TSchema>, 'json'>;
+
+/**
+ * Rejects a JSON leaf that can never hold a `K` (so `sum` of a string leaf is
+ * a type error), by intersecting the callback's result with an object it can't
+ * satisfy. An untyped `json()` leaf (`ReadonlyJSONValue`) can hold anything.
+ */
+type JsonLeafOf<V, K> = [Extract<V, K>] extends [never]
+  ? {readonly 'aggregate over a JSON leaf of the wrong type': never}
+  : unknown;
+
+/**
+ * The columns of a table whose values are numbers (nullable or not): the only
+ * ones `sum`/`avg` can aggregate. Anything else fails at runtime, in the IVM
+ * operator's assert or as a Postgres error, so it is rejected here instead.
+ */
+type NumericSelector<E extends TableSchema> = ColumnsOfType<E, 'number'>;
+
+/**
+ * The columns of a table that `min`/`max` can aggregate: those holding numbers
+ * (timestamps included) or strings (enums included). The IVM operator's value
+ * comparison throws on JSON and arrays, and Postgres has no MIN/MAX over a
+ * boolean, so those are rejected here instead of failing at runtime.
+ */
+type OrderedSelector<E extends TableSchema> = ColumnsOfType<
+  E,
+  'number' | 'string'
+>;
+
+/**
+ * The columns of `E` whose schema `type` is one of `T`. Columns are picked by
+ * schema type, not TypeScript type, which is `any` for a plain `json` column
+ * and can be `number` for a `json<number>()` one. A schema whose column names
+ * aren't known (as in `AnyQuery`) allows every column.
+ */
+type ColumnsOfType<
+  E extends TableSchema,
+  T extends ValueType,
+> = string extends keyof E['columns']
+  ? keyof E['columns']
+  : {
+      [K in keyof E['columns']]: E['columns'][K] extends {type: T} ? K : never;
+    }[keyof E['columns']];
 
 export type NoCompoundTypeSelector<T extends TableSchema> = Exclude<
   Selector<T>,
   JsonSelectors<T> | ArraySelectors<T>
 >;
 
-type JsonSelectors<E extends TableSchema> = {
+export type JsonSelectors<E extends TableSchema> = {
   [K in keyof E['columns']]: E['columns'][K] extends {type: 'json'} ? K : never;
 }[keyof E['columns']];
 
@@ -36,8 +94,6 @@ type ArraySelectors<E extends TableSchema> = {
 }[keyof E['columns']];
 
 export type QueryReturn<Q> = Q extends Query<any, any, infer R> ? R : never;
-
-export type QueryTable<Q> = Q extends Query<infer T, any, any> ? T : never;
 
 export type ExistsOptions<TScalar extends boolean = boolean> = {
   /**
@@ -163,19 +219,246 @@ export type GetFilterType<
   TSchema extends TableSchema,
   TColumn extends keyof TSchema['columns'],
   TOperator extends SimpleOperator,
+> = GetFilterTypeFromTSType<
+  SchemaValueToTSType<TSchema['columns'][TColumn]>,
+  TOperator
+>;
+
+/**
+ * The allowed comparison-value type for a left operand whose TypeScript type is
+ * `TS`, given the operator. Used both by {@link GetFilterType} (column operands)
+ * and by `cmp` for {@link ExpressionBuilder.json} operands (JSON-path leaves).
+ */
+type GetFilterTypeFromTSType<
+  TS,
+  TOperator extends SimpleOperator,
 > = TOperator extends 'IS' | 'IS NOT'
   ? // SchemaValueToTSType adds null if the type is optional, but we add null
     // no matter what for dx reasons. See:
     // https://github.com/rocicorp/mono/pull/3576#discussion_r1925792608
-    SchemaValueToTSType<TSchema['columns'][TColumn]> | null | undefined
+    TS | null | undefined
   : TOperator extends 'IN' | 'NOT IN'
     ? // We don't want to compare to null in where clauses because it causes
       // confusing results:
       // https://zero.rocicorp.dev/docs/reading-data#comparing-to-null
-      readonly Exclude<SchemaValueToTSType<TSchema['columns'][TColumn]>, null>[]
-    :
-        | Exclude<SchemaValueToTSType<TSchema['columns'][TColumn]>, null>
-        | undefined;
+      readonly Exclude<TS, null>[]
+    : Exclude<TS, null> | undefined;
+
+/**
+ * The comparison-value type for a JSON path leaf of TS type `TS`. Only scalar
+ * leaves can be compared (the wire carries only primitives and primitive
+ * arrays, and deep object/array equality is out of scope), so a non-scalar leaf
+ * (an object, an array) resolves to `never`, making the `cmp` call a type error
+ * rather than a query that is always-false on the client and rejected by the
+ * server. An untyped leaf (`ReadonlyJSONValue`) narrows to its scalar members.
+ *
+ * An `IN`/`NOT IN` list must be homogeneous: the engines compare the leaf
+ * against the type of the list's first element, so a mixed list would drop
+ * elements (or cast-fail on Postgres). A union leaf therefore takes a list of
+ * strings, or of numbers, or of booleans, not a mix.
+ */
+export type GetJsonLeafFilterType<TS, TOperator extends SimpleOperator> = [
+  Extract<
+    TS,
+    // `IS`/`IS NOT` also accept a leaf typed exactly `null`: the engines all
+    // support `IS NULL` on it, and there is nothing else it could take.
+    | string
+    | number
+    | boolean
+    | (TOperator extends 'IS' | 'IS NOT' ? null : never)
+  >,
+] extends [never]
+  ? never
+  : TOperator extends 'IN' | 'NOT IN'
+    ? HomogeneousList<Extract<TS, string | number | boolean>>
+    : GetFilterTypeFromTSType<
+        Extract<TS, string | number | boolean | null>,
+        TOperator
+      >;
+
+type HomogeneousList<T> =
+  | ([Extract<T, string>] extends [never]
+      ? never
+      : readonly Extract<T, string>[])
+  | ([Extract<T, number>] extends [never]
+      ? never
+      : readonly Extract<T, number>[])
+  | ([Extract<T, boolean>] extends [never]
+      ? never
+      : readonly Extract<T, boolean>[]);
+
+/**
+ * Resolves a single JSON path segment `K` against value type `T`: an object key
+ * (`NonNullable<T>[K]`) or an array index (the element type). An unresolvable
+ * step (e.g. into an untyped `json()` whose type is `ReadonlyJSONValue`)
+ * yields `ReadonlyJSONValue`, keeping untyped paths usable rather than erroring.
+ *
+ * A numeric object key (`{2024: number}`, `Record<number, X>`) is addressed by
+ * its *string* form (JSON object keys are strings, and the engines treat a
+ * number segment strictly as an array index), so a numeric-string segment is
+ * resolved against the numeric key.
+ *
+ * `NonNullable<T>` is applied because the runtime collapses a null/undefined
+ * intermediate to `null`; the leaf is shaped off the non-null value, and
+ * operator-level null handling lives in {@link GetFilterTypeFromTSType}.
+ *
+ * A union is resolved one member at a time ({@link JsonStepMember}), so a key
+ * that only some variants have keeps its type; the variants without it add
+ * `undefined`, as the runtime reads null there.
+ */
+type JsonStep<T, K> =
+  NonNullable<ReadonlyJSONValue> extends NonNullable<T>
+    ? ReadonlyJSONValue
+    : JsonStepMember<NonNullable<T>, K>;
+
+/**
+ * {@link JsonStep} for one member `U` of the value type. `U` is a bare type
+ * parameter, so the conditional distributes over a union. A segment that
+ * doesn't apply to `U` (a key on an array or scalar, an index on an object) is
+ * `undefined`, matching the strict runtime navigation.
+ */
+type JsonStepMember<U, K> = U extends readonly (infer E)[]
+  ? K extends number
+    ? K extends keyof U
+      ? U[K]
+      : E
+    : undefined
+  : U extends object
+    ? K extends number
+      ? undefined
+      : K extends keyof U
+        ? U[K]
+        : K extends `${infer N extends number}`
+          ? N extends keyof U
+            ? U[N]
+            : undefined
+          : undefined
+    : undefined;
+
+/**
+ * Maximum JSON path depth that {@link ValueAtPath}/{@link ValidJsonPath} type.
+ * Paths deeper than this keep working at runtime but lose static leaf-typing /
+ * segment-validation past this depth.
+ *
+ * This is essentially free: for a fixed (`const`) tuple path the recursion stops
+ * when the path is exhausted, not at the budget, so the budget only bounds the
+ * rare non-tuple `(string | number)[]` case. The hard ceiling is ~999 (above
+ * that, building the `Tuple` budget hits TypeScript's 1000-deep tail-recursion
+ * limit, TS2589); 32 is far beyond any real JSON path, with ~30x margin.
+ */
+type MaxJsonPathDepth = 32;
+
+/**
+ * A tuple of length `N`, used as a decrementing recursion budget (each step drops
+ * one element; the empty tuple is the base case). A counter avoids a hand-written
+ * decrement table and lets {@link MaxJsonPathDepth} be a single number.
+ */
+type Tuple<N extends number, A extends unknown[] = []> = A['length'] extends N
+  ? A
+  : Tuple<N, [unknown, ...A]>;
+
+type JsonDepthBudget = Tuple<MaxJsonPathDepth>;
+
+/**
+ * The type at JSON path `P` inside value type `T`, segments applied
+ * left-to-right. Paths deeper than {@link MaxJsonPathDepth} fall back to
+ * `ReadonlyJSONValue`.
+ *
+ * Recursion is bounded by the `D` budget tuple. **`T` must be a concrete type, not
+ * a deferred schema lookup**: `cmp` walks the column type captured (concretely) by
+ * `json` at its call site, *not* `SchemaValueToTSType<...[TColumn]>` against a
+ * generic `TSchema`. Walking a deferred schema type in `cmp`'s signature defeats
+ * TypeScript's structural comparison of `ExpressionBuilder` and cascades into
+ * widespread `Query`/`ExpressionBuilder` assignability failures.
+ */
+export type ValueAtPath<
+  T,
+  P extends readonly (string | number)[],
+  D extends unknown[] = JsonDepthBudget,
+> = D extends [unknown, ...infer DR]
+  ? P extends readonly [
+      infer H,
+      ...infer R extends readonly (string | number)[],
+    ]
+    ? ValueAtPath<JsonStep<T, H>, R, DR>
+    : T
+  : ReadonlyJSONValue;
+
+/**
+ * The valid next path segments at value type `T`: object keys (numeric keys
+ * by their string form, since a number segment is strictly an array index), an
+ * array index (`number`), or `string | number` for an untyped
+ * (`ReadonlyJSONValue`) value. A scalar leaf has no further segments (`never`).
+ * Used by {@link ValidJsonPath} to constrain/autocomplete `json()` path
+ * arguments (Tier 2).
+ */
+type JsonKeysOf<T> =
+  NonNullable<ReadonlyJSONValue> extends NonNullable<T>
+    ? // untyped `json()` (`ReadonlyJSONValue`) / `any`: allow any segment
+      string | number
+    : JsonKeysOfMember<NonNullable<T>>;
+
+/**
+ * {@link JsonKeysOf} for one member `U`. `U` is a bare type parameter, so a
+ * union offers the keys of every variant.
+ */
+type JsonKeysOfMember<U> = U extends readonly unknown[]
+  ? number
+  : U extends object
+    ? Extract<keyof U, string> | `${Extract<keyof U, number>}`
+    : never;
+
+/**
+ * `true` for a numeric literal segment that cannot be an array index: negative
+ * (`-1`), non-integer (`0.5`, `1e-7`) or in exponent form (`1e21`).
+ * A numeric segment is an array index and must be a non-negative integer:
+ * the engines disagree on a negative index (Postgres counts from the end;
+ * JavaScript/SQLite yield null), a fractional one is not an index at all, and a
+ * huge one stringifies in exponent form, which SQLite rejects as a bad JSON
+ * path. So {@link ValidJsonPath} rejects one at compile time when it is a
+ * literal. Decided from the literal's string form: a leading `-`, a `.`, or an
+ * exponent (`e-`, `e+`). The runtime bound is tighter (`MAX_JSON_PATH_INDEX`,
+ * 2^31 - 1): a literal between that and 1e21 passes this check but is
+ * rejected by `json()` at runtime (`isValidJsonPathIndex`), as is any
+ * non-literal `number` out of range; this check is deliberately a subset of
+ * that one.
+ */
+type IsInvalidIndexLiteral<H> = H extends number
+  ? `${H}` extends
+      | `-${string}`
+      | `${string}.${string}`
+      | `${string}e-${string}`
+      | `${string}e+${string}`
+    ? true
+    : false
+  : false;
+
+/**
+ * Validates/autocompletes a `json()` path tuple `P` against value type `T`: maps
+ * `P` to a tuple whose element at each position is the set of keys valid *there*
+ * (computed by stepping through the preceding segments). Used as `...path: P &
+ * ValidJsonPath<T, P>`, so an invalid segment fails to satisfy the allowed-keys
+ * union at its position, and editors offer the allowed keys as completions.
+ *
+ * Recursion is bounded by the `D` counter; segments past depth `D` are left
+ * unconstrained. As with {@link ValueAtPath}, `T` must be concrete (see that
+ * type's note): `json` resolves the column type at its call site before this runs.
+ */
+export type ValidJsonPath<
+  T,
+  P extends readonly (string | number)[],
+  D extends unknown[] = JsonDepthBudget,
+> = D extends [unknown, ...infer DR]
+  ? P extends readonly [
+      infer H,
+      ...infer R extends readonly (string | number)[],
+    ]
+    ? readonly [
+        IsInvalidIndexLiteral<H> extends true ? never : JsonKeysOf<T>,
+        ...ValidJsonPath<JsonStep<T, H>, R, DR>,
+      ]
+    : P
+  : P; // past supported depth: leave the rest unconstrained
 
 export type DestTableName<
   TTable extends string,
@@ -191,10 +474,44 @@ type DestRow<
   ? PullRow<DestTableName<TTable, TSchema, TRelationship>, TSchema>
   : PullRow<DestTableName<TTable, TSchema, TRelationship>, TSchema> | undefined;
 
+declare const aggregateResultBrand: unique symbol;
+/**
+ * Phantom return type of an aggregate query ({@link Query.count} /
+ * {@link Query.sum} / {@link Query.avg} / {@link Query.min} /
+ * {@link Query.max}). A relationship whose subquery
+ * returns this is mapped by {@link AddSubreturn} to the bare scalar `T`
+ * (the aggregate value), rather than an array of rows.
+ */
+export type AggregateResult<T> = {readonly [aggregateResultBrand]: T};
+
+/**
+ * Whether `T` is an {@link AggregateResult}. `any` and `never` would match its
+ * brand, so they are ruled out first.
+ */
+type IsAggregate<T> = 0 extends 1 & T
+  ? false
+  : [T] extends [never]
+    ? false
+    : [T] extends [AggregateResult<unknown>]
+      ? true
+      : false;
+
+/** The value `R` of an {@link AggregateResult<R>}. */
+type AggregateValue<T> = [T] extends [AggregateResult<infer R>] ? R : never;
+
+/** The TypeScript type of a column, used as the result type of `min`/`max`. */
+type FieldTSType<
+  TTable extends string,
+  TSchema extends ZeroSchema,
+  TField extends string,
+> = SchemaValueToTSType<PullTableSchema<TTable, TSchema>['columns'][TField]>;
+
 type AddSubreturn<TExistingReturn, TSubselectReturn, TAs extends string> = {
-  readonly [K in TAs]: undefined extends TSubselectReturn
-    ? TSubselectReturn
-    : readonly TSubselectReturn[];
+  readonly [K in TAs]: IsAggregate<TSubselectReturn> extends true
+    ? AggregateValue<TSubselectReturn>
+    : undefined extends TSubselectReturn
+      ? TSubselectReturn
+      : readonly TSubselectReturn[];
 } extends infer TNewRelationship
   ? undefined extends TExistingReturn
     ? (Exclude<TExistingReturn, undefined> & TNewRelationship) | undefined
@@ -255,7 +572,7 @@ type CustomQueryPhantom = {
 /**
  * A Query, CustomQuery, or a function returning either.
  */
-export type AnyQueryLike =
+type AnyQueryLike =
   | Query<string, ZeroSchema, any>
   | ((...args: any) => Query<string, ZeroSchema, any>)
   | CustomQueryPhantom;
@@ -473,6 +790,156 @@ export interface Query<
   one(): Query<TTable, TSchema, TReturn | undefined, TPinned>;
 
   /**
+   * Reduces this (sub)query to a `count(*)` of the rows left after `where`,
+   * `start` and `limit`, as in SQL: `issue.limit(10).count()` is at most 10.
+   * Inside {@link related} it counts a relationship without materializing its
+   * rows, e.g. `issue.related('comments', c => c.count())`, and the
+   * relationship value on the parent becomes a bare `number`.
+   */
+  count(): Query<TTable, TSchema, AggregateResult<number>>;
+
+  /**
+   * Reduces this (sub)query to `sum(field)`. Like {@link count}, but sums a
+   * numeric column, e.g. `issue.related('comments', c => c.sum('points'))`. The
+   * value is `null` for an empty (or all-null) group, matching SQL.
+   */
+  sum<TSelector extends NumericSelector<PullTableSchema<TTable, TSchema>>>(
+    field: TSelector,
+  ): Query<TTable, TSchema, AggregateResult<number | null>>;
+  /**
+   * Sums the number leaves at a path inside a `json()` column, e.g.
+   * `c.sum(({json}) => json('metadata', 'points'))`. A missing path, a JSON
+   * `null` or a leaf of another type is skipped, like a SQL NULL.
+   */
+  sum<TColumnType, const P extends readonly (string | number)[]>(
+    selector: (
+      builder: JsonAggregateBuilder<TTable, TSchema>,
+    ) => ColumnRef<TColumnType, P, TTable> &
+      JsonLeafOf<ValueAtPath<TColumnType, P>, number>,
+  ): Query<TTable, TSchema, AggregateResult<number | null>>;
+
+  /**
+   * Reduces this (sub)query to `avg(field)`. The value is `null` for an empty
+   * (or all-null) group, matching SQL.
+   */
+  avg<TSelector extends NumericSelector<PullTableSchema<TTable, TSchema>>>(
+    field: TSelector,
+  ): Query<TTable, TSchema, AggregateResult<number | null>>;
+  /** Averages the number leaves at a path inside a `json()` column. */
+  avg<TColumnType, const P extends readonly (string | number)[]>(
+    selector: (
+      builder: JsonAggregateBuilder<TTable, TSchema>,
+    ) => ColumnRef<TColumnType, P, TTable> &
+      JsonLeafOf<ValueAtPath<TColumnType, P>, number>,
+  ): Query<TTable, TSchema, AggregateResult<number | null>>;
+
+  /**
+   * Reduces this (sub)query to `min(field)`. The result has the field's own
+   * type (so `min` of a string column is a string), and is `null` for an empty
+   * (or all-null) group, matching SQL.
+   */
+  min<TSelector extends OrderedSelector<PullTableSchema<TTable, TSchema>>>(
+    field: TSelector,
+  ): Query<
+    TTable,
+    TSchema,
+    AggregateResult<FieldTSType<TTable, TSchema, TSelector & string> | null>
+  >;
+  /**
+   * The minimum of the number and string leaves at a path inside a `json()`
+   * column. Numbers order before strings (as in JS and SQLite), so a path
+   * holding both yields its smallest number. Other leaves are skipped.
+   */
+  min<TColumnType, const P extends readonly (string | number)[]>(
+    selector: (
+      builder: JsonAggregateBuilder<TTable, TSchema>,
+    ) => ColumnRef<TColumnType, P, TTable> &
+      JsonLeafOf<ValueAtPath<TColumnType, P>, number | string>,
+  ): Query<
+    TTable,
+    TSchema,
+    AggregateResult<Extract<
+      ValueAtPath<TColumnType, P>,
+      number | string
+    > | null>
+  >;
+
+  /**
+   * Reduces this (sub)query to `max(field)`. The result has the field's own
+   * type, and is `null` for an empty (or all-null) group, matching SQL.
+   */
+  max<TSelector extends OrderedSelector<PullTableSchema<TTable, TSchema>>>(
+    field: TSelector,
+  ): Query<
+    TTable,
+    TSchema,
+    AggregateResult<FieldTSType<TTable, TSchema, TSelector & string> | null>
+  >;
+  /**
+   * The maximum of the number and string leaves at a path inside a `json()`
+   * column. Numbers order before strings, so a path holding both yields its
+   * largest string. Other leaves are skipped.
+   */
+  max<TColumnType, const P extends readonly (string | number)[]>(
+    selector: (
+      builder: JsonAggregateBuilder<TTable, TSchema>,
+    ) => ColumnRef<TColumnType, P, TTable> &
+      JsonLeafOf<ValueAtPath<TColumnType, P>, number | string>,
+  ): Query<
+    TTable,
+    TSchema,
+    AggregateResult<Extract<
+      ValueAtPath<TColumnType, P>,
+      number | string
+    > | null>
+  >;
+
+  /**
+   * Reduces the query to the distinct values of `columns`, as
+   * `SELECT DISTINCT` does: one row per combination that a row passing
+   * `where` has, e.g. `issue.where('open', true).distinct('assigneeID')`.
+   * `null` is a value like any other. An `orderBy` may only name these
+   * columns, and they order the rows by default. Follow it with
+   * {@link count} for the number of distinct combinations, with `null`
+   * counting as one. `limit`, `start`, `one`, `related` and the other
+   * aggregates are not supported with it yet.
+   */
+  distinct<
+    const TColumns extends readonly (NoCompoundTypeSelector<
+      PullTableSchema<TTable, TSchema>
+    > &
+      string)[],
+  >(
+    ...columns: TColumns
+  ): Query<
+    TTable,
+    TSchema,
+    Pick<PullRow<TTable, TSchema>, TColumns[number] & string>
+  >;
+
+  /**
+   * Groups the query's rows by `columns`, as `GROUP BY` does, for an
+   * aggregate per group: one row per combination of their values, with the
+   * aggregate under the function's name, e.g.
+   * `issue.groupBy('assigneeID').count()` gives `{assigneeID, count}` rows.
+   * `null` is a value like any other. An `orderBy` may only name these
+   * columns, and they order the rows by default. For the combinations alone,
+   * use {@link distinct}.
+   */
+  groupBy<
+    const TColumns extends readonly (NoCompoundTypeSelector<
+      PullTableSchema<TTable, TSchema>
+    > &
+      string)[],
+  >(
+    ...columns: TColumns
+  ): GroupedQuery<
+    TTable,
+    TSchema,
+    Pick<PullRow<TTable, TSchema>, TColumns[number] & string>
+  >;
+
+  /**
    * @deprecated Use {@link RunOptions} with {@link zero.run} instead.
    */
   run(options?: RunOptions): Promise<HumanReadable<TReturn>>;
@@ -499,6 +966,96 @@ export interface Query<
   ): T;
 }
 
+/**
+ * The query {@link Query.groupBy} returns: the aggregate that reduces each
+ * group. Its value is in the row under the function's name, next to the
+ * group columns (`TGroup`). As for a whole query, `sum`, `avg`, `min` and
+ * `max` are `null` for a group whose values are all null.
+ */
+export interface GroupedQuery<
+  TTable extends keyof TSchema['tables'] & string,
+  TSchema extends ZeroSchema,
+  TGroup,
+> {
+  count(): Query<TTable, TSchema, TGroup & {readonly count: number}>;
+  sum<TSelector extends NumericSelector<PullTableSchema<TTable, TSchema>>>(
+    field: TSelector,
+  ): Query<TTable, TSchema, TGroup & {readonly sum: number | null}>;
+  /** Sums the number leaves at a path inside a `json()` column per group. */
+  sum<TColumnType, const P extends readonly (string | number)[]>(
+    selector: (
+      builder: JsonAggregateBuilder<TTable, TSchema>,
+    ) => ColumnRef<TColumnType, P, TTable> &
+      JsonLeafOf<ValueAtPath<TColumnType, P>, number>,
+  ): Query<TTable, TSchema, TGroup & {readonly sum: number | null}>;
+  avg<TSelector extends NumericSelector<PullTableSchema<TTable, TSchema>>>(
+    field: TSelector,
+  ): Query<TTable, TSchema, TGroup & {readonly avg: number | null}>;
+  /** Averages the number leaves at a path inside a `json()` column per group. */
+  avg<TColumnType, const P extends readonly (string | number)[]>(
+    selector: (
+      builder: JsonAggregateBuilder<TTable, TSchema>,
+    ) => ColumnRef<TColumnType, P, TTable> &
+      JsonLeafOf<ValueAtPath<TColumnType, P>, number>,
+  ): Query<TTable, TSchema, TGroup & {readonly avg: number | null}>;
+  min<TSelector extends OrderedSelector<PullTableSchema<TTable, TSchema>>>(
+    field: TSelector,
+  ): Query<
+    TTable,
+    TSchema,
+    TGroup & {
+      readonly min: FieldTSType<TTable, TSchema, TSelector & string> | null;
+    }
+  >;
+  /**
+   * The minimum of the number and string leaves at a path inside a `json()`
+   * column per group, ordered as by {@link Query.min}.
+   */
+  min<TColumnType, const P extends readonly (string | number)[]>(
+    selector: (
+      builder: JsonAggregateBuilder<TTable, TSchema>,
+    ) => ColumnRef<TColumnType, P, TTable> &
+      JsonLeafOf<ValueAtPath<TColumnType, P>, number | string>,
+  ): Query<
+    TTable,
+    TSchema,
+    TGroup & {
+      readonly min: Extract<
+        ValueAtPath<TColumnType, P>,
+        number | string
+      > | null;
+    }
+  >;
+  max<TSelector extends OrderedSelector<PullTableSchema<TTable, TSchema>>>(
+    field: TSelector,
+  ): Query<
+    TTable,
+    TSchema,
+    TGroup & {
+      readonly max: FieldTSType<TTable, TSchema, TSelector & string> | null;
+    }
+  >;
+  /**
+   * The maximum of the number and string leaves at a path inside a `json()`
+   * column per group, ordered as by {@link Query.max}.
+   */
+  max<TColumnType, const P extends readonly (string | number)[]>(
+    selector: (
+      builder: JsonAggregateBuilder<TTable, TSchema>,
+    ) => ColumnRef<TColumnType, P, TTable> &
+      JsonLeafOf<ValueAtPath<TColumnType, P>, number | string>,
+  ): Query<
+    TTable,
+    TSchema,
+    TGroup & {
+      readonly max: Extract<
+        ValueAtPath<TColumnType, P>,
+        number | string
+      > | null;
+    }
+  >;
+}
+
 export type PreloadOptions = {
   /**
    * Time To Live. This is the amount of time to keep the rows associated with
@@ -511,16 +1068,17 @@ export type MaterializeOptions = PreloadOptions;
 
 /**
  * A helper type that tries to make the type more readable.
+ *
+ * A top-level aggregate query (e.g. `z.query.issue.count()`) has an
+ * {@link AggregateResult} return type and resolves to the bare scalar
+ * rather than a list of rows.
  */
-export type HumanReadable<T> = undefined extends T ? Expand<T> : Expand<T>[];
-
-/**
- * A helper type that tries to make the type more readable.
- */
-// Note: opaque types expand incorrectly.
-export type HumanReadableRecursive<T> = undefined extends T
-  ? ExpandRecursive<T>
-  : ExpandRecursive<T>[];
+export type HumanReadable<T> =
+  IsAggregate<T> extends true
+    ? AggregateValue<T>
+    : undefined extends T
+      ? Expand<T>
+      : Expand<T>[];
 
 /**
  * The kind of results we want to wait for when using {@link run} on {@link Query}.
@@ -550,13 +1108,5 @@ export type RunOptions = {
   type: 'unknown' | 'cached' | 'complete';
   ttl?: TTL | undefined;
 };
-
-export const DEFAULT_RUN_OPTIONS_UNKNOWN = {
-  type: 'unknown',
-} as const;
-
-export const DEFAULT_RUN_OPTIONS_COMPLETE = {
-  type: 'complete',
-} as const;
 
 export type AnyQuery = Query<string, ZeroSchema, any>;

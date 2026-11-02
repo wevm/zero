@@ -1,9 +1,8 @@
 import {pid} from 'node:process';
-import type {MessagePort} from 'node:worker_threads';
 import type {LogContext} from '@rocicorp/logger';
-import {resolver} from '@rocicorp/resolver';
 import {WebSocket, WebSocketServer, type ServerOptions} from 'ws';
 import {promiseVoid} from '../../../shared/src/resolved-promises.ts';
+import {resolver} from '../../../shared/src/resolver.ts';
 import {ErrorKind} from '../../../zero-protocol/src/error-kind.ts';
 import {ErrorOrigin} from '../../../zero-protocol/src/error-origin.ts';
 import {
@@ -44,12 +43,9 @@ import type {Subscription} from '../types/subscription.ts';
 import {installWebSocketReceiver} from '../types/websocket-handoff.ts';
 import type {ConnectParams} from './connect-params.ts';
 import {Connection, sendError} from './connection.ts';
+import {expiredAffinityCookieHeader, rehome} from './rehome.ts';
 import {createNotifierFrom, subscribeTo} from './replicator.ts';
 import {SyncerWsMessageHandler} from './syncer-ws-message-handler.ts';
-
-export type SyncerWorkerData = {
-  replicatorPort: MessagePort;
-};
 
 export type ReplicaReadyState = {
   readonly watermark: string;
@@ -372,6 +368,7 @@ export class Syncer implements SingletonService {
   readonly #drainCoordinator = new DrainCoordinator();
   readonly #parent: Worker;
   readonly #wss: WebSocketServer;
+  #draining = false;
   readonly #stopped = resolver();
   readonly #config: ZeroConfig;
   readonly #validateLegacyJWT: ValidateLegacyJWT | undefined;
@@ -475,6 +472,17 @@ export class Syncer implements SingletonService {
       );
     }
     this.#wss = new WebSocketServer(getWebSocketServerOptions(config));
+
+    const expiredCookie = expiredAffinityCookieHeader(config);
+    if (expiredCookie) {
+      // ws exposes handshake headers through this event. Set-Cookie must be
+      // part of the 101 response, before receiveConnection sends Rehome.
+      this.#wss.on('headers', headers => {
+        if (this.#draining) {
+          headers.push(expiredCookie);
+        }
+      });
+    }
 
     installWebSocketReceiver(
       lc,
@@ -816,6 +824,14 @@ export class Syncer implements SingletonService {
       return;
     }
 
+    // Authentication may yield while a drain starts. Do not create services
+    // or replace an existing client connection after that transition.
+    if (this.#draining) {
+      recordConnectionFailure('draining');
+      rehome(this.#lc, ws);
+      return;
+    }
+
     const viewSyncer = this.#viewSyncers.getService(clientGroupID);
     const connContextManager = viewSyncer.connContextManager;
     const group = connContextManager.getGroupState();
@@ -845,6 +861,14 @@ export class Syncer implements SingletonService {
     // Check for and close existing connections AFTER auth is validated
     const existing = this.#connections.get(clientID);
     if (existing) {
+      if (existing.wsID === params.wsID) {
+        // Clients generate a new wsID per socket, so this means the same
+        // connect request was delivered twice (e.g. duplicated upstream).
+        this.#lc.warn?.(
+          `duplicate connection for client ${clientID} with the same wsID ${params.wsID}, closing existing connection`,
+          {clientGroupID},
+        );
+      }
       this.#lc.debug?.(
         `client ${clientID} already connected, closing existing connection`,
       );
@@ -926,6 +950,10 @@ export class Syncer implements SingletonService {
     params: ConnectParams,
   ) => {
     try {
+      if (this.#draining) {
+        rehome(this.#lc, ws);
+        return;
+      }
       await this.#createConnection(ws, params);
     } finally {
       this.#releasePending(params.clientGroupID, params.generation);
@@ -965,6 +993,7 @@ export class Syncer implements SingletonService {
    * when the clients reconnect.
    */
   async drain() {
+    this.#draining = true;
     const start = Date.now();
     this.#lc.info?.(`draining ${this.#viewSyncers.size} view-syncers`);
 

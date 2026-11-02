@@ -62,6 +62,13 @@ const QUERY_METHODS = {
   limit: true,
   one: true,
   start: true,
+  count: true,
+  sum: true,
+  avg: true,
+  min: true,
+  max: true,
+  distinct: true,
+  groupBy: true,
   run: false,
   preload: false,
   materialize: false,
@@ -75,6 +82,7 @@ const EXPRESSION_BUILDER_METHODS = {
   not: true,
   exists: true,
   eb: true,
+  json: true,
 } satisfies Record<MethodName<ExpressionBuilder<string, Schema>>, boolean>;
 
 const ALLOWED_METHODS: ReadonlySet<string> = new Set(

@@ -275,7 +275,9 @@ test('add renamed fields', () => {
           {
             "args": undefined,
             "ast": {
+              "aggregate": undefined,
               "alias": undefined,
+              "groupBy": undefined,
               "limit": undefined,
               "orderBy": [
                 [
@@ -289,6 +291,7 @@ test('add renamed fields', () => {
               ],
               "related": [
                 {
+                  "aggregate": undefined,
                   "correlation": {
                     "childField": [
                       "id",
@@ -299,7 +302,9 @@ test('add renamed fields', () => {
                   },
                   "hidden": undefined,
                   "subquery": {
+                    "aggregate": undefined,
                     "alias": undefined,
+                    "groupBy": undefined,
                     "limit": undefined,
                     "orderBy": undefined,
                     "related": undefined,
@@ -338,6 +343,7 @@ test('add renamed fields', () => {
                     "flip": undefined,
                     "op": "EXISTS",
                     "related": {
+                      "aggregate": undefined,
                       "correlation": {
                         "childField": [
                           "issue_id",
@@ -348,7 +354,9 @@ test('add renamed fields', () => {
                       },
                       "hidden": undefined,
                       "subquery": {
+                        "aggregate": undefined,
                         "alias": undefined,
+                        "groupBy": undefined,
                         "limit": undefined,
                         "orderBy": undefined,
                         "related": undefined,
@@ -947,7 +955,9 @@ describe('getQueriesPatch', () => {
                 {
                   "args": undefined,
                   "ast": {
+                    "aggregate": undefined,
                     "alias": undefined,
+                    "groupBy": undefined,
                     "limit": undefined,
                     "orderBy": [
                       [
@@ -984,7 +994,9 @@ describe('getQueriesPatch', () => {
                 {
                   "args": undefined,
                   "ast": {
+                    "aggregate": undefined,
                     "alias": undefined,
+                    "groupBy": undefined,
                     "limit": undefined,
                     "orderBy": [
                       [
@@ -1022,38 +1034,40 @@ describe('getQueriesPatch', () => {
       expect(await add('none')).toBe(0);
       expect(send).toBeCalledTimes(1);
       expect(send.mock.calls[0]).toMatchInlineSnapshot(`
-      [
         [
-          "changeDesiredQueries",
-          {
-            "desiredQueriesPatch": [
-              {
-                "args": undefined,
-                "ast": {
-                  "alias": undefined,
-                  "limit": undefined,
-                  "orderBy": [
-                    [
-                      "id",
-                      "desc",
+          [
+            "changeDesiredQueries",
+            {
+              "desiredQueriesPatch": [
+                {
+                  "args": undefined,
+                  "ast": {
+                    "aggregate": undefined,
+                    "alias": undefined,
+                    "groupBy": undefined,
+                    "limit": undefined,
+                    "orderBy": [
+                      [
+                        "id",
+                        "desc",
+                      ],
                     ],
-                  ],
-                  "related": undefined,
-                  "schema": undefined,
-                  "start": undefined,
-                  "table": "issues",
-                  "where": undefined,
+                    "related": undefined,
+                    "schema": undefined,
+                    "start": undefined,
+                    "table": "issues",
+                    "where": undefined,
+                  },
+                  "hash": "0exun0d0iqan4l",
+                  "name": undefined,
+                  "op": "put",
+                  "ttl": 0,
                 },
-                "hash": "0exun0d0iqan4l",
-                "name": undefined,
-                "op": "put",
-                "ttl": 0,
-              },
-            ],
-          },
-        ],
-      ]
-    `);
+              ],
+            },
+          ],
+        ]
+      `);
 
       send.mockClear();
       expect(await add('none')).toBe(0);
@@ -1071,7 +1085,9 @@ describe('getQueriesPatch', () => {
                 {
                   "args": undefined,
                   "ast": {
+                    "aggregate": undefined,
                     "alias": undefined,
+                    "groupBy": undefined,
                     "limit": undefined,
                     "orderBy": [
                       [
@@ -1173,7 +1189,9 @@ describe('getQueriesPatch', () => {
         "14mt91l1cqiemy" => {
           "args": undefined,
           "ast": {
+            "aggregate": undefined,
             "alias": undefined,
+            "groupBy": undefined,
             "limit": undefined,
             "orderBy": [
               [
@@ -1195,7 +1213,9 @@ describe('getQueriesPatch', () => {
         "02bmi980t323gc" => {
           "args": undefined,
           "ast": {
+            "aggregate": undefined,
             "alias": undefined,
+            "groupBy": undefined,
             "limit": undefined,
             "orderBy": [
               [

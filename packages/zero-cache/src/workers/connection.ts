@@ -243,6 +243,10 @@ export class Connection {
     return false;
   }
 
+  get wsID(): string {
+    return this.#wsID;
+  }
+
   close(reason: string, ...args: unknown[]) {
     if (this.#closed) {
       return;
@@ -725,7 +729,7 @@ export function sendError(
   send(lc, ws, ['error', errorBody], 'ignore-backpressure');
 }
 
-export function findProtocolError(error: unknown): ProtocolError | undefined {
+function findProtocolError(error: unknown): ProtocolError | undefined {
   if (isProtocolError(error)) {
     return error;
   }

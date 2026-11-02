@@ -3,6 +3,7 @@ import type {Row} from '../../../zero-protocol/src/data.ts';
 import type {TableSchema} from '../../../zero-types/src/schema.ts';
 import type {DebugDelegate} from '../builder/debug-delegate.ts';
 import {ChangeType} from './change-type.ts';
+import type {Constraint} from './constraint.ts';
 import type {Input} from './operator.ts';
 import type {Stream} from './stream.ts';
 
@@ -98,4 +99,27 @@ export interface Source {
 
 export interface SourceInput extends Input {
   readonly fullyAppliedFilters: boolean;
+
+  /**
+   * The number of rows a fetch with `constraint` would return, counted without
+   * reading them, or `undefined` when the source can't count right now (the
+   * caller then fetches and counts the rows itself). Optional: a source that
+   * can't count cheaply leaves it out.
+   */
+  count?(constraint: Constraint | undefined): number | undefined;
+
+  /**
+   * The distinct values of `columns` among the rows an unconstrained fetch
+   * would return, each with the number of rows that have it, in no particular
+   * order, or `undefined` when the source can't group right now (the caller
+   * then fetches the rows and groups them itself). Optional, like `count`.
+   */
+  groupCounts?(columns: readonly string[]): GroupCount[] | undefined;
 }
+
+/** One group of {@link SourceInput.groupCounts}. */
+export type GroupCount = {
+  /** The group's value of each of the columns, by column name. */
+  readonly row: Row;
+  readonly count: number;
+};

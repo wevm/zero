@@ -4,6 +4,7 @@ import {ChangeIndex} from '../../zql/src/ivm/change-index.ts';
 import {ChangeType} from '../../zql/src/ivm/change-type.ts';
 import {
   applyChange,
+  emptyViewValue,
   idSymbol,
   skipYields,
   type ViewChange,
@@ -27,9 +28,9 @@ import {
 
 export type State = [Entry, QueryResultDetails];
 
-export const COMPLETE: QueryResultDetails = Object.freeze({type: 'complete'});
+const COMPLETE: QueryResultDetails = Object.freeze({type: 'complete'});
 export const UNKNOWN: QueryResultDetails = Object.freeze({type: 'unknown'});
-export const CACHED: QueryResultDetails = Object.freeze({type: 'cached'});
+const CACHED: QueryResultDetails = Object.freeze({type: 'cached'});
 
 /**
  * SolidView bridges Zero's incremental view updates with Solid's reactive
@@ -304,7 +305,7 @@ export class SolidView implements Output {
 
   #createEmptyRoot(): Entry {
     return {
-      '': this.#format.singular ? undefined : [],
+      '': emptyViewValue(this.#format),
     };
   }
 
