@@ -9,6 +9,7 @@
     "emojiChange",
     "issueDetail",
     "issueList",
+    "issueListCount",
     "issueListV2",
     "issuePreloadV2",
     "labels",

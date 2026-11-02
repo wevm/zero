@@ -1,6 +1,6 @@
 import Testing
 import Zero
 
-@Test func speaksProtocol53() {
-  #expect(protocolVersion == 53)
+@Test func speaksProtocol57() {
+  #expect(protocolVersion == 57)
 }

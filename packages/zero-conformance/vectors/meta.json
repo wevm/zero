@@ -4,7 +4,7 @@
   "description": "Protocol versions of the JS implementation the vectors were generated from.",
   "cases": [
     {
-      "protocolVersion": 53,
+      "protocolVersion": 57,
       "minServerSupportedSyncProtocol": 30
     }
   ]

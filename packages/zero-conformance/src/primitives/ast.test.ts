@@ -68,7 +68,7 @@ function literal(r: Random): ValuePosition {
   return {type: 'literal', value: r.pick(scalars)};
 }
 
-function right(r: Random): Exclude<ValuePosition, {type: 'column'}> {
+function right(r: Random): Exclude<ValuePosition, {type: 'column' | 'json'}> {
   if (r.bool(0.1)) {
     return {
       type: 'static',
@@ -76,7 +76,7 @@ function right(r: Random): Exclude<ValuePosition, {type: 'column'}> {
       field: r.bool() ? r.pick(['sub', 'role']) : ['a', r.pick(['b', 'c'])],
     };
   }
-  return literal(r) as Exclude<ValuePosition, {type: 'column'}>;
+  return literal(r) as Exclude<ValuePosition, {type: 'column' | 'json'}>;
 }
 
 function left(r: Random): ValuePosition {
