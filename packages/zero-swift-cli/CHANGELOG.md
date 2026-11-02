@@ -1,5 +1,12 @@
 # zero-swift
 
+## 0.5.6
+
+### Patch Changes
+
+- bf7a573: `VirtualList` keeps the selected row highlighted when it draws a new snapshot. It read its `selection` binding's value from when the list was made, so a snapshot after a tap could set the selection back and hide the highlight.
+- 2b5775b: The client now speaks sync protocol 57, the version the JS client uses. Versions 54–57 only add query features the Swift client doesn't send yet (aggregates, `groupBy`, `distinct`, JSON path filters), so nothing else changes, and zero-cache keeps accepting older versions.
+
 ## 0.5.5
 
 ### Patch Changes
