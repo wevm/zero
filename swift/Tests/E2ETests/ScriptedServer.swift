@@ -25,15 +25,16 @@ final class ScriptedServer: Sendable {
     let channel: any Channel
     /// The request line and headers.
     let request: [String]
-    /// The client's frames, in order, finished when the client closes the TCP connection.
-    let frames: AsyncStream<Frame>
-    fileprivate let continuation: AsyncStream<Frame>.Continuation
+    /// The client's frames not yet read, and whether the client has closed the TCP connection. Not an `AsyncStream`: a `next(within:)` that timed out would cancel its iteration, which ends the stream and drops every later frame.
+    private let received = Mutex<(frames: [Frame], finished: Bool)>(([], false))
 
     fileprivate init(channel: any Channel, request: [String]) {
       self.channel = channel
       self.request = request
-      (frames, continuation) = AsyncStream<Frame>.makeStream()
     }
+
+    fileprivate func receive(_ frame: Frame) { received.withLock { $0.frames.append(frame) } }
+    fileprivate func finish() { received.withLock { $0.finished = true } }
 
     /// The value of the request header `name`.
     func header(_ name: String) -> String? {
@@ -78,20 +79,25 @@ final class ScriptedServer: Sendable {
       }.get()
     }
 
+    /// Reads frames until the client closes the TCP connection.
+    func drain() async {
+      while await next(pongs: true, within: .seconds(3600)) != nil {}
+    }
+
     /// The next frame the client sends, other than pongs unless `pongs`, within `timeout`.
     func next(pongs: Bool = false, within timeout: Duration = .seconds(5)) async -> Frame? {
-      await withTaskGroup(of: Frame?.self) { group in
-        group.addTask {
-          for await frame in self.frames where pongs || frame.opcode != 10 { return frame }
-          return nil
+      let deadline = ContinuousClock.now + timeout
+      while true {
+        let (frame, finished) = received.withLock { r -> (Frame?, Bool) in
+          while !r.frames.isEmpty {
+            let f = r.frames.removeFirst()
+            if pongs || f.opcode != 10 { return (f, false) }
+          }
+          return (nil, r.finished)
         }
-        group.addTask {
-          try? await Task.sleep(for: timeout)
-          return nil
-        }
-        let first = await group.next()!
-        group.cancelAll()
-        return first
+        if let frame { return frame }
+        if finished || Task.isCancelled || ContinuousClock.now >= deadline { return nil }
+        try? await Task.sleep(for: .milliseconds(10))
       }
     }
   }
@@ -200,12 +206,12 @@ final class ScriptedServer: Sendable {
       }
       while let (frame, used) = Self.parse(buffer) {
         buffer.removeFirst(used)
-        connection?.continuation.yield(frame)
+        connection?.receive(frame)
       }
     }
 
     func channelInactive(context: ChannelHandlerContext) {
-      connection?.continuation.finish()
+      connection?.finish()
     }
 
     func errorCaught(context: ChannelHandlerContext, error: any Error) {

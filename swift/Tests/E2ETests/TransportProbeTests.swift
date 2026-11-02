@@ -89,8 +89,9 @@ struct TransportProbeTests {
       await c.write(c.accept())
       await c.write(ScriptedServer.text(big))
       await c.write(ScriptedServer.frame(2, bytes))
+      // From before the client has read the 32 MB above, which takes over 30 s on a busy iOS Simulator.
       for _ in 0..<2 {
-        if let f = await c.next(within: .seconds(30)) { got.withLock { $0.append(f) } }
+        if let f = await c.next(within: .seconds(90)) { got.withLock { $0.append(f) } }
       }
       _ = await c.next()
     }
@@ -244,7 +245,7 @@ struct TransportProbeTests {
           try? await Task.sleep(for: .milliseconds(50))
           await c.closeTCP()
         } else {
-          for await _ in c.frames {}
+          await c.drain()
         }
       }
       let logs = LogCollector()
