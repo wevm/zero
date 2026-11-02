@@ -124,6 +124,9 @@ final class Engine {
   private var deletedClients: DeleteClientsBody?
   private var lastMutationIDReceived: Double = 0
   private var lastMutationIDsSent: [String: Double] = [:]
+  /// The last mutation ID of each client pending at launch: the mutations
+  /// `rebasePending` stands in for JS's persisted writes of.
+  private var launchPendingIDs: [String: Double] = [:]
   private var additionalConnectParams: [(String, String)]?
   private var currentAttempt: ConnectAttempt?
   private var connectionReady = ReadyPromise()
@@ -286,6 +289,7 @@ final class Engine {
     // on it.
     ivmMain.apply(KVDiff.between(KVMap(), store.snapshot.map))
     if !store.pending.isEmpty {
+      for m in store.pending { launchPendingIDs[m.clientID] = m.id }
       let (main, replayed, touched, _) = replay(
         store.pending, over: store.snapshot.map, branch: ivmMain.fork())
       ivmMain.apply(
@@ -1576,10 +1580,14 @@ final class Engine {
 
   /// Runs the pending mutations again over the server snapshot, as a poke
   /// that changes nothing would, so they move the synced aggregates a query
-  /// registered since they last ran. Not while a mutator runs: the next
-  /// rebase replays them then.
+  /// registered since they last ran. Only while a mutation replayed at
+  /// launch is pending: JS kept the moves it made before the restart, but a
+  /// mutation made since moved only what was registered then, until the
+  /// next rebase. Not while a mutator runs: the next rebase replays them then.
   private func rebasePending() throws {
-    guard !writeLocked, !store.pending.isEmpty else { return }
+    guard !writeLocked,
+      store.pending.contains(where: { $0.id <= launchPendingIDs[$0.clientID] ?? 0 })
+    else { return }
     try withWriteLock {
       let snapshot = store.snapshot
       let touched = store.pendingWrites

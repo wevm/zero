@@ -1,5 +1,8 @@
 import type {Scenario} from './harness.ts';
-import {aggregateScenarios} from './scenarios/aggregates.ts';
+import {
+  aggregateScenarios,
+  upstreamAggregateScenarios,
+} from './scenarios/aggregates.ts';
 import {connectionScenarios} from './scenarios/connection.ts';
 import {errorScenarios} from './scenarios/errors.ts';
 import {mutationScenarios} from './scenarios/mutations.ts';
@@ -14,6 +17,7 @@ export const scenarios: Scenario[] = [
   ...pokeScenarios,
   ...queryScenarios,
   ...aggregateScenarios,
+  ...upstreamAggregateScenarios,
   ...mutationScenarios,
   ...persistenceScenarios,
   ...visibilityScenarios,

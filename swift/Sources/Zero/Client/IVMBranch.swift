@@ -81,7 +81,8 @@ final class IVMBranch {
   /// the last call. Swift only: JS persists a pending mutation's writes, so
   /// after a restart its view still has the moves the mutation made. Swift
   /// stores the mutation and replays it at launch, before any query
-  /// registers, so the client rebases the pending mutations once one does.
+  /// registers, so the client rebases the pending mutations once one does,
+  /// while one replayed at launch is pending.
   func takeNewRegistration() -> Bool {
     defer { newRegistration = false }
     return newRegistration

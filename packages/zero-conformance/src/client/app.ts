@@ -83,6 +83,66 @@ export const queries = defineQueries({
     timeByAuthor: defineQuery(() =>
       zql.comment.groupBy('authorId').sum('createdAt'),
     ),
+    // From zero-client's aggregate-read-your-writes, group-read-your-writes,
+    // context, crud-impl and custom tests.
+    issueWithCommentCount: defineQuery(({args}: {args: string}) =>
+      zql.issue
+        .where('id', args)
+        .related('comments', q => q.count())
+        .one(),
+    ),
+    openByState: defineQuery(() =>
+      zql.issue.where('closed', false).groupBy('closed').count(),
+    ),
+    issueStates: defineQuery(() => zql.issue.distinct('closed')),
+    issueStateCount: defineQuery(() => zql.issue.distinct('closed').count()),
+    countByState: defineQuery(() => zql.issue.groupBy('closed').count()),
+    timeByState: defineQuery(() =>
+      zql.issue.groupBy('closed').sum('createdAt'),
+    ),
+    avgTimeByState: defineQuery(() =>
+      zql.issue.groupBy('closed').avg('createdAt'),
+    ),
+    issuesByOwner: defineQuery(() =>
+      zql.issue.groupBy('closed', 'ownerId').count().orderBy('ownerId', 'desc'),
+    ),
+    latestIssueTime: defineQuery(() => zql.issue.max('createdAt')),
+    commentAndLabelCounts: defineQuery(() =>
+      zql.issue
+        .related('comments', q => q.count())
+        .related('labels', q => q.count())
+        .orderBy('id', 'asc'),
+    ),
+    commentTimeSums: defineQuery(() =>
+      zql.issue
+        .related('comments', q => q.sum('createdAt'))
+        .orderBy('id', 'asc'),
+    ),
+    userIssueCounts: defineQuery(() =>
+      zql.user.related('issues', q => q.count()).orderBy('id', 'asc'),
+    ),
+    // `points` isn't in the metadata's declared type, which only the
+    // builder's types check.
+    pointsByName: defineQuery(() =>
+      zql.user
+        .groupBy('name')
+        // oxlint-disable-next-line @typescript-eslint/no-explicit-any
+        .sum(({json}) => (json as any)('metadata', 'points')),
+    ),
+    avgPointsByName: defineQuery(() =>
+      zql.user
+        .groupBy('name')
+        // oxlint-disable-next-line @typescript-eslint/no-explicit-any
+        .avg(({json}) => (json as any)('metadata', 'points')),
+    ),
+    labelMax: defineQuery(() =>
+      zql.issue.related('labels', q => q.max('name')).orderBy('id', 'asc'),
+    ),
+    bugLabelCounts: defineQuery(() =>
+      zql.issue
+        .related('labels', q => q.where('name', 'bug').count())
+        .orderBy('id', 'asc'),
+    ),
   },
   // A table with a compound primary key.
   issueLabels: {
@@ -201,33 +261,59 @@ const harden = {
   }),
 };
 
-/**
- * Runs `ops` (CRUD operations, as `harden.ops` does), then each of the named
- * `queries` through the transaction, and returns what they read: a query the
- * server has answered reads its synced aggregates, any other computes them.
- */
+type QueryRef = {name: string; args?: ReadonlyJSONValue};
+
+/** What each of `refs` reads through `tx`, as JSON. */
+async function readAll(tx: Tx, refs: QueryRef[]): Promise<ReadonlyJSONValue[]> {
+  const out: ReadonlyJSONValue[] = [];
+  for (const {name, args: queryArgs} of refs) {
+    let v: unknown = queries;
+    for (const part of name.split('.')) {
+      v = (v as Record<string, unknown>)[part];
+    }
+    const request = (v as (...a: unknown[]) => unknown)(
+      ...(queryArgs === undefined ? [] : [queryArgs]),
+    );
+    // oxlint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await tx.run(addContextToQuery(request as any, undefined));
+    out.push(JSON.parse(JSON.stringify(result ?? null)));
+  }
+  return out;
+}
+
 const aggregates = {
+  /**
+   * Runs `ops` (CRUD operations, as `harden.ops` does), then each of the named
+   * `queries` through the transaction, and returns what they read: a query the
+   * server has answered reads its synced aggregates, any other computes them.
+   */
   read: defineMutator(async ({tx, args}: {tx: Tx; args: JSONObject}) => {
     for (const o of (args['ops'] ?? []) as CRUDOp[]) {
       await tx.mutate[o.table][o.op](o.value);
     }
-    const out: ReadonlyJSONValue[] = [];
-    for (const {name, args: queryArgs} of (args['queries'] ?? []) as {
-      name: string;
-      args?: ReadonlyJSONValue;
-    }[]) {
-      let v: unknown = queries;
-      for (const part of name.split('.')) {
-        v = (v as Record<string, unknown>)[part];
-      }
-      const request = (v as (...a: unknown[]) => unknown)(
-        ...(queryArgs === undefined ? [] : [queryArgs]),
-      );
-      // oxlint-disable-next-line @typescript-eslint/no-explicit-any
-      const result = await tx.run(addContextToQuery(request as any, undefined));
-      out.push(JSON.parse(JSON.stringify(result ?? null)));
+    return readAll(tx, (args['queries'] ?? []) as QueryRef[]);
+  }),
+  /**
+   * Reads the `queries`, runs `ops`, and reads them again; returns both
+   * reads. With `record`, it also upserts the user `record` with the
+   * transaction's reason as its name and the reads as its metadata, so a
+   * view of the users shows what the latest run, a rebase too, read.
+   */
+  record: defineMutator(async ({tx, args}: {tx: Tx; args: JSONObject}) => {
+    const refs = (args['queries'] ?? []) as QueryRef[];
+    const before = await readAll(tx, refs);
+    for (const o of (args['ops'] ?? []) as CRUDOp[]) {
+      await tx.mutate[o.table][o.op](o.value);
     }
-    return out;
+    const after = await readAll(tx, refs);
+    if (typeof args['record'] === 'string') {
+      await tx.mutate.user.upsert({
+        id: args['record'],
+        name: tx.reason,
+        metadata: {before, after},
+      });
+    }
+    return {before, after};
   }),
 };
 
