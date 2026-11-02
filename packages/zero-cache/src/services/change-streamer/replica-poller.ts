@@ -43,7 +43,10 @@ export class ReplicaPoller implements BackupPoller {
   }
 
   readonly #pollReplica = () => {
-    const db = new Database(this.#lc, this.#replicaFile);
+    // Read-only: closing a writable connection runs PRAGMA optimize, which
+    // blocks this worker's event loop for SQLite's busy timeout whenever the
+    // replicator holds the write lock (e.g. while applying a large change).
+    const db = new Database(this.#lc, this.#replicaFile, {readonly: true});
     try {
       const {stateVersion} = getReplicationState(new StatementRunner(db));
       if (stateVersion !== this.#lastWatermark) {
