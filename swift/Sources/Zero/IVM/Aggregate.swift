@@ -223,12 +223,22 @@ struct Reducer {
 }
 
 /// `compareAggregateValues`: numbers before strings, as in JS and SQLite,
-/// for the leaves of a JSON path; otherwise `compareValues`.
+/// for the leaves of a JSON path; otherwise `compareValues`. Values JS can't
+/// compare, such as the objects of a json column without a path, fail the
+/// query as JS's throw does. Equal values compare equal first, as JS's
+/// `a === b` does for one row's own value.
 func compareAggregateValues(_ a: JSONValue, _ b: JSONValue) -> Int {
   switch (a, b) {
   case (.number, .string): return -1
   case (.string, .number): return 1
-  default: return ValueCompare.compare(a, b)
+  default:
+    do {
+      return try ValueCompare.compareChecked(a, b)
+    } catch {
+      if a == b { return 0 }
+      PipelineFailure.report(error.description)
+      return ValueCompare.compare(a, b)
+    }
   }
 }
 

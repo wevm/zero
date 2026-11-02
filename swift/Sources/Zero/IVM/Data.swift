@@ -22,11 +22,13 @@ package enum ValueCompare {
     case (_, .null):
       return 1
     default:
-      if a.typeName != b.typeName {
+      // JS's `typeof`, which calls an array an object.
+      func typeOf(_ v: Value) -> String { v.arrayValue != nil ? "object" : v.typeName }
+      if typeOf(a) != typeOf(b) {
         throw IncomparableError(
-          description: "Cannot compare values of different types: \(a.typeName) and \(b.typeName)")
+          description: "Cannot compare values of different types: \(typeOf(a)) and \(typeOf(b))")
       }
-      throw IncomparableError(description: "Unsupported type: \(a.typeName)")
+      throw IncomparableError(description: "Unsupported type: \(typeOf(a))")
     }
   }
 
