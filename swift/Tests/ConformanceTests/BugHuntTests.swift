@@ -4,12 +4,25 @@ import ZeroTesting
 
 @testable import Zero
 
-/// The aggregate bug hunt (`packages/zero-conformance/src/ivm/bughunt.test.ts`):
-/// JS-generated aggregate, distinct and groupBy cases over datasets with the
-/// values a port most likely gets wrong. Each checked-in case is its own test.
+/// The aggregate bug hunt (`packages/zero-conformance/src/client/bughunt.test.ts`
+/// and `src/ivm/bughunt.test.ts`): JS-generated aggregate, distinct and
+/// groupBy cases over the values and client histories (restarts, pending
+/// mutations) a port most likely gets wrong. Each checked-in case is its own
+/// test.
 @Suite(.enabled(if: Vectors.available))
 @MainActor
 struct BugHuntTests {
+  /// The random client scenarios, all of them: reports the first mismatches.
+  @Test(.enabled(if: Vectors.generatedAvailable)) func clientFuzzOnMemory() throws {
+    try Self.runFuzz(storage: .memory)
+  }
+
+  @Test(.enabled(if: Vectors.generatedAvailable)) func clientFuzzOnSQLite() throws {
+    let directory = NSTemporaryDirectory() + "zero-bughunt-" + UUID().uuidString
+    defer { try? FileManager.default.removeItem(atPath: directory) }
+    try Self.runFuzz(storage: .sqlite(directory: directory))
+  }
+
   nonisolated static let ivmNames: [String] =
     ((try? Vectors.file("bughunt-ivm"))?["cases"]?.arrayValue ?? [])
     .compactMap { $0["name"]?.stringValue }
@@ -24,5 +37,53 @@ struct BugHuntTests {
     {
       Issue.record(Comment(rawValue: "\(name)\n\(mismatch)"))
     }
+  }
+
+  nonisolated static let clientNames: [String] =
+    ((try? Vectors.file("bughunt-client"))?["cases"]?.arrayValue ?? [])
+    .compactMap { $0["name"]?.stringValue }
+
+  /// One targeted client scenario (`vectors/bughunt-client.json`).
+  @Test(arguments: clientNames) func clientOnMemory(_ name: String) throws {
+    try Self.runClient(name, storage: .memory)
+  }
+
+  @Test(arguments: clientNames) func clientOnSQLite(_ name: String) throws {
+    let directory = NSTemporaryDirectory() + "zero-bughunt-" + UUID().uuidString
+    defer { try? FileManager.default.removeItem(atPath: directory) }
+    try Self.runClient(name, storage: .sqlite(directory: directory))
+  }
+
+  static func runClient(_ name: String, storage: ZeroStorage) throws {
+    let file = try Vectors.file("bughunt-client")
+    let startTime = file["shared"]?["startTime"]?.numberValue ?? 0
+    let scenario = try #require(
+      file["cases"]?.arrayValue?.first { $0["name"]?.stringValue == name })
+    let runner = try ScenarioRunner(scenario, startTime: startTime, storage: storage)
+    if let mismatch = ClientConformanceTests.firstMismatch(
+      scenario, scenario["expect"]?.arrayValue ?? [], runner.run())
+    {
+      Issue.record(Comment(rawValue: "\(name)\n\(mismatch)"))
+    }
+  }
+
+  static func runFuzz(storage: ZeroStorage) throws {
+    let file = try Vectors.generatedFile("client-aggregates-fuzz")
+    let startTime = file["shared"]?["startTime"]?.numberValue ?? 0
+    var failed: [String] = []
+    for scenario in file["cases"]?.arrayValue ?? [] {
+      let name = scenario["name"]?.stringValue ?? "?"
+      let runner = try ScenarioRunner(scenario, startTime: startTime, storage: storage)
+      let actual = runner.run()
+      if let mismatch = ClientConformanceTests.firstMismatch(
+        scenario, scenario["expect"]?.arrayValue ?? [], actual)
+      {
+        if failed.count < 5 { Issue.record(Comment(rawValue: "\(name)\n\(mismatch)")) }
+        failed.append(name)
+      }
+    }
+    print(
+      "[aggregate fuzz on \(storage)] \(failed.count) failed: \(failed.joined(separator: ", "))")
+    #expect(failed.isEmpty, "\(failed.count) scenarios failed")
   }
 }

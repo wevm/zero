@@ -144,6 +144,46 @@ export const queries = defineQueries({
         .orderBy('id', 'asc'),
     ),
   },
+  // More aggregates, for the aggregate bug hunt (`bughunt.test.ts`).
+  bughunt: {
+    allComments: defineQuery(() => zql.comment.orderBy('id', 'asc')),
+    allLabels: defineQuery(() => zql.label.orderBy('id', 'asc')),
+    maxCommentText: defineQuery(() => zql.comment.max('text')),
+    minIssueTitle: defineQuery(() => zql.issue.min('title')),
+    pointsSum: defineQuery(() =>
+      // oxlint-disable-next-line @typescript-eslint/no-explicit-any
+      zql.user.sum(({json}) => (json as any)('metadata', 'points')),
+    ),
+    ownerIssueCounts: defineQuery(() =>
+      zql.issue
+        .related('owner', o => o.related('issues', i => i.count()))
+        .orderBy('id', 'asc'),
+    ),
+    commentAvgWhere: defineQuery(() =>
+      zql.issue
+        .related('comments', q => q.where('createdAt', '>', 3).avg('createdAt'))
+        .orderBy('id', 'asc'),
+    ),
+    commentsByAuthorAndIssue: defineQuery(() =>
+      zql.comment.groupBy('authorId', 'issueId').count(),
+    ),
+    avgTimeByIssueWhere: defineQuery(() =>
+      zql.comment
+        .where('authorId', '!=', 'u3')
+        .groupBy('issueId')
+        .avg('createdAt'),
+    ),
+    commentCountsLimited: defineQuery(() =>
+      zql.issue
+        .related('comments', q => q.count())
+        .orderBy('createdAt', 'desc')
+        .limit(3),
+    ),
+    ownerCount: defineQuery(() => zql.issue.distinct('ownerId').count()),
+    sumTimeByOwner: defineQuery(() =>
+      zql.issue.groupBy('ownerId').sum('createdAt'),
+    ),
+  },
   // A table with a compound primary key.
   issueLabels: {
     all: defineQuery(() =>

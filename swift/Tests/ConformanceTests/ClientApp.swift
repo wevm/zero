@@ -88,6 +88,31 @@ enum ClientApp {
     "aggregates.bugLabelCounts": { _ in
       zql("issue").related("labels") { $0.where("name", "bug").count() }.orderBy("id", .asc)
     },
+    // More aggregates, for the aggregate bug hunt (`bughunt.test.ts`).
+    "bughunt.allComments": { _ in zql("comment").orderBy("id", .asc) },
+    "bughunt.allLabels": { _ in zql("label").orderBy("id", .asc) },
+    "bughunt.maxCommentText": { _ in zql("comment").max("text") },
+    "bughunt.minIssueTitle": { _ in zql("issue").min("title") },
+    "bughunt.pointsSum": { _ in zql("user").sum(json: "metadata", "points") },
+    "bughunt.ownerIssueCounts": { _ in
+      zql("issue").related("owner") { $0.related("issues") { $0.count() } }.orderBy("id", .asc)
+    },
+    "bughunt.commentAvgWhere": { _ in
+      zql("issue")
+        .related("comments") { $0.where("createdAt", .gt, 3).avg("createdAt") }
+        .orderBy("id", .asc)
+    },
+    "bughunt.commentsByAuthorAndIssue": { _ in
+      zql("comment").groupBy("authorId", "issueId").count()
+    },
+    "bughunt.avgTimeByIssueWhere": { _ in
+      zql("comment").where("authorId", .ne, "u3").groupBy("issueId").avg("createdAt")
+    },
+    "bughunt.commentCountsLimited": { _ in
+      zql("issue").related("comments") { $0.count() }.orderBy("createdAt", .desc).limit(3)
+    },
+    "bughunt.ownerCount": { _ in zql("issue").distinct("ownerId").count() },
+    "bughunt.sumTimeByOwner": { _ in zql("issue").groupBy("ownerId").sum("createdAt") },
     "issueLabels.all": { _ in
       zql("issueLabel").orderBy("issueId", .asc).orderBy("labelId", .asc)
     },

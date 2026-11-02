@@ -166,10 +166,6 @@ final class QueryContext {
   /// on, and every later push, `materialize`, and mutation fails with it.
   private(set) var branchFailure: PipelineError?
 
-  /// Rebases the pending mutations over the server snapshot. The engine
-  /// sets it; see `IVMBranch.takeNewRegistration`.
-  var rebasePending: () throws -> Void = {}
-
   /// Pushes `diff` into the branch and flushes the views. A push an
   /// operator fails (where JS throws from it) still flushes what the views
   /// got, as JS's `finally` does, and then throws.
@@ -280,10 +276,6 @@ final class QueryContext {
       }
       // A view of a grouped query shows only its columns and value.
       input = ast.groupBy != nil ? try groupViewInput(pipeline, ast, delegate) : pipeline
-      // The pending mutations moved no synced aggregate the query now lets
-      // them move; rebasing them does, before the view hydrates. The new
-      // pipeline has no output yet, so it drops what the rebase pushes.
-      if branch.takeNewRegistration() { try rebasePending() }
     } catch {
       removeAddedQuery()
       throw error

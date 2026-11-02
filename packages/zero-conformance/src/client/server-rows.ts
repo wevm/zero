@@ -27,7 +27,7 @@ type JSONObject = {readonly [key: string]: ReadonlyJSONValue};
 /** Server-named rows by server table name. */
 export type ServerData = Record<string, JSONObject[]>;
 
-type SyncedRow = {table: string; id: JSONObject; value: JSONObject};
+export type SyncedRow = {table: string; id: JSONObject; value: JSONObject};
 
 function lookup(name: string) {
   let v: unknown = queries;
@@ -38,7 +38,7 @@ function lookup(name: string) {
 }
 
 /** The rows the server syncs for `query(args)` over `data`, by table and key. */
-function syncedRows(
+export function syncedRows(
   query: string,
   args: ReadonlyJSONValue | undefined,
   data: ServerData,

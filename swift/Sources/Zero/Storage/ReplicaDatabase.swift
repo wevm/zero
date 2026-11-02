@@ -111,6 +111,11 @@ struct StoredMutation: Sendable, Hashable {
   let args: JSONValue
   /// `performance.now()` of the client that made it.
   let timestamp: Double
+  /// The synced aggregate rows (`a/` keys) its last run wrote, with their
+  /// values after it (nil for deleted). JS persists them in the mutation's
+  /// commit; Swift runs the mutation again at launch, before any query
+  /// registers the aggregates it moves, and puts these back.
+  var aggregateWrites: [JSKey: JSONValue?] = [:]
 }
 
 /// What a client group keeps: the last server snapshot and the mutations
@@ -138,6 +143,8 @@ enum StorageOp: Sendable {
     group: String, changes: [(String, JSONValue?)], cleared: Bool, cookie: JSONValue,
     lastMutationIDs: [JSKey: Double])
   case addMutation(group: String, StoredMutation)
+  /// What a rebase of a pending mutation wrote to synced aggregate rows.
+  case setAggregateWrites(group: String, clientID: String, id: Double, [JSKey: JSONValue?])
   /// Drops the mutations the IDs confirm, keeping the snapshot.
   case deleteConfirmedMutations(group: String, lastMutationIDs: [JSKey: Double])
 }
@@ -446,7 +453,7 @@ final class ReplicaDatabase {
       deletedClients = pairs
     case .setProfileID(let id):
       profileID = id
-    case .updateSnapshot, .addMutation, .deleteConfirmedMutations:
+    case .updateSnapshot, .addMutation, .setAggregateWrites, .deleteConfirmedMutations:
       break
     }
   }
@@ -469,6 +476,13 @@ final class ReplicaDatabase {
       memoryGroups![group] = g
     case .addMutation(let group, let m):
       memoryGroups![group, default: StoredGroup()].mutations.append(m)
+    case .setAggregateWrites(let group, let clientID, let id, let writes):
+      guard
+        let i = memoryGroups![group]?.mutations.firstIndex(where: {
+          $0.clientID == clientID && $0.id == id
+        })
+      else { break }
+      memoryGroups![group]!.mutations[i].aggregateWrites = writes
     case .deleteConfirmedMutations(let group, let lmids):
       memoryGroups![group]?.mutations.removeAll { $0.id <= lmids[JSKey($0.clientID)] ?? 0 }
     case .putClient, .deleteClients, .setDeletedClients, .setProfileID:
@@ -751,6 +765,14 @@ final class SQLiteStore: @unchecked Sendable {
         timestamp REAL NOT NULL
       );
       """)
+    // Added for synced aggregates; a database from before them lacks it.
+    var hasAggregateWrites = false
+    try db.query("SELECT 1 FROM pragma_table_info('mutations') WHERE name = 'aggregate_writes'") {
+      _ in hasAggregateWrites = true
+    }
+    if !hasAggregateWrites {
+      try db.execute("ALTER TABLE mutations ADD COLUMN aggregate_writes TEXT NOT NULL DEFAULT '[]'")
+    }
     try db.run(
       "INSERT INTO meta (key, value) VALUES ('name', ?) ON CONFLICT (key) DO NOTHING",
       [.text(name)])
@@ -1048,13 +1070,17 @@ final class SQLiteStore: @unchecked Sendable {
     case .addMutation(let group, let m):
       try db.run(
         """
-        INSERT INTO mutations (client_group_id, client_id, id, name, args, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO mutations (client_group_id, client_id, id, name, args, timestamp, aggregate_writes)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         [
           .text(group), .text(m.clientID), .real(m.id), .text(m.name), json(m.args),
-          .real(m.timestamp),
+          .real(m.timestamp), json(Self.encode(m.aggregateWrites)),
         ])
+    case .setAggregateWrites(let group, let clientID, let id, let writes):
+      try db.run(
+        "UPDATE mutations SET aggregate_writes = ? WHERE client_group_id = ? AND client_id = ? AND id = ?",
+        [json(Self.encode(writes)), .text(group), .text(clientID), .real(id)])
     }
   }
 
@@ -1073,16 +1099,42 @@ final class SQLiteStore: @unchecked Sendable {
     }
     try db.query(
       """
-      SELECT client_id, id, name, args, timestamp FROM mutations
+      SELECT client_id, id, name, args, timestamp, aggregate_writes FROM mutations
       WHERE client_group_id = ? ORDER BY seq
       """, [.text(id)]
     ) { row in
       g.mutations.append(
         StoredMutation(
           clientID: row.text(0), id: row.real(1), name: row.text(2),
-          args: try JSONParser.parse(row.bytes(3)), timestamp: row.real(4)))
+          args: try JSONParser.parse(row.bytes(3)), timestamp: row.real(4),
+          aggregateWrites: try decode(JSONParser.parse(row.bytes(5)))))
     }
     return g
+  }
+
+  /// A mutation's aggregate writes as `[[key, value or null], ...]`, by key.
+  static func encode(_ writes: [JSKey: JSONValue?]) -> JSONValue {
+    .array(
+      writes.sorted { StringCompare.utf16Less($0.key.string, $1.key.string) }.map {
+        .array([.string($0.key.string), $0.value ?? .null])
+      })
+  }
+
+  static func decode(_ json: JSONValue) throws -> [JSKey: JSONValue?] {
+    var writes: [JSKey: JSONValue?] = [:]
+    for pair in json.arrayValue ?? [] {
+      guard let key = pair[0]?.stringValue, let value = pair[1] else {
+        throw ReplicaDatabase.CorruptData(description: "Bad aggregate writes: \(json)")
+      }
+      // A row is an object; null marks a deleted one. (Not a ternary: its
+      // `nil` would be `JSONValue.null`.)
+      if value == .null {
+        writes[JSKey(key)] = .some(nil)
+      } else {
+        writes[JSKey(key)] = .some(value)
+      }
+    }
+    return writes
   }
 
   /// The profile ID of every database in `directory`, made the first time

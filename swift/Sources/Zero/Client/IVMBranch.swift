@@ -14,9 +14,6 @@ final class IVMBranch {
   /// Only the main branch registers optimistic aggregates and releases
   /// aggregate sources (see `aggregateSource`).
   private let isFork: Bool
-  /// Set when an aggregate's optimism is registered for the first time
-  /// since it was released, or since launch; see `takeNewRegistration`.
-  private var newRegistration = false
 
   convenience init(schema: ZeroSchema) {
     self.init(
@@ -68,24 +65,12 @@ final class IVMBranch {
     // A fork's queries are never synced, so only the main branch, which
     // releases them, registers.
     if let optimistic, !isFork {
-      if optimism.byTable[optimistic.table]?[name] == nil { newRegistration = true }
       optimism.byTable[optimistic.table, default: [:]][name] = optimistic
     }
     if let existing = sources[name] ?? nil { return existing }
     let source = MemorySource(TableSchema(name: name, columns: columns, primaryKey: primaryKey))
     sources[name] = .some(source)
     return source
-  }
-
-  /// Whether an aggregate's optimism was registered for the first time since
-  /// the last call. Swift only: JS persists a pending mutation's writes, so
-  /// after a restart its view still has the moves the mutation made. Swift
-  /// stores the mutation and replays it at launch, before any query
-  /// registers, so the client rebases the pending mutations once one does,
-  /// while one replayed at launch is pending.
-  func takeNewRegistration() -> Bool {
-    defer { newRegistration = false }
-    return newRegistration
   }
 
   /// `serverColumnNames`: the server names of `columns` of `table`.

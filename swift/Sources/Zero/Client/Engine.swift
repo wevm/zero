@@ -124,9 +124,11 @@ final class Engine {
   private var deletedClients: DeleteClientsBody?
   private var lastMutationIDReceived: Double = 0
   private var lastMutationIDsSent: [String: Double] = [:]
-  /// The last mutation ID of each client pending at launch: the mutations
-  /// `rebasePending` stands in for JS's persisted writes of.
-  private var launchPendingIDs: [String: Double] = [:]
+  /// What the store holds of the replica as JS would have persisted it;
+  /// see `persist`.
+  private var persisted = PersistedState(cookie: .null, main: KVMap(), touched: [], mutations: [])
+  private var persistTimer: (any ScheduledTimer)?
+  private var lastPersistAt: Double?
   private var additionalConnectParams: [(String, String)]?
   private var currentAttempt: ConnectAttempt?
   private var connectionReady = ReadyPromise()
@@ -232,6 +234,9 @@ final class Engine {
           id: $0.id, clientID: $0.clientID, name: $0.name, args: $0.args,
           timestamp: $0.timestamp, writes: [])
       })
+    let storedAggregateWrites = Dictionary(
+      mutations.map { (MutationKey(clientID: $0.clientID, id: $0.id), $0.aggregateWrites) },
+      uniquingKeysWith: { $1 })
     self.ivmMain = IVMBranch(schema: schema)
     let loop = self.loop
     self.connectionManager = ConnectionManager(
@@ -261,7 +266,6 @@ final class Engine {
         guard case .closed(let reason) = self?.connectionManager.state else { return nil }
         return reason
       })
-    context.rebasePending = { [weak self] in try self?.rebasePending() }
     _ = connectionManager.subscribe { [weak self] state in self?.onConnectionStateChange(state) }
     onConnectionStateChange(connectionManager.state)
     queryManager = QueryManager(
@@ -286,15 +290,19 @@ final class Engine {
       })
 
     // Load the snapshot into the sources and replay the pending mutations
-    // on it.
+    // on it, with the synced aggregate rows they wrote when they were last
+    // persisted, as JS's stored commits have them.
     ivmMain.apply(KVDiff.between(KVMap(), store.snapshot.map))
     if !store.pending.isEmpty {
-      for m in store.pending { launchPendingIDs[m.clientID] = m.id }
       let (main, replayed, touched, _) = replay(
-        store.pending, over: store.snapshot.map, branch: ivmMain.fork())
+        store.pending, over: store.snapshot.map, branch: ivmMain.fork(),
+        restoring: storedAggregateWrites)
       ivmMain.apply(
         store.advance(to: store.snapshot, main: main, pending: replayed, touched: touched))
     }
+    persisted = PersistedState(
+      cookie: store.snapshot.cookie, main: store.main, touched: store.pendingWrites,
+      mutations: Set(store.pending.map(MutationKey.init)))
     database.addWriteFailureListener(clientID) { [weak self] failure in
       self?.storageFailed(failure)
     }
@@ -1146,6 +1154,9 @@ final class Engine {
     repClosed = true
     pushTimer?.cancel()
     pushTimer = nil
+    // JS's close aborts a persist that hasn't run.
+    persistTimer?.cancel()
+    persistTimer = nil
     for t in lifecycleTimers { t.cancel() }
     lifecycleTimers = []
     database.clientStopped(clientID)
@@ -1387,7 +1398,7 @@ final class Engine {
         group: clientGroupID,
         StoredMutation(
           clientID: clientID, id: mutationID, name: name, args: pending.args,
-          timestamp: pending.timestamp))
+          timestamp: pending.timestamp, aggregateWrites: Self.aggregateWrites(write)))
     ])
     do {
       try context.processChanges(diff, rows: tx.rows)
@@ -1402,6 +1413,7 @@ final class Engine {
     }
     requestPush(now: false)
     fireWatchers(diff)
+    schedulePersist()
     client.resolve(.success(data: result))
   }
 
@@ -1566,6 +1578,7 @@ final class Engine {
     // A push that fails is a poke error: the client disconnects.
     try context.processChanges(diff)
     fireWatchers(diff)
+    schedulePersist()
     markGotQueriesAuthoritative(ifStillOn: socketAtStart)
   }
 
@@ -1578,36 +1591,19 @@ final class Engine {
     }
   }
 
-  /// Runs the pending mutations again over the server snapshot, as a poke
-  /// that changes nothing would, so they move the synced aggregates a query
-  /// registered since they last ran. Only while a mutation replayed at
-  /// launch is pending: JS kept the moves it made before the restart, but a
-  /// mutation made since moved only what was registered then, until the
-  /// next rebase. Not while a mutator runs: the next rebase replays them then.
-  private func rebasePending() throws {
-    guard !writeLocked,
-      store.pending.contains(where: { $0.id <= launchPendingIDs[$0.clientID] ?? 0 })
-    else { return }
-    try withWriteLock {
-      let snapshot = store.snapshot
-      let touched = store.pendingWrites
-      let branch = ivmMain.fork()
-      branch.apply(KVDiff.between(store.main, snapshot.map, keys: touched))
-      let rebased = replay(store.pending, over: snapshot.map, branch: branch)
-      let diff = store.advance(
-        to: snapshot, main: rebased.main, pending: rebased.replayed,
-        touched: touched.union(rebased.touched))
-      try context.processChanges(diff)
-      fireWatchers(diff)
-    }
-  }
-
   /// Runs `pending` again, in order, over `map` and on forks of `branch`
   /// (the rebase of `maybeEndPull`). A mutation that throws stays pending
   /// without writes. Returns the new main map, the mutations with what they
   /// wrote, every key they wrote, and the branch they ran on.
+  ///
+  /// At launch, no query has registered the synced aggregates a mutation
+  /// moves yet, so each run puts back the aggregate rows `restoring` has for
+  /// the mutation, as JS's stored commit holds them. `ran` hears each
+  /// mutation with its write, nil when it threw.
   private func replay(
-    _ pending: [ReplicaStore.PendingMutation], over map: KVMap, branch: IVMBranch
+    _ pending: [ReplicaStore.PendingMutation], over map: KVMap, branch: IVMBranch,
+    restoring: [MutationKey: [JSKey: JSONValue?]] = [:],
+    ran: (ReplicaStore.PendingMutation, KVWrite?) -> Void = { _, _ in }
   ) -> (main: KVMap, replayed: [ReplicaStore.PendingMutation], touched: Set<JSKey>, IVMBranch) {
     var main = map
     var branch = branch
@@ -1630,17 +1626,110 @@ final class Engine {
           throw ApplicationError("Unknown mutator: \(m.name)")
         }
         _ = try mutator(tx, m.args)
+        for (key, value) in restoring[MutationKey(m)] ?? [:] {
+          if let value { write.set(key.string, value) } else { write.delete(key.string) }
+        }
         main = write.map
         branch = fork
         m.writes = write.writes
         touched.formUnion(write.writes)
+        ran(m, write)
       } catch {
         // The mutation stays pending; its writes are dropped.
         m.writes = []
+        ran(m, nil)
       }
       replayed.append(m)
     }
     return (main, replayed, touched, branch)
+  }
+
+  /// The synced aggregate rows `write` wrote, with their values now.
+  private static func aggregateWrites(_ write: KVWrite) -> [JSKey: JSONValue?] {
+    var writes: [JSKey: JSONValue?] = [:]
+    for key in write.writes where key.string.hasPrefix(Keys.aggregatesPrefix) {
+      writes[key] = .some(write.get(key.string))
+    }
+    return writes
+  }
+
+  /// A pending mutation's identity.
+  private struct MutationKey: Hashable {
+    let clientID: String
+    let id: Double
+    init(clientID: String, id: Double) {
+      self.clientID = clientID
+      self.id = id
+    }
+    init(_ m: ReplicaStore.PendingMutation) { self.init(clientID: m.clientID, id: m.id) }
+  }
+
+  /// The replica as JS's last persist left it in the store: the snapshot it
+  /// persisted (by cookie), its main map over that snapshot, the keys where
+  /// the two may differ, and the pending mutations it ran.
+  private struct PersistedState {
+    var cookie: JSONValue
+    var main: KVMap
+    var touched: Set<JSKey>
+    var mutations: Set<MutationKey>
+  }
+
+  /// `PERSIST_IDLE_TIMEOUT_MS` and `PERSIST_THROTTLE_MS`.
+  static let persistIdleTimeoutMs: Double = 1000
+  static let persistThrottleMs: Double = 500
+
+  /// Replicache's persist scheduler (`ProcessScheduler`): after a mutation
+  /// or a poke, a persist runs once the last one is `persistThrottleMs`
+  /// old, then after `persistIdleTimeoutMs`; requests while one waits join
+  /// it.
+  private func schedulePersist() {
+    guard persistTimer == nil, !repClosed else { return }
+    let now = scheduler.monotonicNow
+    let throttled = lastPersistAt.map { max(0, $0 + Self.persistThrottleMs - now) } ?? 0
+    persistTimer = scheduler.schedule(after: throttled + Self.persistIdleTimeoutMs) {
+      [weak self] in self?.persist()
+    }
+  }
+
+  /// `persistDD31`, for the synced aggregate rows the store keeps of each
+  /// pending mutation. Swift writes the snapshot and the mutations through
+  /// as they come, and replays the mutations at launch; JS persists its
+  /// commits now and then, running the mutations again for it, so the
+  /// aggregates they move are the ones registered at that persist, not
+  /// when they ran. A persist runs the mutations it hasn't persisted over
+  /// what it persisted before, or, when the snapshot is newer, all of them
+  /// over it, and stores the aggregate rows each wrote.
+  private func persist() {
+    persistTimer = nil
+    lastPersistAt = scheduler.monotonicNow
+    let pending = store.pending
+    let toRun: [ReplicaStore.PendingMutation]
+    if persisted.cookie != store.snapshot.cookie {
+      persisted.cookie = store.snapshot.cookie
+      persisted.main = store.snapshot.map
+      persisted.touched = []
+      toRun = pending
+    } else {
+      toRun = pending.filter { !persisted.mutations.contains(MutationKey($0)) }
+    }
+    persisted.mutations = Set(pending.map(MutationKey.init))
+    guard !toRun.isEmpty else { return }
+    // The persist runs over a fork of the views' branch moved to what it
+    // persisted.
+    let branch = ivmMain.fork()
+    branch.apply(
+      KVDiff.between(
+        store.main, persisted.main, keys: store.pendingWrites.union(persisted.touched)))
+    var ops: [StorageOp] = []
+    let rebased = replay(toRun, over: persisted.main, branch: branch) { m, write in
+      ops.append(
+        .setAggregateWrites(
+          group: clientGroupID, clientID: m.clientID, id: m.id,
+          write.map(Self.aggregateWrites) ?? [:]))
+    }
+    persisted.main = rebased.main
+    persisted.touched.formUnion(rebased.touched)
+    database.apply(ops)
   }
 
   /// `JSON.stringify(recentSentMessages, null, 2)`.
