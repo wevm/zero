@@ -48,7 +48,7 @@ public final class Transaction {
   public var mutate: TransactionMutate { TransactionMutate(tx: self) }
 
   /// The rows `query` returns over this transaction's data.
-  public func run<R: ZeroRow, S: QueryResult>(_ query: Query<R, S>) throws -> S {
+  public func run<R: ZeroRow, S: QueryValue>(_ query: Query<R, S>) throws -> S {
     try S(view: run(query.any))
   }
 

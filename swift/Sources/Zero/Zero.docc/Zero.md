@@ -67,12 +67,15 @@ your TypeScript registries.
 ### Building queries
 
 - ``Query``
+- ``GroupedQuery``
 - ``RowExpression``
 - ``Column``
+- ``JSONPath``
 - ``Condition``
 - ``StaticParameter``
 - ``escapeLike(_:)``
 - ``AnyQuery``
+- ``AnyGroupedQuery``
 - ``ExpressionBuilder``
 - ``AST``
 - ``CustomQueryID``
@@ -80,7 +83,13 @@ your TypeScript registries.
 ### Reading rows
 
 - ``LiveQuery``
+- ``QueryValue``
 - ``QueryResult``
+- ``QueryElement``
+- ``OptionalQueryElement``
+- ``GroupRow``
+- ``DistinctRow``
+- ``RelationshipAggregates``
 - ``MaterializedView``
 - ``ViewSnapshot``
 - ``ViewValue``
@@ -123,6 +132,8 @@ These are what `zero-swift codegen` writes; apps rarely use them directly.
 - ``ZeroTable``
 - ``ZeroColumnValues``
 - ``ZeroValue``
+- ``NumericZeroValue``
+- ``OrderedZeroValue``
 - ``ZeroEnum``
 - ``Nullable``
 - ``Indirect``

@@ -80,6 +80,11 @@ same error at once; such a preload registers nothing. A `run` with
 | `.orderBy('created', 'desc')`                                        | `.orderBy(\.created, .desc)`                                                                   |
 | `.limit(n)`, `.start(row)`, `.one()`                                 | the same                                                                                       |
 | `escapeLike(text)`                                                   | ``escapeLike(_:)``                                                                               |
+| `.count()`, `.sum('points')`, `.avg`, `.min`, `.max`                 | `.count()` (an `Int`), `.sum(\.points)` and `.avg` (`Double?`), `.min`/`.max` (the column's type, optional) |
+| `.sum(({json}) => json('metadata', 'points'))`                       | `.sum(json: \.metadata, "points")`                                                             |
+| `.related('comments', q => q.count())`                               | `.related(\.comments) { $0.count() }`, read as `row.aggregates?.count(\.comments)`            |
+| `.distinct('ownerID')`                                               | `.distinct(\.ownerID)`, rows of ``DistinctRow``                                                |
+| `.groupBy('ownerID').count()`                                        | `.groupBy(\.ownerID).count()`, rows of ``GroupRow``: `row[\.ownerID]`, `row.value`            |
 
 Columns and relationships are key paths of the generated row types. Rows
 are structs; a relationship the query didn't ask for with `related` is nil.
@@ -96,6 +101,18 @@ never equals it, and matches the negated operators (`!=`, `notIn`,
 fractional index JS's builder rejects can't be written; a negative or too
 large index, an empty path, or an `in` list of mixed types makes the query
 invalid with JS's message.
+
+An aggregate reads as a value rather than rows: `zql.issue.count()` is a
+`Query<Issue, Int>`, and `run`, `liveQuery`, `@ZeroQuery` and `defineQuery`
+take it as they take a query of rows. A row struct can't hold a number where
+its relationship's rows go, so the aggregates of `related` go in its
+generated `aggregates` property (``RelationshipAggregates``) and the
+relationship's own property stays nil. A `groupBy` row's value is `value`,
+where JS names it after the function (`count`, `sum`, ...). What JS's
+builder throws for, such as an aggregate after `limit` or a `groupBy` with
+`related`, makes the query invalid with JS's message. A named aggregate is
+synced from the server: until it answers, a top-level count is `0` with
+`resultType` `.unknown`, which JS's suspense waits through and Swift reports.
 
 An unnamed query, a `Query` such as `zql.issue` rather than a
 ``QueryRequest`` from `defineQuery`, only sees local data, as in JS without

@@ -15,6 +15,8 @@ public struct FxProject: ZeroTable, Codable, Hashable, Identifiable {
   // Relationships, filled when a query asks for them with `related`.
   public var queries: [FxQuery]?
   public var people: [FxPerson]?
+  // The aggregates a query asked for in `related`; nil when it asked for none.
+  public var aggregates: RelationshipAggregates<FxProject>?
 
   public init(
     id: String,
@@ -25,7 +27,8 @@ public struct FxProject: ZeroTable, Codable, Hashable, Identifiable {
     position: Int,
     archivedStatus: FxStatus? = nil,
     queries: [FxQuery]? = nil,
-    people: [FxPerson]? = nil
+    people: [FxPerson]? = nil,
+    aggregates: RelationshipAggregates<FxProject>? = nil
   ) {
     self.id = id
     self.name = name
@@ -36,6 +39,7 @@ public struct FxProject: ZeroTable, Codable, Hashable, Identifiable {
     self.archivedStatus = archivedStatus
     self.queries = queries
     self.people = people
+    self.aggregates = aggregates
   }
 
   public static let tableName = "project"
@@ -65,6 +69,7 @@ public struct FxProject: ZeroTable, Codable, Hashable, Identifiable {
     archivedStatus = try entry.column("archivedStatus", 6)
     queries = try entry.relationship("queries")
     people = try entry.relationship("people")
+    aggregates = RelationshipAggregates(entry: entry)
   }
 
   public var columnValues: Row {
@@ -146,19 +151,23 @@ public struct FxQuery: ZeroTable, Codable, Hashable, Identifiable {
 
   // Relationships, filled when a query asks for them with `related`.
   @Indirect public var project: FxProject?
+  // The aggregates a query asked for in `related`; nil when it asked for none.
+  public var aggregates: RelationshipAggregates<FxQuery>?
 
   public init(
     id: String,
     projectID: String,
     text: String,
     `class`: String? = nil,
-    project: FxProject? = nil
+    project: FxProject? = nil,
+    aggregates: RelationshipAggregates<FxQuery>? = nil
   ) {
     self.id = id
     self.projectID = projectID
     self.text = text
     self.`class` = `class`
     self.project = project
+    self.aggregates = aggregates
   }
 
   public static let tableName = "query"
@@ -180,6 +189,7 @@ public struct FxQuery: ZeroTable, Codable, Hashable, Identifiable {
     text = try entry.column("text", 2)
     `class` = try entry.column("class", 3)
     project = try entry.relationship("project")
+    aggregates = RelationshipAggregates(entry: entry)
   }
 
   public var columnValues: Row {

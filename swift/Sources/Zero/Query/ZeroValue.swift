@@ -14,7 +14,7 @@ public struct ZeroValueError: Error, Sendable, Hashable, CustomStringConvertible
 
 /// A Swift type a column holds. Generated row structs use these for their
 /// columns; the query builder encodes compared values with them.
-public protocol ZeroValue: Sendable {
+public protocol ZeroValue: OptionalQueryElement {
   /// Reads a value from a row; a missing column reads as `.null`.
   init(zeroValue: JSONValue) throws(ZeroValueError)
   var zeroValue: JSONValue { get }

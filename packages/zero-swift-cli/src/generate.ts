@@ -114,6 +114,8 @@ const rowMembers = [
   'columns',
   'relationships',
   'columnValues',
+  // The aggregates a query asked for in `related`.
+  'aggregates',
   'hashValue',
   'CodingKeys',
   // The parameter of `init(entry:)`, which assigns the columns.
@@ -587,6 +589,10 @@ export function generate(
             : `  ${pub}var ${r.property}: [${r.dest}]?`,
         );
       }
+      lines.push(
+        '  // The aggregates a query asked for in `related`; nil when it asked for none.',
+        `  ${pub}var aggregates: RelationshipAggregates<${row}>?`,
+      );
     }
 
     const params = [
@@ -596,6 +602,9 @@ export function generate(
       ...relationships.map(
         r => `${r.property}: ${r.one ? `${r.dest}?` : `[${r.dest}]?`} = nil`,
       ),
+      ...(relationships.length
+        ? [`aggregates: RelationshipAggregates<${row}>? = nil`]
+        : []),
     ];
     lines.push('');
     lines.push(`  ${pub}init(`);
@@ -603,6 +612,9 @@ export function generate(
     lines.push('  ) {');
     for (const c of [...columns, ...relationships]) {
       lines.push(`    self.${c.property} = ${c.property}`);
+    }
+    if (relationships.length) {
+      lines.push('    self.aggregates = aggregates');
     }
     lines.push('  }');
 
@@ -637,6 +649,9 @@ export function generate(
     for (const r of relationships) {
       lines.push(`    ${r.property} = try entry.relationship(${str(r.name)})`);
     }
+    if (relationships.length) {
+      lines.push('    aggregates = RelationshipAggregates(entry: entry)');
+    }
     lines.push('  }');
 
     lines.push('');
@@ -647,7 +662,13 @@ export function generate(
     }
     lines.push('    ]');
     lines.push('  }');
-    lines.push(...codingKeys([...columns, ...relationships]));
+    lines.push(
+      ...codingKeys([
+        ...columns,
+        ...relationships,
+        ...(relationships.length ? [aggregatesKey(props)] : []),
+      ]),
+    );
     const keyColumns = table.primaryKey.map(k =>
       columns.find(c => c.name === k)!,
     );
@@ -782,6 +803,23 @@ function columnsDecl(
   lines.push('    }');
   lines.push('  }');
   return lines;
+}
+
+/**
+ * The coding key of a row's `aggregates`: `aggregates`, unless a column or
+ * relationship has that name on the wire, then with underscores appended
+ * until it's free.
+ */
+function aggregatesKey(props: readonly {name: string}[]): {
+  name: string;
+  id: string;
+  property: string;
+} {
+  let name = 'aggregates';
+  while (props.some(p => p.name === name)) {
+    name += '_';
+  }
+  return {name, id: 'aggregates', property: 'aggregates'};
 }
 
 /**

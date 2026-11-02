@@ -13,6 +13,8 @@ public struct User: ZeroTable, Codable, Hashable, Identifiable {
   // Relationships, filled when a query asks for them with `related`.
   public var createdIssues: [Issue]?
   public var assignedIssues: [Issue]?
+  // The aggregates a query asked for in `related`; nil when it asked for none.
+  public var aggregates: RelationshipAggregates<User>?
 
   public init(
     id: String,
@@ -21,7 +23,8 @@ public struct User: ZeroTable, Codable, Hashable, Identifiable {
     avatar: String,
     role: UserRole,
     createdIssues: [Issue]? = nil,
-    assignedIssues: [Issue]? = nil
+    assignedIssues: [Issue]? = nil,
+    aggregates: RelationshipAggregates<User>? = nil
   ) {
     self.id = id
     self.login = login
@@ -30,6 +33,7 @@ public struct User: ZeroTable, Codable, Hashable, Identifiable {
     self.role = role
     self.createdIssues = createdIssues
     self.assignedIssues = assignedIssues
+    self.aggregates = aggregates
   }
 
   public static let tableName = "user"
@@ -55,6 +59,7 @@ public struct User: ZeroTable, Codable, Hashable, Identifiable {
     role = try entry.column("role", 4)
     createdIssues = try entry.relationship("createdIssues")
     assignedIssues = try entry.relationship("assignedIssues")
+    aggregates = RelationshipAggregates(entry: entry)
   }
 
   public var columnValues: Row {
@@ -130,6 +135,8 @@ public struct Project: ZeroTable, Codable, Hashable, Identifiable {
   // Relationships, filled when a query asks for them with `related`.
   public var issues: [Issue]?
   public var labels: [Label]?
+  // The aggregates a query asked for in `related`; nil when it asked for none.
+  public var aggregates: RelationshipAggregates<Project>?
 
   public init(
     id: String,
@@ -140,7 +147,8 @@ public struct Project: ZeroTable, Codable, Hashable, Identifiable {
     markURL: String? = nil,
     logoURL: String? = nil,
     issues: [Issue]? = nil,
-    labels: [Label]? = nil
+    labels: [Label]? = nil,
+    aggregates: RelationshipAggregates<Project>? = nil
   ) {
     self.id = id
     self.name = name
@@ -151,6 +159,7 @@ public struct Project: ZeroTable, Codable, Hashable, Identifiable {
     self.logoURL = logoURL
     self.issues = issues
     self.labels = labels
+    self.aggregates = aggregates
   }
 
   public static let tableName = "project"
@@ -180,6 +189,7 @@ public struct Project: ZeroTable, Codable, Hashable, Identifiable {
     logoURL = try entry.column("logoURL", 6)
     issues = try entry.relationship("issues")
     labels = try entry.relationship("labels")
+    aggregates = RelationshipAggregates(entry: entry)
   }
 
   public var columnValues: Row {
@@ -276,6 +286,8 @@ public struct Issue: ZeroTable, Codable, Hashable, Identifiable {
   public var viewState: [ViewState]?
   public var emoji: [Emoji]?
   @Indirect public var notificationState: IssueNotifications?
+  // The aggregates a query asked for in `related`; nil when it asked for none.
+  public var aggregates: RelationshipAggregates<Issue>?
 
   public init(
     id: String,
@@ -297,7 +309,8 @@ public struct Issue: ZeroTable, Codable, Hashable, Identifiable {
     assignee: User? = nil,
     viewState: [ViewState]? = nil,
     emoji: [Emoji]? = nil,
-    notificationState: IssueNotifications? = nil
+    notificationState: IssueNotifications? = nil,
+    aggregates: RelationshipAggregates<Issue>? = nil
   ) {
     self.id = id
     self.shortID = shortID
@@ -319,6 +332,7 @@ public struct Issue: ZeroTable, Codable, Hashable, Identifiable {
     self.viewState = viewState
     self.emoji = emoji
     self.notificationState = notificationState
+    self.aggregates = aggregates
   }
 
   public static let tableName = "issue"
@@ -370,6 +384,7 @@ public struct Issue: ZeroTable, Codable, Hashable, Identifiable {
     viewState = try entry.relationship("viewState")
     emoji = try entry.relationship("emoji")
     notificationState = try entry.relationship("notificationState")
+    aggregates = RelationshipAggregates(entry: entry)
   }
 
   public var columnValues: Row {
@@ -474,6 +489,8 @@ public struct Comment: ZeroTable, Codable, Hashable, Identifiable {
   @Indirect public var creator: User?
   public var emoji: [Emoji]?
   @Indirect public var issue: Issue?
+  // The aggregates a query asked for in `related`; nil when it asked for none.
+  public var aggregates: RelationshipAggregates<Comment>?
 
   public init(
     id: String,
@@ -483,7 +500,8 @@ public struct Comment: ZeroTable, Codable, Hashable, Identifiable {
     creatorID: String,
     creator: User? = nil,
     emoji: [Emoji]? = nil,
-    issue: Issue? = nil
+    issue: Issue? = nil,
+    aggregates: RelationshipAggregates<Comment>? = nil
   ) {
     self.id = id
     self.issueID = issueID
@@ -493,6 +511,7 @@ public struct Comment: ZeroTable, Codable, Hashable, Identifiable {
     self.creator = creator
     self.emoji = emoji
     self.issue = issue
+    self.aggregates = aggregates
   }
 
   public static let tableName = "comment"
@@ -520,6 +539,7 @@ public struct Comment: ZeroTable, Codable, Hashable, Identifiable {
     creator = try entry.relationship("creator")
     emoji = try entry.relationship("emoji")
     issue = try entry.relationship("issue")
+    aggregates = RelationshipAggregates(entry: entry)
   }
 
   public var columnValues: Row {
@@ -590,17 +610,21 @@ public struct Label: ZeroTable, Codable, Hashable, Identifiable {
 
   // Relationships, filled when a query asks for them with `related`.
   @Indirect public var project: Project?
+  // The aggregates a query asked for in `related`; nil when it asked for none.
+  public var aggregates: RelationshipAggregates<Label>?
 
   public init(
     id: String,
     name: String,
     projectID: String,
-    project: Project? = nil
+    project: Project? = nil,
+    aggregates: RelationshipAggregates<Label>? = nil
   ) {
     self.id = id
     self.name = name
     self.projectID = projectID
     self.project = project
+    self.aggregates = aggregates
   }
 
   public static let tableName = "label"
@@ -620,6 +644,7 @@ public struct Label: ZeroTable, Codable, Hashable, Identifiable {
     name = try entry.column("name", 1)
     projectID = try entry.column("projectID", 2)
     project = try entry.relationship("project")
+    aggregates = RelationshipAggregates(entry: entry)
   }
 
   public var columnValues: Row {
@@ -681,19 +706,23 @@ public struct IssueLabel: ZeroTable, Codable, Hashable {
   // Relationships, filled when a query asks for them with `related`.
   @Indirect public var issue: Issue?
   @Indirect public var label: Label?
+  // The aggregates a query asked for in `related`; nil when it asked for none.
+  public var aggregates: RelationshipAggregates<IssueLabel>?
 
   public init(
     issueID: String,
     labelID: String,
     projectID: String,
     issue: Issue? = nil,
-    label: Label? = nil
+    label: Label? = nil,
+    aggregates: RelationshipAggregates<IssueLabel>? = nil
   ) {
     self.issueID = issueID
     self.labelID = labelID
     self.projectID = projectID
     self.issue = issue
     self.label = label
+    self.aggregates = aggregates
   }
 
   public static let tableName = "issueLabel"
@@ -715,6 +744,7 @@ public struct IssueLabel: ZeroTable, Codable, Hashable {
     projectID = try entry.column("projectID", 2)
     issue = try entry.relationship("issue")
     label = try entry.relationship("label")
+    aggregates = RelationshipAggregates(entry: entry)
   }
 
   public var columnValues: Row {
@@ -870,6 +900,8 @@ public struct Emoji: ZeroTable, Codable, Hashable, Identifiable {
   @Indirect public var creator: User?
   @Indirect public var issue: Issue?
   @Indirect public var comment: Comment?
+  // The aggregates a query asked for in `related`; nil when it asked for none.
+  public var aggregates: RelationshipAggregates<Emoji>?
 
   public init(
     id: String,
@@ -880,7 +912,8 @@ public struct Emoji: ZeroTable, Codable, Hashable, Identifiable {
     created: Double,
     creator: User? = nil,
     issue: Issue? = nil,
-    comment: Comment? = nil
+    comment: Comment? = nil,
+    aggregates: RelationshipAggregates<Emoji>? = nil
   ) {
     self.id = id
     self.value = value
@@ -891,6 +924,7 @@ public struct Emoji: ZeroTable, Codable, Hashable, Identifiable {
     self.creator = creator
     self.issue = issue
     self.comment = comment
+    self.aggregates = aggregates
   }
 
   public static let tableName = "emoji"
@@ -920,6 +954,7 @@ public struct Emoji: ZeroTable, Codable, Hashable, Identifiable {
     creator = try entry.relationship("creator")
     issue = try entry.relationship("issue")
     comment = try entry.relationship("comment")
+    aggregates = RelationshipAggregates(entry: entry)
   }
 
   public var columnValues: Row {

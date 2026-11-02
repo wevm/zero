@@ -36,9 +36,9 @@
   /// must be the request's. Until there is one, the value is empty.
   @MainActor
   @propertyWrapper
-  public struct ZeroQuery<Row: ZeroRow, Result: QueryResult, Context: Sendable>:
+  public struct ZeroQuery<Row: ZeroRow, Result: QueryValue, Context: Sendable>:
     @preconcurrency DynamicProperty
-  where Result.Row == Row {
+  {
     @Environment(\.zero) private var zero
     @State private var state = QueryState<Result>()
     private let request: QueryRequest<Row, Result, Context>
@@ -62,7 +62,7 @@
   /// What `@ZeroQuery` knows about its query besides the rows.
   @Observable
   @MainActor
-  public final class QueryState<Result: QueryResult> {
+  public final class QueryState<Result: QueryValue> {
     /// The live query, once the environment has a client.
     public private(set) var live: LiveQuery<Result>?
     private var materializeError: (any Error)?
@@ -72,8 +72,8 @@
     @ObservationIgnored let empty: Result
 
     init() {
-      // An array of no rows, or no row.
-      empty = try! Result(view: .many([]))
+      // No rows, no row, or an aggregate over no rows.
+      empty = Result.emptyQueryValue
     }
 
     public var resultType: ResultType { live?.resultType ?? .unknown }

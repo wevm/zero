@@ -164,14 +164,14 @@ public final class Zero<Context: Sendable> {
 
   /// A view of the query's rows that stays current. Named queries are
   /// synced from the server; an unnamed one only sees local data.
-  public func materialize<R: ZeroRow, S: QueryResult>(
+  public func materialize<R: ZeroRow, S: QueryValue>(
     _ request: QueryRequest<R, S, Context>, ttl: TTL = .defaultTTL
   ) throws -> MaterializedView {
     try materialize(request.query(context), ttl: ttl)
   }
 
   /// A view of an unnamed query, which only sees local data.
-  public func materialize<R: ZeroRow, S: QueryResult>(
+  public func materialize<R: ZeroRow, S: QueryValue>(
     _ query: Query<R, S>, ttl: TTL = .defaultTTL
   ) throws -> MaterializedView {
     try materialize(query.any, ttl: ttl)
@@ -210,19 +210,19 @@ public final class Zero<Context: Sendable> {
   /// confirms it, so waiting for `.complete` or `.cached` never returns
   /// unless the task is cancelled. The client logs a warning the first time
   /// for each such query. Use a named query (`defineQuery`) to sync it.
-  public func run<R: ZeroRow, S: QueryResult>(
+  public func run<R: ZeroRow, S: QueryValue>(
     _ request: QueryRequest<R, S, Context>, type: RunType = .unknown, ttl: TTL? = nil
   ) async throws -> S {
     try await run(request.query(context), type: type, ttl: ttl)
   }
 
-  public func run<R: ZeroRow, S: QueryResult>(
+  public func run<R: ZeroRow, S: QueryValue>(
     _ query: Query<R, S>, type: RunType = .unknown, ttl: TTL? = nil
   ) async throws -> S {
     try await run(query.any, type: type, ttl: ttl)
   }
 
-  private func run<S: QueryResult>(_ query: AnyQuery, type: RunType, ttl: TTL?) async throws -> S {
+  private func run<S: QueryValue>(_ query: AnyQuery, type: RunType, ttl: TTL?) async throws -> S {
     try Task.checkCancellation()
     let result: Deferred<ViewValue> = try run(query, type: type, ttl: ttl)
     let data = try await withTaskCancellationHandler {
@@ -258,7 +258,7 @@ public final class Zero<Context: Sendable> {
   /// local data, and `cached` and `complete` never settle. The client logs a
   /// warning the first time for each such query. Use a named query
   /// (`defineQuery`) to sync it.
-  public func preload<R: ZeroRow, S: QueryResult>(
+  public func preload<R: ZeroRow, S: QueryValue>(
     _ request: QueryRequest<R, S, Context>, ttl: TTL = .defaultPreloadTTL
   ) -> Preload {
     preload(request.query(context), ttl: ttl)
