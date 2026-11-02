@@ -35,8 +35,7 @@
 
     static func id(_ i: Int) -> String { String(format: "n%03d", i) }
 
-    func makeList() throws -> (Zero<Void>, List) {
-      let server = LoopbackServer()
+    func makeList(server: LoopbackServer = LoopbackServer()) throws -> (Zero<Void>, List) {
       server.put(
         "note", (0..<300).map { ["id": .string(Self.id($0)), "text": .string("note \($0)")] })
       var options = ZeroOptions(
@@ -166,6 +165,32 @@
       try await RowsSelectionCheck(list: list, view: view, window: window) {
         (selection.key, selection.sets, selection.shown)
       }.run(self)
+      withExtendedLifetime((zero, window)) {}
+    }
+
+    // A snapshot after a tap draws the list again: the selection is the
+    // binding's now, not what it was when the list was made.
+    @Test func keepsTheSelectionThroughASnapshot() async throws {
+      let server = LoopbackServer()
+      let (zero, list) = try makeList(server: server)
+      let selection = Selection()
+      let window = show(
+        VirtualList(list, selection: selection.binding) { item, _ in
+          Text(item.row.text).frame(height: 30)
+        })
+      try await run(30) { list.snapshot.complete && !list.snapshot.items.isEmpty }
+      let view = try #require(rowsScrollView(window))
+      let check = RowsSelectionCheck(list: list, view: view, window: window) {
+        (selection.key, selection.sets, selection.shown)
+      }
+      try await run(5) { view.rows.host.rowFrames().count > 5 }
+      try check.tap(Self.id(7))
+      try await run(5) { check.highlighted(Self.id(7)) }
+      server.put("note", ["id": .string(Self.id(2)), "text": .string("changed")])
+      try await run(30) { list.snapshot.items.contains { $0.row.text == "changed" } }
+      try await run(0.5) { false }
+      #expect(selection.key == Self.id(7))
+      try check.expectHighlight(on: Self.id(7))
       withExtendedLifetime((zero, window)) {}
     }
 
