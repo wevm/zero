@@ -7,7 +7,7 @@ Status: plan done; implementation in progress, with the decisions below taken (t
 ## TL;DR
 
 - Swift already sends `/sync/v57`, but its AST has none of the new fields, and its poke handler drops every `aggregate:` row (they aren't schema tables).
-- The port is six stacked PRs: **AST and wire → JSON path filters → IVM operators (compute mode) → synced client (source mode, storage, optimism) → typed Swift API and codegen → zbugs `issueListCount`**.
+- The port is five stacked PRs: **AST, wire and JSON path filters → IVM operators (compute mode) → synced client (source mode, storage, optimism) → typed Swift API and codegen → zbugs `issueListCount`**. (Planned as six; JSON path filters moved into the first PR, since the AST's new `.json` value position needs its predicate anyway.)
 - Every behavior is checked against JS-generated vectors: new AST/hash vectors, new IVM program ops, and client scenarios whose server rows come from JS's own compute pipeline.
 - Public API breaks (new `ViewValue` and `AST.ValuePosition` cases, `Query`'s result constraint) are declared with a `minor` changeset; zero-swift is 0.5.x.
 
@@ -148,10 +148,10 @@ Storage: the SQLite `entries` table holds every key, so `a/` rows persist with n
 
 | Vector file | Generator | New cases |
 | --- | --- | --- |
-| `ast.json` | `primitives/ast.test.ts` | normalize/encode/strict-decode of every new field, incl. each valita rejection; `mapAST` of aggregates (junction field), json refs, distinct, groupBy |
-| `sweep-query-hash.json`, `hash.json` | hash tests | AST + format hashes with aggregates, paths (`['0']` vs `[0]`), groupBy, distinct |
+| `ast-features.json` (new) | `primitives/ast-features.test.ts` | strictASTSchema verdict on every new field, incl. each valita rejection; normalize, hash and `mapAST` of aggregates (junction field), json refs, distinct, groupBy |
+| `query-internals-hash.json` (new) | same | `hashOfQueryInternals` with `Format.aggregate` |
 | `primary-key-string.json` | `keys.test.ts` | `aggregateRowKey` for the three table kinds, `sourceNameFromKey` of `a/` keys |
-| `ivm.json` (+ seeded fuzz) | `ivm/ivm.test.ts`, `generate.ts` | new program ops `count/sum/avg/min/max` (field or json), `distinct`, `groupBy`, `whereJson`; related aggregates incl. junction (LiftField), min/max extreme removal, group moves, json-path type strictness; builder-misuse cases record JS's error |
+| `ivm-features.json` (new; datasets with varied `user.metadata`) | `ivm/ivm-features.test.ts` | new program ops `count/sum/avg/min/max` (field or json), `distinct`, `groupBy`, `whereJson`; related aggregates incl. junction (LiftField), min/max extreme removal, group moves, json-path type strictness; builder-misuse cases record JS's error |
 | `client.json` | `client/scenarios/aggregates.ts` (new) | named aggregate queries synced from pokes, empty value before the server, optimistic count/sum/avg and grouped add/remove, rebase, restart reload from `a/`, source release, `tx.run` synced vs computed |
 
 Server rows in client scenarios come from JS, not by hand: a helper builds the named query's AST, runs it through `buildPipeline` in compute mode with the real query ID over the scenario's rows, and turns the emitted rows into `rowsPatch` puts, as zero-cache's pipeline driver streams them. The JS runner then records what the real `TestZero` shows. An end-to-end test also syncs a `count()` and a relationship `count()` from a real zero-cache and Postgres.
@@ -159,17 +159,16 @@ Server rows in client scenarios come from JS, not by hand: a helper builds the n
 ## 4. PR sequence
 
 ```
- #65 sync-upstream-6 ◄─ PR1 ◄─ PR2 ◄─ PR3 ◄─ PR4 ◄─ PR5 ◄─ PR6     (stacked; rebased onto main once #65 merges)
+ main (with #65) ◄─ PR1 ◄─ PR2 ◄─ PR3 ◄─ PR4 ◄─ PR5     (stacked)
 ```
 
 | PR | Scope | Checks |
 | --- | --- | --- |
-| 1. AST and wire | AST fields + json value position, coding, normalization, strict decoding, hash, name mapping, `Format.aggregate` | new `ast`/hash/keys vectors; minor changeset (public enum case) |
-| 2. JSON path filters | `json(...)` in `where` (untyped and typed), predicate, pushdown exclusion | ivm `whereJson` vectors |
-| 3. IVM compute mode | `Aggregate`, `GroupBy`, `GroupProjection`, `LiftField`, source counts, builder compute path, `ViewValue.value`, untyped `AnyQuery` builder + validations | curated + fuzz ivm vectors |
-| 4. Synced client | poke routing to `a/`, branch aggregate sources, source-mode builder, reload, release, optimistic deltas, `tx.run` | client scenario vectors on memory and SQLite; e2e count against zero-cache |
-| 5. Typed API + codegen | `count/sum/avg/min/max`, `distinct`, `groupBy`, `QueryValue`, `RelationshipAggregates`, LiveQuery/ZeroQuery/run/defineQuery; DocC + `JSParity.md` | `TypedQueryTests`, codegen tests, docs, api-breaks |
-| 6. zbugs | port `issueListCount`, remove the drift exemption, show the count in the list | zbugs drift test passes with no exemption; zbugs Linux + macOS builds |
+| 1. AST, wire, JSON path filters | AST fields + json value position, coding, normalization, strict decoding, hash, name mapping, `Format.aggregate`; `json(...)` in `where` (untyped and typed) and its predicate | `ast-features`, `query-internals-hash`, `ivm-features` (json filters) vectors; minor changeset (public enum case) |
+| 2. IVM compute mode | `Aggregate`, `GroupBy`, `GroupProjection`, `LiftField`, source counts, builder compute path, `ViewValue.value`, untyped `AnyQuery` builder + validations | curated + fuzz ivm vectors |
+| 3. Synced client | poke routing to `a/`, branch aggregate sources, source-mode builder, reload, release, optimistic deltas, `tx.run` | client scenario vectors on memory and SQLite; e2e count against zero-cache |
+| 4. Typed API + codegen | `count/sum/avg/min/max`, `distinct`, `groupBy`, `QueryValue`, `RelationshipAggregates`, LiveQuery/ZeroQuery/run/defineQuery; DocC + `JSParity.md` | `TypedQueryTests`, codegen tests, docs, api-breaks |
+| 5. zbugs | port `issueListCount`, remove the drift exemption, show the count in the list | zbugs drift test passes with no exemption; zbugs Linux + macOS builds |
 
 Every PR: Linux Swift, vectors staleness, CLI, api-breaks, zbugs, e2e, and macOS (path-filtered) green before review.
 
