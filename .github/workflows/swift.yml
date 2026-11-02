@@ -8,8 +8,8 @@ on:
   push:
     # swift-client is the development branch until the client lands on main.
     branches: [main, swift-client]
+  # Any base, so a PR stacked on another one gets checked too.
   pull_request:
-    branches: [main]
 
 concurrency:
   group: '${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}'

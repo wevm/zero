@@ -12,8 +12,8 @@ on:
       - 'packages/zero-conformance/**'
       - 'apps/zbugs-swift/**'
       - '.github/workflows/swift-macos.yml'
+  # Any base, so a PR stacked on another one gets checked too.
   pull_request:
-    branches: [main]
     paths:
       - 'swift/**'
       - 'packages/zero-conformance/**'
