@@ -31,6 +31,22 @@ enum ClientApp {
         .orderBy("id", .asc)
     },
     "users.all": { _ in zql("user").orderBy("id", .asc) },
+    "aggregates.issueCount": { _ in zql("issue").count() },
+    "aggregates.openIssueCount": { _ in zql("issue").where("closed", false).count() },
+    "aggregates.commentCounts": { _ in
+      zql("issue").related("comments") { $0.count() }.orderBy("id", .asc)
+    },
+    "aggregates.commentTimes": { _ in
+      zql("issue")
+        .related("comments") { $0.where("authorId", .ne, "u9").avg("createdAt") }
+        .orderBy("id", .asc)
+    },
+    "aggregates.labelCounts": { _ in
+      zql("issue").related("labels") { $0.count() }.orderBy("id", .asc)
+    },
+    "aggregates.owners": { _ in zql("issue").distinct("ownerId") },
+    "aggregates.commentsByIssue": { _ in zql("comment").groupBy("issueId").count() },
+    "aggregates.timeByAuthor": { _ in zql("comment").groupBy("authorId").sum("createdAt") },
     "issueLabels.all": { _ in
       zql("issueLabel").orderBy("issueId", .asc).orderBy("labelId", .asc)
     },
@@ -153,6 +169,26 @@ enum ClientApp {
         return ["mutationID": .number(Double(tx.mutationID)), "read": .object(out)]
       }
       return args?["return"]
+    },
+    // Runs CRUD operations, then each named query through the transaction,
+    // and returns what they read (`aggregates.read` in app.ts).
+    JSONMutator(name: "aggregates.read") { tx, args in
+      for o in args?["ops"]?.arrayValue ?? [] {
+        let table = tx.mutate.table(o["table"]?.stringValue ?? "")
+        let value = Row(o["value"]?.objectValue ?? [:])
+        switch o["op"]?.stringValue {
+        case "insert": try table.insert(value)
+        case "upsert": try table.upsert(value)
+        case "update": try table.update(value)
+        case "delete": try table.delete(value)
+        default: throw Failure("Unknown op")
+        }
+      }
+      var out: [JSONValue] = []
+      for q in args?["queries"]?.arrayValue ?? [] {
+        out.append(try tx.run(request(q["name"]?.stringValue ?? "", q["args"])).json ?? .null)
+      }
+      return .array(out)
     },
     JSONMutator(name: "comment.add") { tx, args in
       var row: Row = [

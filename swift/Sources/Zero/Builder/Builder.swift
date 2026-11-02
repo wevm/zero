@@ -9,7 +9,21 @@ package protocol BuilderDelegate: AnyObject {
   /// Do not copy a parent's conditions on correlation columns into its
   /// subqueries.
   var disableCorrelatedPredicatePushdown: Bool { get }
+  /// The synced client's mode: an aggregate or a grouping is read from the
+  /// synthetic source the server streams its rows to, rather than computed
+  /// from rows the client doesn't have.
+  var aggregatesFromSource: Bool { get }
   func getSource(_ tableName: String) -> (any Source)?
+  /// The source of a relationship aggregate's or a grouped query's rows,
+  /// which the name doesn't describe, made with this shape if it's new.
+  /// `optimistic` lets the client move it when it writes a child row.
+  func getAggregateSource(
+    _ name: String, columns: [(String, ColumnSchema)], primaryKey: [String],
+    optimistic: OptimisticAggregate?
+  ) -> (any Source)?
+  /// The names a synced aggregate row has `table`'s `columns` under: the
+  /// server's, which it computed them with.
+  func aggregateKeyColumns(_ table: String, _ columns: [String]) -> [String]
   func decorateInput(_ input: any Input, name: String) -> any Input
   func addEdge(_ source: any InputBase, _ dest: any InputBase)
   func decorateFilterInput(_ input: any FilterInput, name: String) -> any FilterInput
@@ -21,6 +35,12 @@ extension BuilderDelegate {
   package var applyFiltersAnyway: Bool { false }
   package var enableNotExists: Bool { false }
   package var disableCorrelatedPredicatePushdown: Bool { false }
+  package var aggregatesFromSource: Bool { false }
+  func getAggregateSource(
+    _ name: String, columns: [(String, ColumnSchema)], primaryKey: [String],
+    optimistic: OptimisticAggregate?
+  ) -> (any Source)? { getSource(name) }
+  package func aggregateKeyColumns(_ table: String, _ columns: [String]) -> [String] { columns }
   package func decorateInput(_ input: any Input, name: String) -> any Input { input }
   package func addEdge(_ source: any InputBase, _ dest: any InputBase) {}
   package func decorateFilterInput(_ input: any FilterInput, name: String) -> any FilterInput {
@@ -44,6 +64,11 @@ package func buildPipeline(
   var ast = delegate.mapAst(ast)
   if ast.groupBy != nil && ast.aggregate?.distinct != nil {
     throw PipelineError("a count of distinct values per group is not supported yet")
+  }
+  // A synced client reads a top-level aggregate's or a grouping's rows from
+  // their source: the table isn't synced, and ordering doesn't apply.
+  if (ast.aggregate != nil || ast.groupBy != nil) && delegate.aggregatesFromSource {
+    return try buildPipelineInternal(ast, delegate, queryID, "")
   }
   if ast.groupBy != nil || ast.aggregate?.distinct != nil {
     // A grouping's input is sorted by its columns first, so the rows of a
@@ -144,6 +169,20 @@ func buildPipelineInternal(
 ) throws(PipelineError) -> any Input {
   if astIn.groupBy != nil && !name.isEmpty {
     throw PipelineError("groupBy is only supported at the top level")
+  }
+  if astIn.aggregate != nil && astIn.groupBy == nil && delegate.aggregatesFromSource {
+    // The one precomputed row, from `aggregate:<queryID>`.
+    let table = topLevelAggregateTableName(queryID)
+    guard let source = delegate.getSource(table) else {
+      throw PipelineError("Aggregate source not found: \(table)")
+    }
+    let conn = try source.connect(
+      sort: [AST.OrderPart(AggregateColumns.key, .asc)], filters: nil, splitEditKeys: nil)
+    return delegate.decorateInput(
+      delegate.decorateSourceInput(conn, queryID: queryID), name: "\(name):aggregateSource")
+  }
+  if astIn.groupBy != nil && delegate.aggregatesFromSource {
+    return try groupFromSource(astIn, delegate, queryID, name)
   }
   guard let source = delegate.getSource(astIn.table) else {
     throw PipelineError("Source not found: \(astIn.table)")
@@ -499,6 +538,26 @@ func applyCorrelatedSubQuery(
   // empty array.
   if sq.subquery.limit == 0 && fromCondition { return end }
   guard let alias = sq.subquery.alias else { preconditionFailure("Subquery must have an alias") }
+  if let aggregate = sq.aggregate, delegate.aggregatesFromSource {
+    // The precomputed rows, one per parent, keyed by the correlation columns
+    // under the server's names.
+    if aggregate.distinct != nil {
+      throw PipelineError("a count of distinct values is not supported in a relationship yet")
+    }
+    let childKey = delegate.aggregateKeyColumns(sq.subquery.table, sq.correlation.childField)
+    // The server builds its operator with these names and rejects a
+    // collision; so does the client.
+    for column in childKey { try assertNotSyntheticColumn(column) }
+    let child = try aggregateFromSource(sq, aggregate, childKey, delegate, queryID, name)
+    let join = Join(
+      parent: end, child: child, parentKey: sq.correlation.parentField, childKey: childKey,
+      relationshipName: alias, hidden: sq.hidden ?? false, system: sq.system ?? .client,
+      parentPartitionKey: fromCondition ? nil : parentPartitionKey, boundProvider: boundProvider,
+      exists: exists)
+    delegate.addEdge(end, join)
+    delegate.addEdge(child, join)
+    return delegate.decorateInput(join, name: "\(name):join(\(alias))")
+  }
   var child = try buildPipelineInternal(
     sq.subquery, delegate, queryID, childPipelineName(name, sq),
     partitionKey: sq.correlation.childField, isNonFlippedExistsChild: fromCondition)
@@ -705,6 +764,25 @@ package func groupTableName(_ queryID: String) -> String {
   aggregateTablePrefix + queryID + ":#group"
 }
 
+/// `isAggregateTableName`: a synthetic aggregate table, of any kind.
+package func isAggregateTableName(_ name: String) -> Bool {
+  name.utf8.starts(with: aggregateTablePrefix.utf8)
+}
+
+/// `isTopLevelAggregateTableName`: `aggregate:<queryID>`, with no further
+/// `:`, unlike a relationship aggregate's or a grouped query's.
+package func isTopLevelAggregateTableName(_ name: String) -> Bool {
+  isAggregateTableName(name)
+    && !name.utf8.dropFirst(aggregateTablePrefix.utf8.count).contains(UInt8(ascii: ":"))
+}
+
+/// `isKeyedAggregateTableName`: a table whose rows `_0_key` alone keys: a
+/// top-level aggregate's or a grouped query's.
+package func isKeyedAggregateTableName(_ name: String) -> Bool {
+  isTopLevelAggregateTableName(name)
+    || (isAggregateTableName(name) && name.utf8.reversed().starts(with: ":#group".utf8.reversed()))
+}
+
 /// `reducerOf`: what a grouped query reduces each group to, its aggregate or
 /// a count.
 func reducerOf(_ ast: AST) throws(PipelineError) -> Reducer {
@@ -713,15 +791,141 @@ func reducerOf(_ ast: AST) throws(PipelineError) -> Reducer {
 
 /// `groupViewInput`: the input of a grouped query's view: its rows reduced
 /// to the group columns and, for a `groupBy()` with an aggregate, the value
-/// under the function's name.
+/// under the function's name, by the names of the pipeline's AST.
 package func groupViewInput(
   _ input: any Input, _ ast: AST, _ delegate: any BuilderDelegate
 )
   throws(PipelineError) -> any Input
 {
-  let names = delegate.mapAst(ast).groupBy ?? []
+  let viewNames = delegate.mapAst(ast).groupBy ?? []
+  let names =
+    delegate.aggregatesFromSource ? inputNames(ast, delegate, ast.groupBy ?? []) : viewNames
   return try GroupProjection(
-    input, columns: names.map { ($0, $0) }, valueName: ast.aggregate?.fn.rawValue)
+    input, columns: zip(viewNames, names).map { ($0, $1) }, valueName: ast.aggregate?.fn.rawValue)
+}
+
+/// `inputNames`: the names a grouped query's input rows have `columns`
+/// under: the query's, or the server's for a synced client.
+func inputNames(_ ast: AST, _ delegate: any BuilderDelegate, _ columns: [String]) -> [String] {
+  delegate.aggregatesFromSource ? delegate.aggregateKeyColumns(ast.table, columns) : columns
+}
+
+/// `renameColumns`: `columns` with each of `from` named as the same
+/// position of `to`.
+func renameColumns(
+  _ columns: [String: ColumnSchema], _ from: [String], _ to: [String]
+) -> [(String, ColumnSchema)] {
+  columns.sorted { StringCompare.utf16Less($0.key, $1.key) }.map { name, schema in
+    (from.firstIndex(of: name).map { to[$0] } ?? name, schema)
+  }
+}
+
+/// The source mode of an aggregate relationship: reads the rows the server
+/// computed from `aggregate:<queryID>:<alias path>`, provisioned with the
+/// child's column types, and registers how a child row's mutation moves
+/// them when the row alone can tell.
+func aggregateFromSource(
+  _ sq: AST.CorrelatedSubquery, _ aggregate: AST.Aggregate, _ childKey: [String],
+  _ delegate: any BuilderDelegate, _ queryID: String, _ name: String
+) throws(PipelineError) -> any Input {
+  let table = aggregateTableName(queryID, sq, parentName: name)
+  guard let childSource = delegate.getSource(sq.subquery.table) else {
+    throw PipelineError("Source not found: \(sq.subquery.table)")
+  }
+  // A junction aggregate's field is on the destination, one hop past the
+  // junction rows that hold the key.
+  var inputColumns = childSource.tableSchema.columns
+  let isJunction = !(sq.subquery.related ?? []).isEmpty
+  if isJunction, let dest = sq.subquery.related?.first?.subquery.table {
+    guard let destSource = delegate.getSource(dest) else {
+      throw PipelineError("Source not found: \(dest)")
+    }
+    inputColumns.merge(destSource.tableSchema.columns) { $1 }
+  }
+  let (clientColumns, _) = try aggregateSourceSchema(
+    inputColumns, groupKey: sq.correlation.childField, aggregate)
+  let columns = renameColumns(clientColumns, sq.correlation.childField, childKey)
+  // Optimism only for count, sum and avg of a direct, unbounded relationship
+  // whose `where` a child row alone decides: otherwise the server's value
+  // stands until it sends another.
+  var optimistic: OptimisticAggregate?
+  if !isJunction && aggregate.fn.isInvertible && sq.subquery.limit == nil
+    && sq.subquery.start == nil, let predicate = try perRowPredicate(sq.subquery.where)
+  {
+    optimistic = OptimisticAggregate(
+      aggregateTable: table, table: sq.subquery.table, childField: sq.correlation.childField,
+      keyField: childKey, aggregate: aggregate, predicate: predicate, grouped: false)
+  }
+  guard
+    let source = delegate.getAggregateSource(
+      table, columns: columns, primaryKey: childKey, optimistic: optimistic)
+  else { throw PipelineError("Aggregate source not found: \(table)") }
+  let conn = try source.connect(
+    sort: childKey.map { AST.OrderPart($0, .asc) }, filters: nil, splitEditKeys: nil)
+  return delegate.decorateInput(
+    delegate.decorateSourceInput(conn, queryID: queryID),
+    name: "\(name):aggregateSource(\(sq.subquery.alias ?? ""))")
+}
+
+/// A `where` compiled to a predicate on a row alone: `.some(nil)` when there
+/// is none, nil when it has a subquery, which a row alone can't judge.
+func perRowPredicate(_ condition: AST.Condition?) throws(PipelineError) -> RowPredicate?? {
+  guard let condition else { return .some(nil) }
+  let transformed = transformFilters(condition)
+  guard !transformed.conditionsRemoved, let filters = transformed.filters else { return nil }
+  return .some(try createPredicate(filters))
+}
+
+/// `groupFromSource`: a synced client reads a grouped query's rows from the
+/// source the server streams them to.
+func groupFromSource(
+  _ ast: AST, _ delegate: any BuilderDelegate, _ queryID: String, _ name: String
+) throws(PipelineError) -> any Input {
+  guard let tableSource = delegate.getSource(ast.table) else {
+    throw PipelineError("Source not found: \(ast.table)")
+  }
+  let reducer = try reducerOf(ast)
+  // The group columns and the aggregated field, under the server's names.
+  var columns = ast.groupBy ?? []
+  if let field = reducer.aggregate.field, !columns.contains(field) { columns.append(field) }
+  let names = inputNames(ast, delegate, columns)
+  func inputName(_ column: String) -> String { names[columns.firstIndex(of: column)!] }
+  var inputColumns: [String: ColumnSchema] = [:]
+  for column in columns {
+    inputColumns[inputName(column)] = tableSource.tableSchema.columns[column]
+  }
+  var serverAggregate = reducer.aggregate
+  serverAggregate.field = serverAggregate.field.map(inputName)
+  let ordering = groupOrdering(ast).map { AST.OrderPart(inputName($0.field), $0.direction) }
+  let (sourceColumns, primaryKey, sort) = try groupSourceSchema(
+    inputColumns, ordering, serverAggregate)
+  let table = groupTableName(queryID)
+  guard
+    let source = delegate.getAggregateSource(
+      table, columns: sourceColumns.sorted { StringCompare.utf16Less($0.key, $1.key) }.map { $0 },
+      primaryKey: primaryKey,
+      optimistic: try groupOptimisticDelta(ast, reducer, table, inputName))
+  else { throw PipelineError("Group source not found: \(table)") }
+  let conn = try source.connect(sort: sort, filters: nil, splitEditKeys: nil)
+  return delegate.decorateInput(
+    delegate.decorateSourceInput(conn, queryID: queryID), name: "\(name):groupSource")
+}
+
+/// `groupOptimisticDelta`: how a mutation of the table's rows moves a
+/// grouped query's rows, for count, sum and avg when the `where` can be
+/// judged from a row alone.
+func groupOptimisticDelta(
+  _ ast: AST, _ reducer: Reducer, _ table: String, _ inputName: (String) -> String
+) throws(PipelineError) -> OptimisticAggregate? {
+  guard reducer.fn.isInvertible, let predicate = try perRowPredicate(ast.where) else {
+    return nil
+  }
+  // In the group's order, which the server's GroupBy keys a row by.
+  let columns = groupOrdering(ast).map(\.field)
+  return OptimisticAggregate(
+    aggregateTable: table, table: ast.table, childField: columns,
+    keyField: columns.map(inputName), aggregate: reducer.aggregate, predicate: predicate,
+    grouped: true)
 }
 
 /// JS's `encodeURIComponent`: every UTF-8 byte but the letters, digits and

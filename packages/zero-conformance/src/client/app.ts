@@ -9,6 +9,7 @@ import {defineMutators} from '../../../zql/src/mutate/mutator-registry.ts';
 import {defineMutator} from '../../../zql/src/mutate/mutator.ts';
 import {createBuilder} from '../../../zql/src/query/create-builder.ts';
 import {
+  addContextToQuery,
   defineQueries,
   defineQuery,
 } from '../../../zql/src/query/query-registry.ts';
@@ -59,6 +60,29 @@ export const queries = defineQueries({
   },
   users: {
     all: defineQuery(() => zql.user.orderBy('id', 'asc')),
+  },
+  // Aggregates, distinct and groupBy, which the server computes.
+  aggregates: {
+    issueCount: defineQuery(() => zql.issue.count()),
+    openIssueCount: defineQuery(() => zql.issue.where('closed', false).count()),
+    commentCounts: defineQuery(() =>
+      zql.issue.related('comments', q => q.count()).orderBy('id', 'asc'),
+    ),
+    commentTimes: defineQuery(() =>
+      zql.issue
+        .related('comments', q =>
+          q.where('authorId', '!=', 'u9').avg('createdAt'),
+        )
+        .orderBy('id', 'asc'),
+    ),
+    labelCounts: defineQuery(() =>
+      zql.issue.related('labels', q => q.count()).orderBy('id', 'asc'),
+    ),
+    owners: defineQuery(() => zql.issue.distinct('ownerId')),
+    commentsByIssue: defineQuery(() => zql.comment.groupBy('issueId').count()),
+    timeByAuthor: defineQuery(() =>
+      zql.comment.groupBy('authorId').sum('createdAt'),
+    ),
   },
   // A table with a compound primary key.
   issueLabels: {
@@ -177,9 +201,40 @@ const harden = {
   }),
 };
 
+/**
+ * Runs `ops` (CRUD operations, as `harden.ops` does), then each of the named
+ * `queries` through the transaction, and returns what they read: a query the
+ * server has answered reads its synced aggregates, any other computes them.
+ */
+const aggregates = {
+  read: defineMutator(async ({tx, args}: {tx: Tx; args: JSONObject}) => {
+    for (const o of (args['ops'] ?? []) as CRUDOp[]) {
+      await tx.mutate[o.table][o.op](o.value);
+    }
+    const out: ReadonlyJSONValue[] = [];
+    for (const {name, args: queryArgs} of (args['queries'] ?? []) as {
+      name: string;
+      args?: ReadonlyJSONValue;
+    }[]) {
+      let v: unknown = queries;
+      for (const part of name.split('.')) {
+        v = (v as Record<string, unknown>)[part];
+      }
+      const request = (v as (...a: unknown[]) => unknown)(
+        ...(queryArgs === undefined ? [] : [queryArgs]),
+      );
+      // oxlint-disable-next-line @typescript-eslint/no-explicit-any
+      const result = await tx.run(addContextToQuery(request as any, undefined));
+      out.push(JSON.parse(JSON.stringify(result ?? null)));
+    }
+    return out;
+  }),
+};
+
 export const mutators = defineMutators({
   issue,
   harden,
+  aggregates,
   comment: {
     add: defineMutator(async ({tx, args}: {tx: Tx; args: JSONObject}) => {
       await tx.mutate.comment.insert({

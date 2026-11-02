@@ -24,7 +24,12 @@ public final class Transaction {
   /// The rows written, by key, as the branch has them, so the main branch
   /// can take the same rows rather than a copy of each.
   private(set) var rows: [String: Row] = [:]
-  private lazy var context = QueryContext.local(branch)
+  /// A mutator's query computes its aggregates from the branch's rows,
+  /// unless the server has answered it: then it reads the synced rows, with
+  /// this client's pending changes applied, as a view of it does
+  /// (`MutatorContext` in `custom.ts`).
+  private lazy var context = QueryContext.local(branch, aggregatesFromSource: false)
+  private lazy var syncedContext = QueryContext.local(branch, aggregatesFromSource: true)
 
   init(
     clientID: String, mutationID: Int, reason: Reason, token: String?, write: KVWrite,
@@ -44,12 +49,16 @@ public final class Transaction {
 
   /// The rows `query` returns over this transaction's data.
   public func run<R: ZeroRow, S: QueryResult>(_ query: Query<R, S>) throws -> S {
-    try S(view: context.snapshot(query.any))
+    try S(view: run(query.any))
   }
 
   /// The rows `query` returns over this transaction's data.
   public func run(_ query: AnyQuery) throws -> ViewValue {
-    try context.snapshot(query)
+    let queryID =
+      query.customQueryID.map { QueryHash.hashOfNameAndArgs($0.name, $0.args) }
+      ?? QueryHash.hashOfAST(query.ast)
+    return try (write.has(Keys.gotQueriesKey(hash: queryID)) ? syncedContext : context)
+      .snapshot(query)
   }
 
   func tableSchema(_ table: String) throws -> TableSchema {
@@ -80,6 +89,7 @@ public final class Transaction {
     write.set(key, JSONValue(row))
     rows[key] = row
     source.push(.add(row))
+    try applyOptimisticAggregateDeltas(tableName, old: nil, new: row)
   }
 
   func upsert(_ tableName: String, _ value: Row) throws {
@@ -101,8 +111,10 @@ public final class Transaction {
     write.set(key, .object(next))
     let source = source(tableName)
     let row = Row(next, layout: source.layout)
+    let oldRow = Row(prev, layout: source.layout)
     rows[key] = row
-    source.push(.edit(row, oldRow: Row(prev, layout: source.layout)))
+    source.push(.edit(row, oldRow: oldRow))
+    try applyOptimisticAggregateDeltas(tableName, old: oldRow, new: row)
   }
 
   func delete(_ tableName: String, _ id: Row) throws {
@@ -112,7 +124,159 @@ public final class Transaction {
     write.delete(key)
     rows[key] = nil
     let source = source(tableName)
-    source.push(.remove(Row(prev, layout: source.layout)))
+    let oldRow = Row(prev, layout: source.layout)
+    source.push(.remove(oldRow))
+    try applyOptimisticAggregateDeltas(tableName, old: oldRow, new: nil)
+  }
+
+  // MARK: Optimistic aggregates (`crud-impl.ts`)
+
+  /// `applyOptimisticAggregateDeltas`: moves the synced aggregates whose
+  /// child rows live in `table` by a child row's change, in this
+  /// transaction, so views and `run` see it at once. The rebase replays it
+  /// until the server confirms the mutation, whose value then replaces it.
+  /// An aggregate row not on the client is left alone, except that a
+  /// grouped query's group is added by its first row.
+  private func applyOptimisticAggregateDeltas(_ table: String, old: Row?, new: Row?) throws {
+    for agg in branch.optimisticAggregates(table) {
+      let oldKey = try old.flatMap { try aggregateKey(agg, $0) }
+      let newKey = try new.flatMap { try aggregateKey(agg, $0) }
+      // JS's `===`: by code unit.
+      let sameKey =
+        switch (oldKey, newKey) {
+        case (nil, nil): true
+        case (let a?, let b?): StringCompare.equal(a, b)
+        default: false
+        }
+      if sameKey {
+        if let oldKey { applyAggregateDelta(agg, oldKey, old, new) }
+      } else {
+        // The child leaves one aggregate and joins another; either may be
+        // none.
+        if let oldKey { applyAggregateDelta(agg, oldKey, old, nil) }
+        if let newKey { applyAggregateDelta(agg, newKey, nil, new) }
+      }
+    }
+  }
+
+  /// `aggregateKeyFor`: the key of the aggregate row `child` counts in; nil
+  /// when a correlation value is null, which gives the child no parent. A
+  /// grouped query's group can have null values.
+  private func aggregateKey(_ agg: OptimisticAggregate, _ child: Row) throws -> String? {
+    if agg.grouped {
+      let values = agg.childField.map { child[$0] ?? .null }
+      return try Keys.aggregateRowKey(
+        table: agg.aggregateTable, row: [AggregateColumns.key: .string(groupKey(values))])
+    }
+    var keyRow = JSONObject()
+    for (i, column) in agg.childField.enumerated() {
+      guard let value = child[column], value != .null else { return nil }
+      keyRow[agg.keyField[i]] = value
+    }
+    return try Keys.aggregateRowKey(table: agg.aggregateTable, row: keyRow)
+  }
+
+  /// `applyAggregateDelta`: writes the aggregate row at `key` as one child
+  /// change moves it, if the row is on the client, and pushes it to the
+  /// branch so a later `run` reads it. A grouped query's row is added by a
+  /// group's first row and removed with its last.
+  private func applyAggregateDelta(
+    _ agg: OptimisticAggregate, _ key: String, _ old: Row?, _ new: Row?
+  ) {
+    // The branch holds the row when a view of its query reads it.
+    let source = branch.source(agg.aggregateTable)
+    guard let cur = write.get(key)?.objectValue else {
+      if agg.grouped, let added = newGroupRow(agg, old, new) {
+        write.set(key, .object(added))
+        source?.push(.add(Row(added, layout: source!.layout)))
+      }
+      return
+    }
+    guard let updated = nextAggregateRow(agg, cur, old, new) else { return }
+    let curRow = source.map { Row(cur, layout: $0.layout) }
+    let inBranch = curRow.map { source!.data.contains($0) } ?? false
+    if agg.grouped, Self.groupRowCount(agg, updated) == 0 {
+      write.delete(key)
+      if inBranch { source!.push(.remove(curRow!)) }
+      return
+    }
+    write.set(key, .object(updated))
+    if inBranch { source!.push(.edit(Row(updated, layout: source!.layout), oldRow: curRow!)) }
+  }
+
+  /// `groupRowCount`: the number of rows of a group, nil for a sum or
+  /// average row stored before the rows carried it.
+  private static func groupRowCount(_ agg: OptimisticAggregate, _ row: JSONObject) -> JSONValue? {
+    row[agg.aggregate.fn == .count ? AggregateColumns.value : AggregateColumns.rows]
+  }
+
+  /// `newGroupRow`: the row of a group not on the client that `new` is the
+  /// first row of: it passes the `where`, and `old` wasn't counted already.
+  private func newGroupRow(_ agg: OptimisticAggregate, _ old: Row?, _ new: Row?) -> JSONObject? {
+    func counted(_ row: Row?) -> Bool {
+      guard let row else { return false }
+      return agg.predicate?(row) ?? true
+    }
+    guard let new, counted(new), !counted(old) else { return nil }
+    let values = agg.childField.map { new[$0] ?? .null }
+    // The group with no rows, which `new` then joins.
+    var empty = JSONObject()
+    for (i, column) in agg.keyField.enumerated() { empty[column] = values[i] }
+    empty[AggregateColumns.key] = .string(groupKey(values))
+    if agg.aggregate.fn == .count {
+      empty[AggregateColumns.value] = 0
+    } else {
+      empty[AggregateColumns.value] = .null
+      empty[AggregateColumns.sum] = 0
+      empty[AggregateColumns.count] = 0
+      empty[AggregateColumns.rows] = 0
+    }
+    return nextAggregateRow(agg, empty, nil, new)
+  }
+
+  /// `nextAggregateRow`: the aggregate row after a child changes from `old`
+  /// to `new`, nil when it doesn't move. A row the `where` rejects counts
+  /// as absent, so a row entering or leaving the filtered set moves it too.
+  private func nextAggregateRow(
+    _ agg: OptimisticAggregate, _ cur: JSONObject, _ oldIn: Row?, _ newIn: Row?
+  ) -> JSONObject? {
+    let old = oldIn.flatMap { agg.predicate?($0) == false ? nil : $0 }
+    let new = newIn.flatMap { agg.predicate?($0) == false ? nil : $0 }
+    func number(_ v: JSONValue?) -> Double { v?.numberValue ?? 0 }
+    func contribution(_ row: Row?) -> JSONValue? { row.map { aggregateValue(agg.aggregate, $0) } }
+    func contributes(_ row: Row?) -> Bool { contribution(row)?.numberValue != nil }
+    var next = cur
+    switch agg.aggregate.fn {
+    case .count:
+      let delta = (new != nil ? 1.0 : 0) - (old != nil ? 1.0 : 0)
+      if delta == 0 { return nil }
+      next[AggregateColumns.value] = .number(number(cur[AggregateColumns.value]) + delta)
+      return next
+    case .sum, .avg:
+      guard agg.aggregate.field != nil else { return nil }
+      // The row carries the sum of the non-null values and their count, so
+      // both move and the value follows: SQL's sum and avg skip nulls and
+      // are null over none. A group's row also carries its number of rows,
+      // nulls included, unless it was stored before it did.
+      let sumDelta = number(contribution(new)) - number(contribution(old))
+      let countDelta = (contributes(new) ? 1.0 : 0) - (contributes(old) ? 1.0 : 0)
+      let hasRows = cur[AggregateColumns.rows] != nil
+      let rowsDelta = hasRows ? (new != nil ? 1.0 : 0) - (old != nil ? 1.0 : 0) : 0
+      if sumDelta == 0 && countDelta == 0 && rowsDelta == 0 { return nil }
+      let sum = number(cur[AggregateColumns.sum]) + sumDelta
+      let count = number(cur[AggregateColumns.count]) + countDelta
+      let result = agg.aggregate.fn == .sum ? sum : sum / count
+      next[AggregateColumns.value] = count > 0 ? .number(result) : .null
+      next[AggregateColumns.sum] = .number(sum)
+      next[AggregateColumns.count] = .number(count)
+      if hasRows {
+        next[AggregateColumns.rows] = .number(number(cur[AggregateColumns.rows]) + rowsDelta)
+      }
+      return next
+    case .min, .max:
+      // Not invertible: the server's next poke moves them.
+      return nil
+    }
   }
 }
 

@@ -258,6 +258,7 @@ final class Engine {
         guard case .closed(let reason) = self?.connectionManager.state else { return nil }
         return reason
       })
+    context.rebasePending = { [weak self] in try self?.rebasePending() }
     _ = connectionManager.subscribe { [weak self] state in self?.onConnectionStateChange(state) }
     onConnectionStateChange(connectionManager.state)
     queryManager = QueryManager(
@@ -1573,6 +1574,26 @@ final class Engine {
     }
   }
 
+  /// Runs the pending mutations again over the server snapshot, as a poke
+  /// that changes nothing would, so they move the synced aggregates a query
+  /// registered since they last ran. Not while a mutator runs: the next
+  /// rebase replays them then.
+  private func rebasePending() throws {
+    guard !writeLocked, !store.pending.isEmpty else { return }
+    try withWriteLock {
+      let snapshot = store.snapshot
+      let touched = store.pendingWrites
+      let branch = ivmMain.fork()
+      branch.apply(KVDiff.between(store.main, snapshot.map, keys: touched))
+      let rebased = replay(store.pending, over: snapshot.map, branch: branch)
+      let diff = store.advance(
+        to: snapshot, main: rebased.main, pending: rebased.replayed,
+        touched: touched.union(rebased.touched))
+      try context.processChanges(diff)
+      fireWatchers(diff)
+    }
+  }
+
   /// Runs `pending` again, in order, over `map` and on forks of `branch`
   /// (the rebase of `maybeEndPull`). A mutation that throws stays pending
   /// without writes. Returns the new main map, the mutations with what they
@@ -1637,7 +1658,7 @@ final class Engine {
     var keyless: [String: [Row]] = [:]
     for case .update(let key, _, _) in patch {
       guard let value = write.get(key) else { continue }
-      let table = IVMBranch.sourceName(key)
+      let table = Keys.sourceName(key)
       guard let primaryKey = schema.tables[table]?.primaryKey else { continue }
       let row = value.objectValue ?? [:]
       if let rowKey = try? Keys.primaryKeyString(table: table, primaryKey: primaryKey, row: row) {
