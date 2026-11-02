@@ -1,15 +1,20 @@
 import type {SQLQuery} from '@databases/sql';
-import {assert} from '../../shared/src/asserts.ts';
-import type {
-  Condition,
-  Ordering,
-  SimpleCondition,
-  ValuePosition,
+import {assert, unreachable} from '../../shared/src/asserts.ts';
+import {
+  isLikeOperator,
+  isNegatedOperator,
+  jsonLiteralType,
+  type Condition,
+  type JsonPathReference,
+  type Ordering,
+  type SimpleCondition,
+  type ValuePosition,
 } from '../../zero-protocol/src/ast.ts';
 import type {
   SchemaValue,
   ValueType,
 } from '../../zero-schema/src/table-schema.ts';
+import {valueTypeOf} from '../../zero-types/src/schema-value.ts';
 import type {Constraint} from '../../zql/src/ivm/constraint.ts';
 import type {
   FetchRequest,
@@ -111,6 +116,46 @@ export function buildSelectQueries(
 }
 
 /**
+ * `SELECT COUNT(*)` over the rows a fetch with `constraint` and `filters`
+ * returns. Without an `ORDER BY`, SQLite counts entries of whichever index
+ * covers the `WHERE` rather than reading and sorting the rows.
+ */
+export function buildCountQuery(
+  tableName: string,
+  columns: Record<string, SchemaValue>,
+  constraint: Constraint | undefined,
+  filters: NoSubqueryCondition | undefined,
+): SQLQuery {
+  const where = constraintsToSQL(constraint, columns);
+  if (filters) {
+    where.push(filtersToSQL(filters));
+  }
+  const select = sql`SELECT COUNT(*) FROM ${sql.ident(tableName)}`;
+  return where.length > 0
+    ? sql`${select} WHERE ${sql.join(where, sql` AND `)}`
+    : select;
+}
+
+/**
+ * The distinct values of `groupColumns` among the rows that pass `filters`,
+ * each followed by its number of rows, in no particular order.
+ */
+export function buildGroupCountsQuery(
+  tableName: string,
+  groupColumns: readonly string[],
+  filters: NoSubqueryCondition | undefined,
+): SQLQuery {
+  const cols = sql.join(
+    groupColumns.map(c => sql.ident(c)),
+    sql`, `,
+  );
+  const select = sql`SELECT ${cols}, COUNT(*) FROM ${sql.ident(tableName)}`;
+  return filters
+    ? sql`${select} WHERE ${filtersToSQL(filters)} GROUP BY ${cols}`
+    : sql`${select} GROUP BY ${cols}`;
+}
+
+/**
  * {@link buildSelectQueries} for a fetch that needs only one SELECT, such as
  * one without a start row.
  */
@@ -181,7 +226,7 @@ function constraintsRejectNull(
   return multiConstraints?.some(mc => mc.length > 0 && field in mc[0]) === true;
 }
 
-export function constraintsToSQL(
+function constraintsToSQL(
   constraint: Constraint | undefined,
   columns: Record<string, SchemaValue>,
 ) {
@@ -256,7 +301,7 @@ export function multiConstraintToSQL(
   return sql`${colList} IN (VALUES ${sql.join(rows, sql`,`)})`;
 }
 
-export function orderByToSQL(order: Ordering, reverse: boolean): SQLQuery {
+function orderByToSQL(order: Ordering, reverse: boolean): SQLQuery {
   if (reverse) {
     return sql`ORDER BY ${sql.join(
       order.map(
@@ -307,13 +352,25 @@ export function filtersToSQL(filters: NoSubqueryCondition): SQLQuery {
 }
 
 function simpleConditionToSQL(filter: SimpleCondition): SQLQuery {
+  if (filter.left.type === 'json') {
+    const json = jsonPathConditionToSQL(filter, filter.left);
+    if (json) {
+      return json;
+    }
+  }
+  return comparisonToSQL(filter, valuePositionToSQL(filter.left));
+}
+
+/**
+ * Renders `filter`'s operator and right operand against an already-rendered
+ * left operand.
+ */
+function comparisonToSQL(filter: SimpleCondition, left: SQLQuery): SQLQuery {
   const {op} = filter;
   if (op === 'IN' || op === 'NOT IN') {
     switch (filter.right.type) {
       case 'literal':
-        return sql`${valuePositionToSQL(
-          filter.left,
-        )} ${sql.__dangerous__rawValue(
+        return sql`${left} ${sql.__dangerous__rawValue(
           filter.op,
         )} (SELECT value FROM json_each(${JSON.stringify(
           filter.right.value,
@@ -330,7 +387,7 @@ function simpleConditionToSQL(filter: SimpleCondition): SQLQuery {
     op === 'ILIKE' ||
     op === 'NOT ILIKE'
   ) {
-    return likeConditionToSQL(filter);
+    return likeConditionToSQL(filter, left);
   }
 
   if (
@@ -338,17 +395,15 @@ function simpleConditionToSQL(filter: SimpleCondition): SQLQuery {
     filter.right.type === 'literal' &&
     filter.right.value === null
   ) {
-    return sql`${valuePositionToSQL(filter.left)} ${sql.__dangerous__rawValue(
-      op,
-    )} NULL`;
+    return sql`${left} ${sql.__dangerous__rawValue(op)} NULL`;
   }
 
-  return sql`${valuePositionToSQL(filter.left)} ${sql.__dangerous__rawValue(
+  return sql`${left} ${sql.__dangerous__rawValue(
     filter.op,
   )} ${valuePositionToSQL(filter.right)}`;
 }
 
-function likeConditionToSQL(filter: SimpleCondition): SQLQuery {
+function likeConditionToSQL(filter: SimpleCondition, left: SQLQuery): SQLQuery {
   const {op} = filter;
   // Mirror Postgres pattern-matching semantics:
   //  * LIKE is case-sensitive. The replica connection runs with
@@ -366,7 +421,6 @@ function likeConditionToSQL(filter: SimpleCondition): SQLQuery {
   const negated = op === 'NOT LIKE' || op === 'NOT ILIKE';
   const likeOp = sql.__dangerous__rawValue(negated ? 'NOT LIKE' : 'LIKE');
 
-  const left = valuePositionToSQL(filter.left);
   const right = valuePositionToSQL(filter.right);
   if (caseInsensitive) {
     return sql`lower(${left}) ${likeOp} lower(${right}) ESCAPE '\\'`;
@@ -374,30 +428,130 @@ function likeConditionToSQL(filter: SimpleCondition): SQLQuery {
   return sql`${left} ${likeOp} ${right} ESCAPE '\\'`;
 }
 
+/** The extraction of a JSON path leaf (the path string is a bound parameter). */
+function jsonExtract(ref: JsonPathReference): SQLQuery {
+  return sql`json_extract(${sql.ident(ref.value.name)}, ${jsonPathExpr(
+    ref.path,
+  )})`;
+}
+
+/** The SQLite `json_type()` names a leaf may have for a JSON literal type. */
+function jsonTypeNames(
+  t: 'string' | 'number' | 'boolean',
+): readonly [string, ...string[]] {
+  switch (t) {
+    case 'string':
+      return ['text'];
+    case 'number':
+      return ['integer', 'real'];
+    case 'boolean':
+      return ['true', 'false'];
+  }
+}
+
+/**
+ * Compiles a comparison whose left operand is a JSON path, type-strictly, per
+ * the semantics documented on {@link JsonPathReference} (shared with the
+ * in-memory predicate and the Postgres compiler). Returns `undefined` where
+ * the generic rendering already agrees with the predicate.
+ *
+ * A bare `json_extract` would not be strict: SQLite returns booleans as 1/0 (so
+ * `true` = 1), orders any TEXT above any number (`'n/a' > 5`), and coerces
+ * numbers for LIKE. Gating the extraction on `json_type()` makes a mismatched
+ * leaf NULL, which a positive comparison excludes. Negated operators get an
+ * explicit CASE because NULL would exclude there too, where a mismatch must
+ * match: `json_type()` is NULL for a missing key and `'null'` for a JSON null,
+ * so one `COALESCE` covers the null guard without a second extraction.
+ *
+ * `IN`/`NOT IN` with a `null` literal is constant-false (as in the predicate),
+ * and an empty `NOT IN` matches every non-null leaf (bare `NULL NOT IN ()` is
+ * TRUE).
+ */
+function jsonPathConditionToSQL(
+  filter: SimpleCondition,
+  left: JsonPathReference,
+): SQLQuery | undefined {
+  const {op, right} = filter;
+  if (right.type !== 'literal') {
+    return undefined;
+  }
+  if ((op === 'IN' || op === 'NOT IN') && right.value === null) {
+    return sql`FALSE`;
+  }
+  const col = sql.ident(left.value.name);
+  const path = jsonPathExpr(left.path);
+  const raw = sql`json_extract(${col}, ${path})`;
+  let cond = filter;
+  let t = jsonLiteralType(right.value);
+  if (
+    isLikeOperator(op) &&
+    right.value !== null &&
+    !Array.isArray(right.value)
+  ) {
+    // The LIKE family compares text, so the leaf must be a string whatever
+    // the literal's type, and the pattern is the literal's text form, as in
+    // the in-memory predicate (`String(pattern)`) and the Postgres compiler.
+    // Gating on the literal's type instead would let SQLite's text coercion
+    // match `3 LIKE 3` on a numeric leaf that the predicate rejects.
+    t = 'string';
+    cond = {...filter, right: {type: 'literal', value: String(right.value)}};
+  }
+  if (t === undefined) {
+    // Only an empty list reaches here (a null literal has no type either, but
+    // the generic NULL comparison is already constant-false for it).
+    return op === 'NOT IN' ? sql`${raw} IS NOT NULL` : undefined;
+  }
+  const types = jsonTypeNames(t);
+  if (!isNegatedOperator(op)) {
+    const typeList = sql.join(
+      types.map(x => sql`${x}`),
+      sql`, `,
+    );
+    return comparisonToSQL(
+      cond,
+      sql`(CASE WHEN json_type(${col}, ${path}) IN (${typeList}) THEN ${raw} END)`,
+    );
+  }
+  // One WHEN per accepted type name (a number leaf is 'integer' or 'real');
+  // only one branch runs per row.
+  const cmp = comparisonToSQL(cond, raw);
+  const whens = sql.join(
+    types.map(x => sql`WHEN ${x} THEN ${cmp}`),
+    sql` `,
+  );
+  return sql`(CASE COALESCE(json_type(${col}, ${path}), 'null') WHEN 'null' THEN 0 ${whens} ELSE 1 END)`;
+}
+
+/**
+ * Builds a SQLite JSON path string (e.g. `$.a.b[0]`) from a path of object
+ * keys and array indices. Object keys are emitted as JSON string literals
+ * (`JSON.stringify`): SQLite parses a double-quoted path label with JSON
+ * escapes, so `"` and `\` inside a key must be backslash-escaped. SQL-style
+ * `""` doubling is not understood and yields NULL or a "bad JSON path" error.
+ */
+function jsonPathExpr(path: readonly (string | number)[]): string {
+  let s = '$';
+  for (const seg of path) {
+    s += typeof seg === 'number' ? `[${seg}]` : `.${JSON.stringify(seg)}`;
+  }
+  return s;
+}
+
 function valuePositionToSQL(value: ValuePosition): SQLQuery {
   switch (value.type) {
     case 'column':
       return sql.ident(value.name);
+    case 'json':
+      return jsonExtract(value);
     case 'literal':
-      return sql`${toSQLiteType(value.value, getJsType(value.value))}`;
+      return sql`${toSQLiteType(value.value, valueTypeOf(value.value))}`;
     case 'static':
       throw new Error(
         'Static parameters must be replaced before conversion to SQL',
       );
+    default:
+      unreachable(value);
   }
-}
-
-function getJsType(value: unknown): ValueType {
-  if (value === null) {
-    return 'null';
-  }
-  return typeof value === 'string'
-    ? 'string'
-    : typeof value === 'number'
-      ? 'number'
-      : typeof value === 'boolean'
-        ? 'boolean'
-        : 'json';
 }
 
 export function toSQLiteType(v: unknown, type: ValueType): unknown {

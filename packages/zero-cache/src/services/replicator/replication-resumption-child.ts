@@ -1,8 +1,8 @@
 import {pid} from 'node:process';
 import {LogContext} from '@rocicorp/logger';
-import {resolver} from '@rocicorp/resolver';
 import type {LogConfig} from '../../../../shared/src/logging.ts';
 import {Queue} from '../../../../shared/src/queue.ts';
+import {resolver} from '../../../../shared/src/resolver.ts';
 import {parentWorker, type Worker} from '../../types/processes.ts';
 import type {Source} from '../../types/streams.ts';
 import {getPragmaConfig, setupReplica} from '../../workers/replicator.ts';
@@ -244,7 +244,7 @@ export default async function runWorker(
     parent,
     failpoint,
   );
-  await worker.init(dbPath, 'serving', getPragmaConfig('serving'), {
+  await worker.init(dbPath, 'serving', getPragmaConfig(), {
     level: 'error',
     format: 'text',
   });

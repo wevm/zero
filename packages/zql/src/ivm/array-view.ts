@@ -9,7 +9,11 @@ import {ChangeType} from './change-type.ts';
 import type {Change} from './change.ts';
 import {skipYields, type Input, type Output} from './operator.ts';
 import type {SourceSchema} from './schema.ts';
-import {applyChange, type ViewChange} from './view-apply-change.ts';
+import {
+  applyChange,
+  emptyViewValue,
+  type ViewChange,
+} from './view-apply-change.ts';
 import type {Entry, Format, View} from './view.ts';
 
 function changeToViewChange(change: Change): ViewChange {
@@ -47,7 +51,9 @@ function changeToViewChange(change: Change): ViewChange {
  * Also the plain array view is more convenient for consumers since you can dump
  * it into console to see what it is, rather than having to iterate it.
  */
-export class ArrayView<V extends View> implements Output, TypedView<V> {
+// `V` is unconstrained: besides a `View` it may be a scalar `Value` for a
+// top-level aggregate query, whose materialized result is the bare value.
+export class ArrayView<V = View> implements Output, TypedView<V> {
   readonly #input: Input;
   readonly #listeners = new Set<Listener<V>>();
   // Read lazily: a DeferredInput has no schema until its pipeline is attached,
@@ -97,7 +103,7 @@ export class ArrayView<V extends View> implements Output, TypedView<V> {
     this.#input = input;
     this.#format = format;
     this.#updateTTL = updateTTL;
-    this.#root = {'': format.singular ? undefined : []};
+    this.#root = {'': emptyViewValue(format)};
     input.setOutput(this);
 
     if (queryComplete === true) {

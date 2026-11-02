@@ -1,6 +1,6 @@
 import type {LogContext} from '@rocicorp/logger';
-import {resolver} from '@rocicorp/resolver';
 import {AbortError} from '../../../../shared/src/abort-error.ts';
+import {resolver} from '../../../../shared/src/resolver.ts';
 import {sleep} from '../../../../shared/src/sleep.ts';
 import {
   getOrCreateCounter,
@@ -619,7 +619,7 @@ type CommitWaiter = {watermark: string; resolve: () => void};
  * reasons mean "not yet", not "never", so both end the subscription cleanly
  * for a retry rather than failing it.
  */
-export class SQLiteChangeLogBarrierError extends Error {}
+class SQLiteChangeLogBarrierError extends Error {}
 
 /** The replica did not reach the required head before the deadline. */
 export class SQLiteChangeLogBarrierTimeoutError extends SQLiteChangeLogBarrierError {

@@ -6,6 +6,21 @@
 export type Format = {
   singular: boolean;
   relationships: Record<string, Format>;
+  /**
+   * When set, this relationship is a scalar aggregate (count/sum/avg): it
+   * materializes as the single aggregate value (see zql ivm/aggregate.ts)
+   * rather than the child rows. Implies `singular: true`. The descriptor (fn +
+   * optional field and JSON path) lets the query builder reconstruct the AST; the view uses
+   * `fn` for the value of a parent with no aggregate row (`0` or `null`). (`fn` mirrors zero-protocol's `AggregateFunction`;
+   * inlined to avoid a cross-package dependency.)
+   */
+  aggregate?:
+    | {
+        readonly fn: 'count' | 'sum' | 'avg' | 'min' | 'max';
+        readonly field?: string | undefined;
+        readonly path?: readonly (string | number)[] | undefined;
+      }
+    | undefined;
 };
 
 export const defaultFormat: Format = {

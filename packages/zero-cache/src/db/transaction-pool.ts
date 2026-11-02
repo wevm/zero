@@ -1,10 +1,10 @@
 import type {LogContext} from '@rocicorp/logger';
-import {type Resolver, resolver} from '@rocicorp/resolver';
 import type postgres from 'postgres';
 import {assert} from '../../../shared/src/asserts.ts';
 import type {Enum} from '../../../shared/src/enum.ts';
 import {Queue} from '../../../shared/src/queue.ts';
 import {promiseVoid} from '../../../shared/src/resolved-promises.ts';
+import {type Resolver, resolver} from '../../../shared/src/resolver.ts';
 import {type PostgresDB, type PostgresTransaction} from '../types/pg.ts';
 import type * as Mode from './mode-enum.ts';
 import {runTx} from './run-transaction.ts';
@@ -13,7 +13,7 @@ type Mode = Enum<typeof Mode>;
 
 type MaybePromise<T> = Promise<T> | T;
 
-export type Statement =
+type Statement =
   | postgres.PendingQuery<(postgres.Row & Iterable<postgres.Row>)[]>
   | postgres.PendingQuery<postgres.Row[]>;
 
@@ -654,7 +654,7 @@ export function importSnapshot(snapshotID: string): {
  * aborting transactions after a previous one fails). Subclassing this Error
  * will result in lowering the log level from `error` to `debug`.
  */
-export class ControlFlowError extends Error {
+class ControlFlowError extends Error {
   constructor(cause?: unknown) {
     super();
     this.cause = cause;

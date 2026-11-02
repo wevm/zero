@@ -1,4 +1,4 @@
-import {resolver} from '@rocicorp/resolver';
+import {resolver} from '../../../shared/src/resolver.ts';
 import type {AST} from '../../../zero-protocol/src/ast.ts';
 import type {ErroredQuery} from '../../../zero-protocol/src/custom-queries.ts';
 import {
@@ -6,7 +6,7 @@ import {
   hashOfNameAndArgs,
 } from '../../../zero-protocol/src/query-hash.ts';
 import type {Schema} from '../../../zero-types/src/schema.ts';
-import {buildPipeline} from '../builder/builder.ts';
+import {buildPipeline, groupViewInput} from '../builder/builder.ts';
 import {ArrayView} from '../ivm/array-view.ts';
 import {DeferredInput} from '../ivm/deferred-input.ts';
 import type {FilterInput} from '../ivm/filter-operators.ts';
@@ -266,7 +266,7 @@ export abstract class QueryDelegateBase implements QueryDelegate {
 }
 
 // oxlint-disable-next-line require-await
-export async function runImpl<
+async function runImpl<
   TTable extends keyof TSchema['tables'] & string,
   TSchema extends Schema,
   TReturn,
@@ -311,7 +311,7 @@ export async function runImpl<
   return ret;
 }
 
-export function preloadImpl<
+function preloadImpl<
   TTable extends keyof TSchema['tables'] & string,
   TSchema extends Schema,
   TReturn,
@@ -367,7 +367,23 @@ export function preloadImpl<
   };
 }
 
-export function materializeImpl<
+/**
+ * The ID a materialized query is registered with the server under: the hash of
+ * its name and args for a named query, of its AST otherwise.
+ */
+export function queryIDOf({
+  ast,
+  customQueryID,
+}: {
+  readonly ast: AST;
+  readonly customQueryID: CustomQueryID | undefined;
+}): string {
+  return customQueryID
+    ? hashOfNameAndArgs(customQueryID.name, customQueryID.args)
+    : hashOfAST(ast);
+}
+
+function materializeImpl<
   TTable extends keyof TSchema['tables'] & string,
   TSchema extends Schema,
   TReturn,
@@ -389,9 +405,7 @@ export function materializeImpl<
   const qi = asQueryInternals(query);
   const {ast, format, customQueryID} = qi;
 
-  const queryID = customQueryID
-    ? hashOfNameAndArgs(customQueryID.name, customQueryID.args)
-    : hashOfAST(qi.ast);
+  const queryID = queryIDOf(qi);
   const queryCompleteResolver = resolver<true>();
   // When the delegate cannot build pipelines yet, the view starts over an
   // empty DeferredInput and is hydrated later. A view must not report
@@ -475,7 +489,7 @@ export function materializeImpl<
     destroyed = true;
     removePendingAttach?.();
     removePendingAttach = undefined;
-    input.destroy();
+    viewInput.destroy();
     removeCommitObserver?.();
     removeAddedQuery();
   };
@@ -494,11 +508,13 @@ export function materializeImpl<
   // stops rejecting a query built from a schema with legacy queries enabled
   // (custom.test.ts covers that rejection).
   const input = deferred ?? buildPipeline(ast, delegate, queryID);
+  // A view of a grouped query shows only its columns and value.
+  const viewInput = ast.groupBy ? groupViewInput(input, ast, delegate) : input;
 
   const view = delegate.batchViewUpdates(() =>
     (factory ?? arrayViewFactory)(
       query,
-      input,
+      viewInput,
       format,
       onDestroy,
       cb => {

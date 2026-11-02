@@ -1,4 +1,3 @@
-import {resolver} from '@rocicorp/resolver';
 import {
   afterEach,
   beforeEach,
@@ -12,6 +11,7 @@ import {
 import type {JSONValue} from '../../shared/src/json.ts';
 import {must} from '../../shared/src/must.ts';
 import {randomUint64} from '../../shared/src/random-uint64.ts';
+import {resolver} from '../../shared/src/resolver.ts';
 import type {Cookie} from './cookies.ts';
 import type {Store} from './dag/store.ts';
 import {FetchMocker} from './fetch-mocker.ts';
@@ -121,8 +121,8 @@ export class ReplicacheTest<
   }
 }
 
-export const reps: Set<ReplicacheTest> = new Set();
-export async function closeAllReps(): Promise<void> {
+const reps: Set<ReplicacheTest> = new Set();
+async function closeAllReps(): Promise<void> {
   for (const rep of reps) {
     if (!rep.closed) {
       await rep.close();
@@ -148,7 +148,7 @@ async function closeAllCloseables(): Promise<void> {
 }
 
 export const dbsToDrop: Set<string> = new Set();
-export async function deleteAllDatabases(): Promise<void> {
+async function deleteAllDatabases(): Promise<void> {
   for (const name of dbsToDrop) {
     await dropIDBStore(name);
   }

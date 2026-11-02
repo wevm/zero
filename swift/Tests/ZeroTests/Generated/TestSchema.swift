@@ -617,15 +617,18 @@ public struct IssueLabel: ZeroTable, Codable, Hashable {
 public struct UserMetadata: ZeroValue, Codable, Hashable {
   public var registrar: UserMetadataRegistrar
   public var email: String
+  public var login: String?
   public var altContacts: [String]?
 
   public init(
     registrar: UserMetadataRegistrar,
     email: String,
+    login: String? = nil,
     altContacts: [String]? = nil
   ) {
     self.registrar = registrar
     self.email = email
+    self.login = login
     self.altContacts = altContacts
   }
 
@@ -633,6 +636,7 @@ public struct UserMetadata: ZeroValue, Codable, Hashable {
     let o = try ZeroObjectReader(zeroValue, "UserMetadata")
     registrar = try o.field("registrar")
     email = try o.field("email")
+    login = try o.field("login")
     altContacts = try o.field("altContacts")
   }
 
@@ -640,6 +644,7 @@ public struct UserMetadata: ZeroValue, Codable, Hashable {
     var o = ZeroObjectWriter()
     o.set("registrar", registrar)
     o.set("email", email)
+    o.setIfPresent("login", login)
     o.setIfPresent("altContacts", altContacts)
     return o.value
   }

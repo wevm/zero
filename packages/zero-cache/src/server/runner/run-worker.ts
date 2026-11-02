@@ -1,12 +1,14 @@
 import '../../../../shared/src/dotenv.ts';
 
 import {styleText} from 'node:util';
-import {resolver, type Resolver} from '@rocicorp/resolver';
 import {colorConsole} from '../../../../shared/src/logging.ts';
+import {resolver, type Resolver} from '../../../../shared/src/resolver.ts';
 import {PROTOCOL_VERSION} from '../../../../zero-protocol/src/protocol-version.ts';
 import {normalizeZeroConfig} from '../../config/normalize.ts';
 import {getServerVersion, getZeroConfig} from '../../config/zero-config.ts';
 import {
+  PRE_DRAIN,
+  PreDrain,
   ProcessManager,
   runUntilKilled,
   SelfDrain,
@@ -55,9 +57,14 @@ export async function runWorker(
 
   const defaultTaskID = await getTaskID(lc);
   const config = normalizeZeroConfig(lc, cfg, env, defaultTaskID);
-  const processes = new ProcessManager(lc, parent ?? process);
 
-  const {port, keepaliveTimeoutMs, lazyStartup, selfDrainDelayMs} = config;
+  const {
+    port,
+    keepaliveTimeoutMs,
+    lazyStartup,
+    selfDrainDelayMs,
+    preDrainDelayMs,
+  } = config;
   const serverVersion = getServerVersion(config);
   lc.info?.(`starting server${!serverVersion ? '' : `@${serverVersion}`} `, {
     protocolVersion: PROTOCOL_VERSION,
@@ -67,13 +74,26 @@ export async function runWorker(
     port: config.port,
   });
 
+  // With a pre-drain delay, graceful shutdown signals reach the
+  // ProcessManager and the dispatcher's drain only after the delay.
+  const preDrain =
+    preDrainDelayMs > 0
+      ? new PreDrain(lc, parent ?? process, preDrainDelayMs)
+      : undefined;
+  const signals = preDrain ?? parent ?? process;
+  const processes = new ProcessManager(lc, signals);
+
   const dispatcher = new ZeroDispatcher(
     config,
     lc,
     {port, keepaliveTimeoutMs},
     startZeroCache,
     () => printStartupMessage(env),
+    // Keep the listener open until the zero-cache has drained and exited.
+    () => processes.shutdown(),
   );
+  // Fail readiness checks during the delay, while continuing to serve.
+  preDrain?.on(PRE_DRAIN, () => dispatcher.failReadiness());
   const selfDrain = new SelfDrain(lc, parent ?? process, {
     delayMs: selfDrainDelayMs,
     onRequested: () => dispatcher.failHealthChecks(),
@@ -110,7 +130,7 @@ export async function runWorker(
   parent?.send(['ready', {ready: true}]);
 
   try {
-    await runUntilKilled(lc, parent ?? process, dispatcher);
+    await runUntilKilled(lc, signals, dispatcher);
   } catch (err) {
     processes.logErrorAndExit(err, 'main');
   } finally {

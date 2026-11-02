@@ -1,5 +1,4 @@
 import {LogContext, type LogLevel, type LogSink} from '@rocicorp/logger';
-import {type Resolver, resolver} from '@rocicorp/resolver';
 import {type DeletedClients} from '../../../replicache/src/deleted-clients.ts';
 import {
   ReplicacheImpl,
@@ -36,6 +35,7 @@ import type {ReadonlyJSONValue} from '../../../shared/src/json.ts';
 import {must} from '../../../shared/src/must.ts';
 import {navigator} from '../../../shared/src/navigator.ts';
 import {promiseRace} from '../../../shared/src/promise-race.ts';
+import {type Resolver, resolver} from '../../../shared/src/resolver.ts';
 import {emptyFunction} from '../../../shared/src/sentinels.ts';
 import {sleep, sleepWithAbort} from '../../../shared/src/sleep.ts';
 import {Subscribable} from '../../../shared/src/subscribable.ts';
@@ -192,8 +192,6 @@ import {
   toReplicacheAuthToken,
 } from './zero-rep.ts';
 
-export type NoRelations = Record<string, never>;
-
 export type TestingContext = {
   puller: Puller;
   pusher: Pusher;
@@ -338,11 +336,6 @@ function onClientStateNotFoundServerReason(serverErrMsg: string) {
 }
 const ON_CLIENT_STATE_NOT_FOUND_REASON_CLIENT =
   'The local persistent state needed to synchronize this client has been garbage collected or was found to be corrupt.';
-
-// Keep in sync with packages/replicache/src/replicache-options.ts
-export interface ReplicacheInternalAPI {
-  lastMutationID(): number;
-}
 
 const internalReplicacheImplMap = new WeakMap<object, ReplicacheImpl>();
 

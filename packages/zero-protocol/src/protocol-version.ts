@@ -63,7 +63,14 @@ import {assert} from '../../shared/src/asserts.ts';
 // -- version 52 replaces JSON pokePart messages with binary poke chunks for
 //    clients using protocol version 52 or newer. Older clients retain pokePart.
 // -- version 53 adds 'filter' node type to AnalyzeQueryResult
-export const PROTOCOL_VERSION = 53;
+// -- version 54 adds `aggregate` {fn,field} (count/sum/avg/min/max) to
+//    CorrelatedSubquery and, top-level, to AST
+// -- version 55 adds the `json` (JsonPathReference) condition value for JSON path filters
+// -- version 56 adds an optional JSON `path` to `aggregate`
+// -- version 57 adds `groupBy` to AST (alone, a SELECT DISTINCT of its columns;
+//    with an `aggregate`, that aggregate per group) and `distinct` to a
+//    `count` aggregate
+export const PROTOCOL_VERSION = 57;
 
 /**
  * The minimum server-supported sync protocol version (i.e. the version

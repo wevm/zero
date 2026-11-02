@@ -129,7 +129,14 @@ function astCoveredBy(
   covered: NormalizedAST,
   covering: NormalizedAST,
 ): boolean {
+  // The result of an aggregate or a distinct lives in rows synthesized for
+  // its own query, so no other query's rows can stand in for it, and such a
+  // query does not sync the rows it reduces.
   return (
+    covered.aggregate === undefined &&
+    covering.aggregate === undefined &&
+    covered.groupBy === undefined &&
+    covering.groupBy === undefined &&
     covered.schema === covering.schema &&
     covered.table === covering.table &&
     covered.alias === covering.alias &&
@@ -263,6 +270,8 @@ function sameRelatedEdge(
   b: CorrelatedSubquery,
 ): boolean {
   return (
+    a.aggregate === undefined &&
+    b.aggregate === undefined &&
     jsonEqual(a.correlation, b.correlation) &&
     a.hidden === b.hidden &&
     a.system === b.system &&

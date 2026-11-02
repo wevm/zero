@@ -29,6 +29,9 @@ import {
 export type {LogConfig} from '../../../otel/src/log-options.ts';
 
 export const ZERO_ENV_VAR_PREFIX = 'ZERO_';
+const COOKIE_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+const COOKIE_PATH = /^[\x20-\x3A\x3C-\x7E]+$/;
+const COOKIE_DOMAIN = /^\.?[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/;
 
 export const appOptions = {
   id: {
@@ -143,8 +146,6 @@ const perUserMutationLimit = {
     ],
   },
 };
-
-export type RateLimit = Config<typeof perUserMutationLimit>;
 
 const authOptions = {
   jwk: {
@@ -908,6 +909,45 @@ export const zeroOptions = {
     desc: [`The port for sync connections.`],
   },
 
+  affinityCookie: {
+    name: {
+      type: v
+        .string()
+        .assert(value => COOKIE_NAME.test(value), 'must be a valid cookie name')
+        .optional(),
+      desc: [
+        `The load balancer affinity cookie to expire in the WebSocket upgrade response`,
+        `when draining. The dispatcher sends Rehome and closes without handing off the socket.`,
+        `If unset, the dispatcher still sends Rehome but does not change cookies.`,
+        `The load balancer must use the same cookie name, path, and domain. Cookie deletion`,
+        `uses Secure and SameSite=None so it can be processed by cross-site HTTPS clients.`,
+      ],
+    },
+    path: {
+      type: v
+        .string()
+        .assert(
+          value => value.startsWith('/') && COOKIE_PATH.test(value),
+          'must be an absolute cookie path without control characters or semicolons',
+        )
+        .optional(() => '/'),
+      desc: [`The path of the affinity cookie to expire during draining.`],
+    },
+    domain: {
+      type: v
+        .string()
+        .assert(
+          value => COOKIE_DOMAIN.test(value),
+          'must be a valid cookie domain',
+        )
+        .optional(),
+      desc: [
+        `The domain of the affinity cookie to expire during draining. Leave unset for`,
+        `a host-only cookie.`,
+      ],
+    },
+  },
+
   selfDrainDelayMs: {
     type: v.number().optional(() => 0),
     desc: [
@@ -920,6 +960,20 @@ export const zeroOptions = {
       `The default of 0 drains immediately. In environments with liveness checks, set this to`,
       `exceed the time for the container runner to detect the failed liveness check plus any`,
       `pre-stop delay.`,
+    ],
+  },
+
+  preDrainDelayMs: {
+    type: v.number().optional(() => 0),
+    desc: [
+      `The time between receiving a {bold SIGTERM} (or {bold SIGINT}) and starting to drain.`,
+      `During this interval the server fails readiness checks at "/" so that load balancers stop`,
+      `routing to it, while it continues to accept and serve connections as usual. Liveness`,
+      `checks at "/keepalive" continue to succeed.`,
+      ``,
+      `This takes the place of a pre-stop delay. Set it to exceed the time for the load balancer`,
+      `to observe the failed readiness check, within the container runner's termination grace`,
+      `period. The default of 0 drains immediately.`,
     ],
   },
 

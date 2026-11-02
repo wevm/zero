@@ -3,8 +3,8 @@ import {spawn} from 'node:child_process';
 import {existsSync, readdirSync, rmSync, statSync} from 'node:fs';
 import {basename, dirname, join} from 'node:path';
 import type {LogContext, LogLevel} from '@rocicorp/logger';
-import {resolver} from '@rocicorp/resolver';
 import {must} from '../../../../shared/src/must.ts';
+import {resolver} from '../../../../shared/src/resolver.ts';
 import * as v from '../../../../shared/src/valita.ts';
 import {Database} from '../../../../zqlite/src/db.ts';
 import {type LitestreamConfig} from '../../config/normalize.ts';
@@ -65,14 +65,6 @@ export type ForkBackup = {
 
 const MAX_LOGGED_RESTORE_DIRECTORY_ENTRIES = 100;
 const LEGACY_RESTORE_WAL_INDEX = /^[0-9a-f]{8}$/;
-
-export class BackupNotFoundException extends Error {
-  static readonly name = 'BackupNotFoundException';
-
-  constructor(backupURL: string | undefined) {
-    super(`backup not found at ${backupURL}`);
-  }
-}
 
 /**
  * The effective backup URL: the `backupURLOverride` if present (i.e. a

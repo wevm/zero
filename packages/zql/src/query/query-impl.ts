@@ -7,6 +7,7 @@ import {
 } from '../../../shared/src/json.ts';
 import {getOrInsertComputed, newMap} from '../../../shared/src/map.ts';
 import {
+  type AggregateFunction,
   type AST,
   type CompoundKey,
   type Condition,
@@ -26,10 +27,13 @@ import {
 import {hashOfQueryInternals} from '../../../zero-protocol/src/query-hash-visitor.ts';
 import type {Schema} from '../../../zero-types/src/schema.ts';
 import {NotImplementedError} from '../error.ts';
+import {isSyntheticColumn} from '../ivm/aggregate.ts';
 import {defaultFormat} from '../ivm/default-format.ts';
 import type {Format, ViewFactory} from '../ivm/view.ts';
 import {
   type ExpressionFactory,
+  type JsonAggregateSelector,
+  aggregateFromSelector,
   ExpressionBuilder,
   and,
   cmp,
@@ -45,8 +49,10 @@ import {
 } from './query-transitions.ts';
 import type {
   AnyQuery,
+  AggregateResult,
   ExistsOptions,
   GetFilterType,
+  GroupedQuery,
   HumanReadable,
   PreloadOptions,
   PullRow,
@@ -124,7 +130,9 @@ function isRootAST(ast: NormalizedAST, tableName: string): boolean {
     ast.related === undefined &&
     ast.start === undefined &&
     ast.limit === undefined &&
-    ast.orderBy === undefined
+    ast.orderBy === undefined &&
+    ast.aggregate === undefined &&
+    ast.groupBy === undefined
   );
 }
 
@@ -425,6 +433,8 @@ export class QueryImpl<
   }
 
   one(): Query<TTable, TSchema, TReturn | undefined> {
+    this.#assertNotAggregated('one');
+    this.#assertNotDistinct('one');
     return this.#derive('one', undefined, undefined, () =>
       this.#newQuery(
         this.#tableName,
@@ -437,6 +447,242 @@ export class QueryImpl<
         this.#currentJunction,
       ),
     );
+  }
+
+  /**
+   * A bound goes in the same AST fields whether it is applied before or after
+   * an aggregate, where it bounds the rows the aggregate reduces. So it must
+   * come first: `q.limit(10).count()`, not `q.count().limit(10)`.
+   */
+  #assertNotAggregated(method: string): void {
+    const {aggregate} = this.format;
+    if (aggregate) {
+      throw new Error(
+        `${method}() must come before ${aggregate.fn}(): it bounds the rows the aggregate reduces`,
+      );
+    }
+  }
+
+  /** `method` doesn't apply to the rows of a `distinct()` or `groupBy()` yet. */
+  #assertNotDistinct(method: string): void {
+    if (this.#ast.groupBy) {
+      throw new Error(
+        `${method}() does not support ${this.#ast.aggregate ? 'groupBy()' : 'distinct()'} yet`,
+      );
+    }
+  }
+
+  #aggregate(
+    fn: AggregateFunction,
+    selector?: string | JsonAggregateSelector,
+  ): AnyQuery {
+    this.#assertNotAggregated(fn);
+    // A count of a distinct() counts its rows: the distinct combinations.
+    // A groupBy() already has its aggregate.
+    const distinct = this.#ast.groupBy;
+    if (distinct && (fn !== 'count' || this.#ast.aggregate)) {
+      this.#assertNotDistinct(fn);
+    }
+    // A named query is synced by name and args: the server runs its own
+    // definition, so an aggregate added here would never reach it and the
+    // client would read a value nothing computes. (This query is also the base
+    // of a `related` on a named query, which inherits its name.)
+    if (this.customQueryID) {
+      throw new Error(
+        `${fn}() cannot be applied to the named query "${this.customQueryID.name}": put it in the query's definition`,
+      );
+    }
+    const aggregate = distinct
+      ? {fn, distinct}
+      : aggregateFromSelector(fn, selector);
+    const {field, path} = aggregate;
+    // Set the aggregate on both the AST (so a top-level query reduces to a
+    // scalar) and the format (so the view projects the scalar and `related`
+    // can lift it). When used inside `related`, the parent strips the AST
+    // aggregate and lifts it onto the correlated-subquery entry instead. The
+    // columns of a distinct() move onto the count.
+    return this.#derive(AGGREGATE_KEYS[fn], field, path, () =>
+      this.#newQuery(
+        this.#tableName,
+        {...this.#ast, groupBy: undefined, aggregate},
+        {
+          ...this.format,
+          singular: true,
+          aggregate,
+        },
+        this.customQueryID,
+        this.#currentJunction,
+      ),
+    ) as AnyQuery;
+  }
+
+  count(): Query<TTable, TSchema, AggregateResult<number>> {
+    return this.#aggregate('count') as unknown as Query<
+      TTable,
+      TSchema,
+      AggregateResult<number>
+    >;
+  }
+
+  sum(
+    field: string | JsonAggregateSelector,
+  ): Query<TTable, TSchema, AggregateResult<number | null>> {
+    return this.#aggregate('sum', field) as unknown as Query<
+      TTable,
+      TSchema,
+      AggregateResult<number | null>
+    >;
+  }
+
+  avg(
+    field: string | JsonAggregateSelector,
+  ): Query<TTable, TSchema, AggregateResult<number | null>> {
+    return this.#aggregate('avg', field) as unknown as Query<
+      TTable,
+      TSchema,
+      AggregateResult<number | null>
+    >;
+  }
+
+  min(
+    field: string | JsonAggregateSelector,
+  ): Query<TTable, TSchema, AggregateResult<any>> {
+    return this.#aggregate('min', field) as unknown as Query<
+      TTable,
+      TSchema,
+      AggregateResult<any>
+    >;
+  }
+
+  max(
+    field: string | JsonAggregateSelector,
+  ): Query<TTable, TSchema, AggregateResult<any>> {
+    return this.#aggregate('max', field) as unknown as Query<
+      TTable,
+      TSchema,
+      AggregateResult<any>
+    >;
+  }
+
+  distinct(...columns: readonly string[]): Query<TTable, TSchema, any> {
+    this.#assertGroupable('distinct', columns);
+    return this.#derive('distinct', JSON.stringify(columns), undefined, () =>
+      this.#newQuery(
+        this.#tableName,
+        {...this.#ast, groupBy: columns},
+        this.format,
+        this.customQueryID,
+        this.#currentJunction,
+      ),
+    ) as AnyQuery;
+  }
+
+  groupBy(...columns: readonly string[]): GroupedQuery<TTable, TSchema, any> {
+    this.#assertGroupable('groupBy', columns);
+    return new GroupedQueryImpl(this, columns) as unknown as GroupedQuery<
+      TTable,
+      TSchema,
+      any
+    >;
+  }
+
+  /**
+   * The rows of `groupBy(...columns)` reduced by `fn`, each with the value
+   * under the function's name, as plain rows: the AST's `groupBy` and
+   * `aggregate` together. Interned on this query, like any other step.
+   * Internal: {@link GroupedQueryImpl} calls it.
+   */
+  groupAggregate(
+    columns: readonly string[],
+    fn: AggregateFunction,
+    selector: string | JsonAggregateSelector | undefined,
+  ): AnyQuery {
+    if (columns.includes(fn)) {
+      throw new Error(
+        `groupBy(): the column "${fn}" has the same name as the ${fn}() value`,
+      );
+    }
+    const aggregate = aggregateFromSelector(fn, selector);
+    return this.#derive(
+      `groupBy:${fn}`,
+      JSON.stringify([columns, aggregate.field ?? null]),
+      aggregate.path,
+      () =>
+        this.#newQuery(
+          this.#tableName,
+          {...this.#ast, groupBy: columns, aggregate},
+          this.format,
+          this.customQueryID,
+          this.#currentJunction,
+        ),
+    ) as AnyQuery;
+  }
+
+  /**
+   * Checks the columns of `method()` (`distinct` or `groupBy`), and that the
+   * query so far can be grouped by them.
+   */
+  #assertGroupable(method: string, columns: readonly string[]): void {
+    this.#assertNotAggregated(method);
+    this.#assertNotDistinct(method);
+    // Like an aggregate, it would never reach the server's run of a named
+    // query.
+    if (this.customQueryID) {
+      throw new Error(
+        `${method}() cannot be applied to the named query "${this.customQueryID.name}": put it in the query's definition`,
+      );
+    }
+    if (columns.length === 0) {
+      throw new Error(`${method}() needs at least one column`);
+    }
+    const tableColumns = this.#schema.tables[this.#tableName].columns;
+    columns.forEach((col, i) => {
+      const colSchema = tableColumns[col];
+      if (colSchema === undefined) {
+        throw new Error(
+          `${method}(): "${col}" is not a column of "${this.#tableName}"`,
+        );
+      }
+      if (colSchema.type === 'json') {
+        throw new Error(
+          `${method}() does not support the json column "${col}"`,
+        );
+      }
+      if (columns.indexOf(col) !== i) {
+        throw new Error(`${method}(): "${col}" is named twice`);
+      }
+      // The rows carry the synthetic columns too.
+      if (isSyntheticColumn(col)) {
+        throw new Error(
+          `${method}(): "${col}" is the name of a synthetic column, which a grouped row has too`,
+        );
+      }
+    });
+    const {limit, start, orderBy, related} = this.#ast;
+    if (limit !== undefined || start !== undefined) {
+      throw new Error(
+        `${method}() does not support limit(), start() or one() yet`,
+      );
+    }
+    if (related !== undefined) {
+      throw new Error(`${method}() does not support related() yet`);
+    }
+    for (const [col] of orderBy ?? []) {
+      this.#assertGroupColumn(col, columns);
+    }
+  }
+
+  /**
+   * The rows of a `distinct()` or `groupBy()` can only be ordered by its
+   * columns.
+   */
+  #assertGroupColumn(col: string, columns: readonly string[]): void {
+    if (!columns.includes(col)) {
+      throw new Error(
+        // log-leak-ignore -- column names are schema, allowed in errors
+        `orderBy("${col}"): the rows can only be ordered by the grouped columns (${columns.map(c => JSON.stringify(c)).join(', ')})`,
+      );
+    }
   }
 
   whereExists(
@@ -463,6 +709,7 @@ export class QueryImpl<
       );
     }
     cb = cb ?? (q => q);
+    this.#assertNotDistinct('related');
 
     const related = this.#schema.relationships[this.#tableName][relationship];
     assert(related, 'Invalid relationship');
@@ -492,6 +739,7 @@ export class QueryImpl<
       //   q = q.one();
       // }
       const subQuery = asQueryImpl(cb(q));
+      assertSubqueryNotGrouped(subQuery, 'related');
       assert(
         isCompoundKey(sourceField),
         'The source of a relationship must specify at last 1 field',
@@ -503,6 +751,14 @@ export class QueryImpl<
       assert(
         sourceField.length === destField.length,
         'The source and destination of a relationship must have the same number of fields',
+      );
+
+      // The builder and the name mapper read a `related` under an aggregate
+      // as the destination of a junction (see the two-hop path below), so a
+      // direct relationship's aggregate cannot nest one.
+      assert(
+        !subQuery.format.aggregate || subQuery.#ast.related === undefined,
+        'an aggregate relationship does not support related() on its subquery',
       );
 
       // Keyed by the sub-query's identity. Each query owns its AST object, so
@@ -523,8 +779,14 @@ export class QueryImpl<
                   parentField: sourceField,
                   childField: destField,
                 },
-                subquery: subQuery.#ast,
+                // A relationship aggregate lives on this correlated-subquery
+                // entry, not on the subquery's own AST — strip it so the
+                // subquery doesn't also reduce itself to a top-level scalar.
+                subquery: subQuery.format.aggregate
+                  ? {...subQuery.#ast, aggregate: undefined}
+                  : subQuery.#ast,
                 system: this.#system,
+                aggregate: subQuery.format.aggregate,
               }),
             },
             {
@@ -560,6 +822,7 @@ export class QueryImpl<
           ) as AnyQuery,
         ),
       );
+      assertSubqueryNotGrouped(sq, 'related');
 
       // Bound to consts so the `isCompoundKey` narrowing survives into the
       // closure below; TypeScript drops narrowing of property accesses there.
@@ -569,6 +832,106 @@ export class QueryImpl<
       assert(isCompoundKey(firstDest), 'Invalid relationship');
       assert(isCompoundKey(secondSource), 'Invalid relationship');
       assert(isCompoundKey(secondDest), 'Invalid relationship');
+
+      if (sq.format.aggregate) {
+        // Aggregate over a junction (many-to-many) relationship. A `where` on
+        // the destination is supported (e.g.
+        // `issue.related('labels', l => l.where('color', 'red').sum('points'))`);
+        // nesting (`related`) and bounding (`limit`/`start`, also rejected
+        // upstream for any junction) are not.
+        assert(
+          sq.#ast.related === undefined &&
+            sq.#ast.limit === undefined &&
+            sq.#ast.start === undefined,
+          'an aggregate over a junction relationship does not yet support ' +
+            'related/limit/start on the destination',
+        );
+        const aggregate = sq.format.aggregate;
+        const {fn} = aggregate;
+        const correlation = {parentField: firstSource, childField: firstDest};
+        // `count` checks the destination with an EXISTS on the junction row
+        // (keep only edges whose destination exists and matches its `where`),
+        // so it never materializes the destination. The EXISTS is there even
+        // without a `where`: it is where the server applies the destination's
+        // read permissions, and it drops edges to a missing destination, as
+        // `related` does.
+        const junctionWhere = normalizeCondition({
+          type: 'correlatedSubquery',
+          op: 'EXISTS',
+          related: {
+            correlation: {
+              parentField: secondSource,
+              childField: secondDest,
+            },
+            subquery: {...sq.#ast, aggregate: undefined},
+            system: this.#system,
+          },
+        });
+        const format = {
+          ...this.format,
+          relationships: {
+            ...this.format.relationships,
+            [relationship]: sq.format,
+          },
+        };
+
+        return this.#derive(
+          relatedKey(relationship),
+          astID(sq.#ast),
+          undefined,
+          () =>
+            this.#newQuery(
+              this.#tableName,
+              {
+                ...this.#ast,
+                related: insertRelated(
+                  this.#ast.related,
+                  fn === 'count'
+                    ? // count(*) collapses to a single-hop count over the
+                      // junction table — one association row per related
+                      // entity — so the destination table is never touched.
+                      {
+                        correlation,
+                        subquery: {
+                          ...tableAST(junctionSchema, relationship),
+                          where: junctionWhere,
+                        },
+                        system: this.#system,
+                        aggregate: {fn: 'count'},
+                      }
+                    : // sum/avg/min/max need the destination field, one hop
+                      // past the junction. Build the two-hop pipeline
+                      // (junction → destination) and put the aggregate on the
+                      // junction subquery; the builder inserts a LiftField to
+                      // bring the destination field onto the junction row.
+                      {
+                        correlation,
+                        subquery: {
+                          ...tableAST(junctionSchema, relationship),
+                          // A single subquery is sorted.
+                          related: [
+                            normalizedRelated({
+                              correlation: {
+                                parentField: secondSource,
+                                childField: secondDest,
+                              },
+                              // The destination, without its (lifted) aggregate.
+                              subquery: {...sq.#ast, aggregate: undefined},
+                              system: this.#system,
+                            }),
+                          ],
+                        },
+                        system: this.#system,
+                        aggregate,
+                      },
+                ),
+              },
+              format,
+              this.customQueryID,
+              this.#currentJunction,
+            ),
+        ) as AnyQuery;
+      }
 
       return this.#derive(
         relatedKey(relationship),
@@ -711,6 +1074,8 @@ export class QueryImpl<
     row: Partial<Record<string, ReadonlyJSONValue | undefined>>,
     opts?: {inclusive: boolean},
   ): Query<TTable, TSchema, TReturn> {
+    this.#assertNotAggregated('start');
+    this.#assertNotDistinct('start');
     // The row is an object, so it is encoded to a string to serve as the
     // lookup key. Property order is part of that string.
     return this.#derive(
@@ -735,6 +1100,8 @@ export class QueryImpl<
   }
 
   limit(limit: number): Query<TTable, TSchema, TReturn> {
+    this.#assertNotAggregated('limit');
+    this.#assertNotDistinct('limit');
     if (limit < 0) {
       throw new Error('Limit must be non-negative');
     }
@@ -768,6 +1135,9 @@ export class QueryImpl<
         'Order by is not supported in junction relationships yet. Junction relationship being ordered: ' +
           this.#currentJunction,
       );
+    }
+    if (this.#ast.groupBy) {
+      this.#assertGroupColumn(field as string, this.#ast.groupBy);
     }
     return this.#derive(
       direction === 'asc' ? 'orderBy:asc' : 'orderBy:desc',
@@ -819,6 +1189,11 @@ export class QueryImpl<
           ) as AnyQuery,
         ),
       );
+      assert(
+        subQuery.#ast.aggregate === undefined,
+        'exists() does not support an aggregate subquery',
+      );
+      assertSubqueryNotGrouped(subQuery, 'exists');
       // Give the sub-query's AST an id so the enclosing `where` can key on it
       // exactly rather than comparing the sub-tree.
       astID(subQuery.#ast);
@@ -860,6 +1235,11 @@ export class QueryImpl<
           ),
         ) as AnyQuery,
       );
+      assert(
+        asQueryImpl(queryToDest).#ast.aggregate === undefined,
+        'exists() does not support an aggregate subquery',
+      );
+      assertSubqueryNotGrouped(asQueryImpl(queryToDest), 'exists');
 
       return {
         type: 'correlatedSubquery',
@@ -913,6 +1293,57 @@ export class QueryImpl<
   }
 }
 
+/**
+ * The {@link GroupedQuery} of `query.groupBy(...columns)`. It only holds the
+ * grouping: each aggregate is a query derived from `query`, so asking for the
+ * same one twice gives the same query.
+ */
+class GroupedQueryImpl {
+  readonly #query: QueryImpl<any, any, any>;
+  readonly #columns: readonly string[];
+
+  constructor(query: QueryImpl<any, any, any>, columns: readonly string[]) {
+    this.#query = query;
+    this.#columns = columns;
+  }
+
+  count(): AnyQuery {
+    return this.#query.groupAggregate(this.#columns, 'count', undefined);
+  }
+
+  sum(selector: string | JsonAggregateSelector): AnyQuery {
+    return this.#query.groupAggregate(this.#columns, 'sum', selector);
+  }
+
+  avg(selector: string | JsonAggregateSelector): AnyQuery {
+    return this.#query.groupAggregate(this.#columns, 'avg', selector);
+  }
+
+  min(selector: string | JsonAggregateSelector): AnyQuery {
+    return this.#query.groupAggregate(this.#columns, 'min', selector);
+  }
+
+  max(selector: string | JsonAggregateSelector): AnyQuery {
+    return this.#query.groupAggregate(this.#columns, 'max', selector);
+  }
+}
+
+/**
+ * A subquery of `related()` or `exists()` can't be a `distinct()` or a
+ * `groupBy()` yet.
+ */
+function assertSubqueryNotGrouped(
+  sq: QueryImpl<any, any, any>,
+  method: string,
+): void {
+  const {groupBy, aggregate} = sq.ast;
+  if (groupBy || aggregate?.distinct) {
+    throw new Error(
+      `${method}() does not support a ${groupBy && aggregate ? 'groupBy()' : 'distinct()'} subquery yet`,
+    );
+  }
+}
+
 export function asQueryImpl<
   TTable extends keyof TSchema['tables'] & string,
   TSchema extends Schema,
@@ -959,6 +1390,16 @@ function whereKey(column: string, op: string): string {
   const byOp = getOrInsertComputed(whereKeys, column, newMap);
   return getOrInsertComputed(byOp, op, op => `where:${column}:${op}`);
 }
+
+// One key per aggregate function; the aggregated column is the transition
+// value. Both are bounded by the schema.
+const AGGREGATE_KEYS: Record<AggregateFunction, string> = {
+  count: 'aggregate:count',
+  sum: 'aggregate:sum',
+  avg: 'aggregate:avg',
+  min: 'aggregate:min',
+  max: 'aggregate:max',
+};
 
 const relatedKeys = new Map<string, string>();
 
@@ -1064,10 +1505,19 @@ function tri(b: boolean | undefined): string {
 function condKey(cond: Condition): string | undefined {
   switch (cond.type) {
     case 'simple': {
-      if (cond.left.type !== 'column') {
-        return undefined;
+      const {left} = cond;
+      switch (left.type) {
+        case 'column':
+          return `S${enc(left.name)}${enc(cond.op)}${rightTag(cond.right)}`;
+        case 'json':
+          // The path is strings and numbers, which valueTag keeps apart, so
+          // `['0']` (an object key) and `[0]` (an array index) differ.
+          return `J${enc(left.value.name)}${valueTag(left.path)}${enc(
+            cond.op,
+          )}${rightTag(cond.right)}`;
+        default:
+          return undefined;
       }
-      return `S${enc(cond.left.name)}${enc(cond.op)}${rightTag(cond.right)}`;
     }
     case 'correlatedSubquery': {
       const id = astIDs.get(cond.related.subquery);
