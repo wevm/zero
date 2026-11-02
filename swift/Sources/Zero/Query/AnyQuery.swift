@@ -84,7 +84,7 @@ public struct AnyQuery: Sendable {
   }
 
   /// This query, unchanged but invalid: a builder step JS throws for.
-  private func invalidated(_ message: String) -> AnyQuery { with(invalid: message) }
+  func invalidated(_ message: String) -> AnyQuery { with(invalid: message) }
 
   private func base(_ table: String, alias: String, format: Format, junction: String?) -> AnyQuery {
     AnyQuery(
@@ -108,6 +108,7 @@ public struct AnyQuery: Sendable {
 
   /// At most one row; the view holds the row or nothing rather than a list.
   public func one() -> AnyQuery {
+    if let message = notAggregated("one") ?? notDistinct("one") { return invalidated(message) }
     var ast = self.ast
     ast.limit = 1
     var format = self.format
@@ -161,12 +162,18 @@ public struct AnyQuery: Sendable {
 
   /// Starts after the row with these columns, or at it when `inclusive`.
   public func start(_ row: JSONObject, inclusive: Bool = false) -> AnyQuery {
+    if let message = notAggregated("start") ?? notDistinct("start") {
+      return invalidated(message)
+    }
     var ast = self.ast
     ast.start = AST.Bound(row: row, exclusive: !inclusive)
     return with(ast: ast)
   }
 
   public func limit(_ limit: Int) -> AnyQuery {
+    if let message = notAggregated("limit") ?? notDistinct("limit") {
+      return invalidated(message)
+    }
     if limit < 0 { return invalidated("Limit must be non-negative") }
     if Int32(exactly: limit) == nil { return invalidated("Limit must be an integer") }
     if let currentJunction {
@@ -185,6 +192,9 @@ public struct AnyQuery: Sendable {
         "Order by is not supported in junction relationships yet. Junction relationship being ordered: \(currentJunction)"
       )
     }
+    if let groupBy = ast.groupBy, let message = notGroupColumn(field, groupBy) {
+      return invalidated(message)
+    }
     var ast = self.ast
     ast.orderBy = (ast.orderBy ?? []) + [AST.OrderPart(field, direction)]
     return with(ast: ast)
@@ -196,10 +206,10 @@ public struct AnyQuery: Sendable {
       "Relationship names may not start with \"\(subqueryAliasPrefix)\". That is a reserved prefix."
     )
     let sub = sub ?? { $0 }
+    if let message = notDistinct("related") { return invalidated(message) }
     let hops = relationshipHops(relationship)
     var ast = self.ast
     var format = self.format
-    var invalid: String?
     switch hops.count {
     case 1:
       let hop = hops[0]
@@ -207,18 +217,63 @@ public struct AnyQuery: Sendable {
         base(
           hop.destSchema, alias: relationship,
           format: Format(singular: hop.cardinality == .one), junction: nil))
+      if let message = q.invalid ?? q.notGroupedSubquery("related") { return invalidated(message) }
+      // The builder and the name mapper read a `related` under an aggregate
+      // as a junction's destination, so a direct one can't nest one.
+      if q.format.aggregate != nil && q.ast.related != nil {
+        return invalidated("an aggregate relationship does not support related() on its subquery")
+      }
+      // A relationship's aggregate lives on its correlated subquery, not on
+      // the subquery's AST, which would reduce itself to a scalar too.
+      var subquery = q.ast
+      subquery.aggregate = nil
       ast.related = insertRelated(
         ast.related,
         AST.CorrelatedSubquery(
-          correlation: correlation(hop), subquery: q.ast, system: system))
+          correlation: correlation(hop), subquery: subquery, system: system,
+          aggregate: q.format.aggregate))
       format.relationships[relationship] = q.format
-      invalid = q.invalid
     case 2:
       let (first, second) = (hops[0], hops[1])
       let q = sub(
         base(
           second.destSchema, alias: relationship,
           format: Format(singular: second.cardinality == .one), junction: relationship))
+      if let message = q.invalid ?? q.notGroupedSubquery("related") { return invalidated(message) }
+      if let aggregate = q.format.aggregate {
+        // An aggregate over a junction. A `where` on the destination is
+        // fine; nesting and bounds are not.
+        if q.ast.related != nil || q.ast.limit != nil || q.ast.start != nil {
+          return invalidated(
+            "an aggregate over a junction relationship does not yet support related/limit/start on the destination"
+          )
+        }
+        var dest = q.ast
+        dest.aggregate = nil
+        let destCSQ = AST.CorrelatedSubquery(
+          correlation: correlation(second), subquery: dest, system: system)
+        let junction: AST
+        if aggregate.fn == .count {
+          // A count over the junction rows whose destination exists (where
+          // the server applies its read permissions), never reading the
+          // destination itself.
+          junction = AST(
+            table: first.destSchema, alias: relationship,
+            where: AST.normalizeCondition(
+              .correlatedSubquery(related: destCSQ, op: .exists, flip: nil, scalar: nil)))
+        } else {
+          // sum, avg, min and max need the destination's field: the builder
+          // lifts it onto the junction row.
+          junction = AST(table: first.destSchema, alias: relationship, related: [destCSQ])
+        }
+        ast.related = insertRelated(
+          ast.related,
+          AST.CorrelatedSubquery(
+            correlation: correlation(first), subquery: junction, system: system,
+            aggregate: aggregate.fn == .count ? AST.Aggregate(.count) : aggregate))
+        format.relationships[relationship] = q.format
+        break
+      }
       let junction = AST(
         table: first.destSchema, alias: relationship,
         related: [
@@ -230,11 +285,10 @@ public struct AnyQuery: Sendable {
         AST.CorrelatedSubquery(
           correlation: correlation(first), subquery: junction, system: system, hidden: true))
       format.relationships[relationship] = q.format
-      invalid = q.invalid
     default:
       preconditionFailure("Invalid relationship \(relationship)")
     }
-    return with(ast: ast, format: format, invalid: invalid)
+    return with(ast: ast, format: format)
   }
 
   /// `#exists`: the condition `exists(relationship)` adds.
@@ -255,7 +309,7 @@ public struct AnyQuery: Sendable {
         .correlatedSubquery(
           related: AST.CorrelatedSubquery(
             correlation: correlation(hop), subquery: q.ast, system: system),
-          op: .exists, flip: flip, scalar: scalar), q.invalid
+          op: .exists, flip: flip, scalar: scalar), q.invalid ?? q.notExistsSubquery()
       )
     case 2:
       let (first, second) = (hops[0], hops[1])
@@ -275,11 +329,197 @@ public struct AnyQuery: Sendable {
         .correlatedSubquery(
           related: AST.CorrelatedSubquery(
             correlation: correlation(first), subquery: junction, system: system),
-          op: .exists, flip: flip, scalar: nil), q.invalid
+          op: .exists, flip: flip, scalar: nil), q.invalid ?? q.notExistsSubquery()
       )
     default:
       preconditionFailure("Invalid relationship \(relationship)")
     }
+  }
+
+  // MARK: Aggregates and groupings
+
+  /// The number of rows: a query of one value rather than rows.
+  public func count() -> AnyQuery { aggregate(.count, field: nil, path: nil) }
+
+  /// The sum of `field`'s non-null values; null when there are none.
+  public func sum(_ field: String) -> AnyQuery { aggregate(.sum, field: field, path: nil) }
+
+  /// The sum of the numbers at a JSON path in the `json` column `column`.
+  public func sum(json column: String, _ path: AST.JSONPathSegment...) -> AnyQuery {
+    aggregate(.sum, field: column, path: path)
+  }
+
+  /// The average of `field`'s non-null values; null when there are none.
+  public func avg(_ field: String) -> AnyQuery { aggregate(.avg, field: field, path: nil) }
+
+  public func avg(json column: String, _ path: AST.JSONPathSegment...) -> AnyQuery {
+    aggregate(.avg, field: column, path: path)
+  }
+
+  /// The least of `field`'s non-null values; null when there are none.
+  public func min(_ field: String) -> AnyQuery { aggregate(.min, field: field, path: nil) }
+
+  /// The least number or string at a JSON path; numbers sort first.
+  public func min(json column: String, _ path: AST.JSONPathSegment...) -> AnyQuery {
+    aggregate(.min, field: column, path: path)
+  }
+
+  /// The greatest of `field`'s non-null values; null when there are none.
+  public func max(_ field: String) -> AnyQuery { aggregate(.max, field: field, path: nil) }
+
+  public func max(json column: String, _ path: AST.JSONPathSegment...) -> AnyQuery {
+    aggregate(.max, field: column, path: path)
+  }
+
+  /// `#aggregate`. On a top-level query the view holds the value; in a
+  /// `related` subquery the relationship does.
+  func aggregate(
+    _ fn: AST.AggregateFunction, field: String?, path: [AST.JSONPathSegment]?
+  ) -> AnyQuery {
+    if let message = notAggregated(fn.rawValue) { return invalidated(message) }
+    // A count of a distinct() counts its rows. A groupBy() has its
+    // aggregate already.
+    let distinct = ast.groupBy
+    if distinct != nil && (fn != .count || ast.aggregate != nil),
+      let message = notDistinct(fn.rawValue)
+    {
+      return invalidated(message)
+    }
+    // The server runs a named query's own definition, so the aggregate
+    // would never reach it.
+    if let customQueryID {
+      return invalidated(
+        "\(fn.rawValue)() cannot be applied to the named query \"\(customQueryID.name)\": put it in the query's definition"
+      )
+    }
+    if let path, let field, let message = invalidJSONPath(field, path) {
+      return invalidated(message)
+    }
+    let aggregate =
+      distinct.map { AST.Aggregate(fn, distinct: $0) }
+      ?? AST.Aggregate(fn, field: field, path: path)
+    var ast = self.ast
+    ast.groupBy = nil
+    ast.aggregate = aggregate
+    var format = self.format
+    format.singular = true
+    format.aggregate = aggregate
+    return with(ast: ast, format: format)
+  }
+
+  /// The distinct combinations of `columns`' values, as `SELECT DISTINCT`:
+  /// rows of those columns. `count()` after it counts the combinations.
+  public func distinct(_ columns: String...) -> AnyQuery { distinct(columns) }
+
+  public func distinct(_ columns: [String]) -> AnyQuery {
+    if let message = notGroupable("distinct", columns) { return invalidated(message) }
+    var ast = self.ast
+    ast.groupBy = columns
+    return with(ast: ast)
+  }
+
+  /// Groups the rows by `columns`, as `GROUP BY`; an aggregate of the
+  /// result gives one row per group, with the value under the function's
+  /// name.
+  public func groupBy(_ columns: String...) -> AnyGroupedQuery { groupBy(columns) }
+
+  public func groupBy(_ columns: [String]) -> AnyGroupedQuery {
+    AnyGroupedQuery(
+      query: self, columns: columns, invalid: notGroupable("groupBy", columns))
+  }
+
+  /// `groupAggregate`: the rows of `groupBy(columns)` reduced by `fn`.
+  func groupAggregate(
+    _ columns: [String], _ fn: AST.AggregateFunction, field: String?,
+    path: [AST.JSONPathSegment]?
+  ) -> AnyQuery {
+    if columns.contains(fn.rawValue) {
+      return invalidated(
+        "groupBy(): the column \"\(fn.rawValue)\" has the same name as the \(fn.rawValue)() value")
+    }
+    if let path, let field, let message = invalidJSONPath(field, path) {
+      return invalidated(message)
+    }
+    var ast = self.ast
+    ast.groupBy = columns
+    ast.aggregate = AST.Aggregate(fn, field: field, path: path)
+    return with(ast: ast)
+  }
+
+  /// `#assertNotAggregated`: a bound goes in the same AST fields before or
+  /// after an aggregate, so it must come first.
+  private func notAggregated(_ method: String) -> String? {
+    guard let aggregate = format.aggregate else { return nil }
+    return
+      "\(method)() must come before \(aggregate.fn.rawValue)(): it bounds the rows the aggregate reduces"
+  }
+
+  /// `#assertNotDistinct`.
+  private func notDistinct(_ method: String) -> String? {
+    guard ast.groupBy != nil else { return nil }
+    return "\(method)() does not support \(ast.aggregate != nil ? "groupBy()" : "distinct()") yet"
+  }
+
+  /// `#assertGroupColumn`.
+  private func notGroupColumn(_ column: String, _ columns: [String]) -> String? {
+    if columns.contains(column) { return nil }
+    let names = columns.map { JSONSerializer.stringify(.string($0)) }.joined(separator: ", ")
+    return
+      "orderBy(\"\(column)\"): the rows can only be ordered by the grouped columns (\(names))"
+  }
+
+  /// `#assertGroupable`.
+  private func notGroupable(_ method: String, _ columns: [String]) -> String? {
+    if let message = notAggregated(method) ?? notDistinct(method) { return message }
+    if let customQueryID {
+      return
+        "\(method)() cannot be applied to the named query \"\(customQueryID.name)\": put it in the query's definition"
+    }
+    if columns.isEmpty { return "\(method)() needs at least one column" }
+    let tableColumns = schema.tables[table]?.columns ?? [:]
+    for (i, column) in columns.enumerated() {
+      guard let columnSchema = tableColumns[column] else {
+        return "\(method)(): \"\(column)\" is not a column of \"\(table)\""
+      }
+      if columnSchema.type == .json {
+        return "\(method)() does not support the json column \"\(column)\""
+      }
+      if columns.firstIndex(of: column) != i { return "\(method)(): \"\(column)\" is named twice" }
+      if AggregateColumns.isSynthetic(column) {
+        return
+          "\(method)(): \"\(column)\" is the name of a synthetic column, which a grouped row has too"
+      }
+    }
+    if ast.limit != nil || ast.start != nil {
+      return "\(method)() does not support limit(), start() or one() yet"
+    }
+    if ast.related != nil { return "\(method)() does not support related() yet" }
+    for part in ast.orderBy ?? [] {
+      if let message = notGroupColumn(part.field, columns) { return message }
+    }
+    return nil
+  }
+
+  /// `assertSubqueryNotGrouped`.
+  fileprivate func notGroupedSubquery(_ method: String) -> String? {
+    guard ast.groupBy != nil || ast.aggregate?.distinct != nil else { return nil }
+    let kind = ast.groupBy != nil && ast.aggregate != nil ? "groupBy()" : "distinct()"
+    return "\(method)() does not support a \(kind) subquery yet"
+  }
+
+  fileprivate func notExistsSubquery() -> String? {
+    if ast.aggregate != nil { return "exists() does not support an aggregate subquery" }
+    return notGroupedSubquery("exists")
+  }
+
+  /// `makeColumnRef`'s checks of a JSON path.
+  private func invalidJSONPath(_ column: String, _ path: [AST.JSONPathSegment]) -> String? {
+    if path.isEmpty { return "json('\(column)') requires at least one path segment" }
+    for case .index(let i) in path where i < 0 || i > AST.maxJSONPathIndex {
+      return
+        "Invalid JSON path segment \(i) in json('\(column)', ...): a numeric segment is an array index and must be a non-negative integer no larger than \(AST.maxJSONPathIndex)"
+    }
+    return nil
   }
 
   private func relationshipHops(_ relationship: String) -> Relationship {
@@ -296,6 +536,40 @@ public struct AnyQuery: Sendable {
 
   private func correlation(_ hop: RelationshipHop) -> AST.Correlation {
     AST.Correlation(parentField: hop.sourceField, childField: hop.destField)
+  }
+}
+
+/// A query grouped by columns, waiting for the aggregate that reduces each
+/// group (`GroupedQuery`).
+public struct AnyGroupedQuery: Sendable {
+  let query: AnyQuery
+  let columns: [String]
+  let invalid: String?
+
+  func reduce(
+    _ fn: AST.AggregateFunction, _ field: String?, _ path: [AST.JSONPathSegment]? = nil
+  ) -> AnyQuery {
+    if let invalid { return query.invalidated(invalid) }
+    return query.groupAggregate(columns, fn, field: field, path: path)
+  }
+
+  /// One row per group: its columns and `count`.
+  public func count() -> AnyQuery { reduce(.count, nil) }
+  public func sum(_ field: String) -> AnyQuery { reduce(.sum, field) }
+  public func sum(json column: String, _ path: AST.JSONPathSegment...) -> AnyQuery {
+    reduce(.sum, column, path)
+  }
+  public func avg(_ field: String) -> AnyQuery { reduce(.avg, field) }
+  public func avg(json column: String, _ path: AST.JSONPathSegment...) -> AnyQuery {
+    reduce(.avg, column, path)
+  }
+  public func min(_ field: String) -> AnyQuery { reduce(.min, field) }
+  public func min(json column: String, _ path: AST.JSONPathSegment...) -> AnyQuery {
+    reduce(.min, column, path)
+  }
+  public func max(_ field: String) -> AnyQuery { reduce(.max, field) }
+  public func max(json column: String, _ path: AST.JSONPathSegment...) -> AnyQuery {
+    reduce(.max, column, path)
   }
 }
 

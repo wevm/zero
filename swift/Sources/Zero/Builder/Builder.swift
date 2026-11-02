@@ -42,8 +42,13 @@ package func buildPipeline(
   throws(PipelineError) -> any Input
 {
   var ast = delegate.mapAst(ast)
-  if ast.hasAggregate {
-    throw PipelineError("Aggregates, distinct() and groupBy() are not supported yet")
+  if ast.groupBy != nil && ast.aggregate?.distinct != nil {
+    throw PipelineError("a count of distinct values per group is not supported yet")
+  }
+  if ast.groupBy != nil || ast.aggregate?.distinct != nil {
+    // A grouping's input is sorted by its columns first, so the rows of a
+    // group are adjacent (see GroupBy).
+    ast.orderBy = groupOrdering(ast)
   }
   ast = try completeOrdering(ast) { (table) throws(PipelineError) in
     guard let source = delegate.getSource(table) else {
@@ -137,6 +142,9 @@ func buildPipelineInternal(
   partitionKey: [String]? = nil,
   isNonFlippedExistsChild: Bool = false
 ) throws(PipelineError) -> any Input {
+  if astIn.groupBy != nil && !name.isEmpty {
+    throw PipelineError("groupBy is only supported at the top level")
+  }
   guard let source = delegate.getSource(astIn.table) else {
     throw PipelineError("Source not found: \(astIn.table)")
   }
@@ -224,6 +232,40 @@ func buildPipelineInternal(
     let tap = JoinIndexTap(end, existsParentIndexes)
     delegate.addEdge(end, tap)
     end = delegate.decorateInput(tap, name: "\(name):join-index")
+  }
+
+  if ast.groupBy != nil {
+    // A grouping, compute mode: a distinct is a GroupBy with a count, which
+    // a view doesn't show.
+    if ast.start != nil || ast.limit != nil || ast.related != nil {
+      throw PipelineError("groupBy does not support start, limit or related")
+    }
+    let groupBy = try GroupBy(
+      end, ordering: groupOrdering(ast), tableName: groupTableName(queryID), try reducerOf(ast))
+    delegate.addEdge(end, groupBy)
+    return delegate.decorateInput(groupBy, name: "\(name):groupBy")
+  }
+
+  if let aggregate = ast.aggregate {
+    // A top-level aggregate, compute mode: one row, emitted to
+    // `aggregate:<queryID>`, reducing the rows that survive `where`, `start`
+    // and `limit`, so `limit(10).count()` counts at most 10 rows, as in SQL.
+    if aggregate.distinct != nil {
+      // A count of the distinct combinations counts a GroupBy's groups.
+      if ast.start != nil || ast.limit != nil {
+        throw PipelineError("a count of distinct values does not support start or limit")
+      }
+      let groupBy = try GroupBy(
+        end, ordering: groupOrdering(ast), tableName: groupTableName(queryID),
+        try Reducer(AST.Aggregate(.count)))
+      delegate.addEdge(end, groupBy)
+      end = delegate.decorateInput(groupBy, name: "\(name):groupBy")
+    }
+    let agg = try Aggregate(
+      end, groupKey: [], aggregate.distinct == nil ? aggregate : AST.Aggregate(.count),
+      tableName: topLevelAggregateTableName(queryID))
+    delegate.addEdge(end, agg)
+    return delegate.decorateInput(agg, name: "\(name):aggregate")
   }
 
   if let related = ast.related {
@@ -457,9 +499,39 @@ func applyCorrelatedSubQuery(
   // empty array.
   if sq.subquery.limit == 0 && fromCondition { return end }
   guard let alias = sq.subquery.alias else { preconditionFailure("Subquery must have an alias") }
-  let child = try buildPipelineInternal(
-    sq.subquery, delegate, queryID, "\(name).\(alias)", partitionKey: sq.correlation.childField,
-    isNonFlippedExistsChild: fromCondition)
+  var child = try buildPipelineInternal(
+    sq.subquery, delegate, queryID, childPipelineName(name, sq),
+    partitionKey: sq.correlation.childField, isNonFlippedExistsChild: fromCondition)
+  if let aggregate = sq.aggregate {
+    // An aggregate relationship, compute mode: an Aggregate reduces the
+    // child rows to one row per parent, carrying the correlation key, so the
+    // Join routes it as it would the children.
+    if aggregate.distinct != nil {
+      throw PipelineError("a count of distinct values is not supported in a relationship yet")
+    }
+    let aggName = "\(name):aggregate(\(alias))"
+    var aggregated = aggregate
+    if let dest = sq.subquery.related?.first {
+      // A junction aggregate: the field lives on the destination, one hop
+      // past the junction row. LiftField copies it (or its JSON leaf) onto
+      // the junction row. `count` never takes this path: it is a plain
+      // count over the junction.
+      guard let destAlias = dest.subquery.alias, let field = aggregate.field else {
+        preconditionFailure("a junction aggregate needs a destination alias and a field")
+      }
+      let lift = LiftField(
+        child, sourceRelationship: destAlias, field: field,
+        jsonAggregate: aggregate.path == nil ? nil : aggregate)
+      delegate.addEdge(child, lift)
+      child = lift
+      aggregated = AST.Aggregate(aggregate.fn, field: liftedFieldColumn)
+    }
+    let agg = try Aggregate(
+      child, groupKey: sq.correlation.childField, aggregated,
+      tableName: aggregateTableName(queryID, sq, parentName: name))
+    delegate.addEdge(child, agg)
+    child = delegate.decorateInput(agg, name: aggName)
+  }
   let join = Join(
     parent: end, child: child, parentKey: sq.correlation.parentField,
     childKey: sq.correlation.childField, relationshipName: alias, hidden: sq.hidden ?? false,
@@ -603,19 +675,76 @@ func addPrimaryKeys(_ primaryKey: [String], _ orderBy: AST.Ordering?) -> AST.Ord
   return orderBy + toAdd.map { AST.OrderPart($0, .asc) }
 }
 
-extension AST {
-  /// Whether the AST or a subquery has an aggregate or a `groupBy`, which
-  /// the pipeline builder doesn't build yet.
-  var hasAggregate: Bool {
-    func condition(_ c: Condition) -> Bool {
-      switch c {
-      case .simple: false
-      case .and(let cs), .or(let cs): cs.contains(where: condition)
-      case .correlatedSubquery(let r, _, _, _): r.aggregate != nil || r.subquery.hasAggregate
-      }
+/// The prefix of the synthetic tables aggregate rows are streamed to
+/// (`AGGREGATE_TABLE_PREFIX` in `zero-protocol/src/aggregate-table.ts`).
+package let aggregateTablePrefix = "aggregate:"
+
+/// `childPipelineName`: the parent's pipeline name, a `.`, and the escaped
+/// alias. An alias can be any string, so it is escaped to keep the path
+/// unambiguous and free of the `/` and `:` a table name must not contain.
+func childPipelineName(_ name: String, _ sq: AST.CorrelatedSubquery) -> String {
+  name + "." + encodeURIComponent(sq.subquery.alias ?? "", escapingDots: true)
+}
+
+/// `aggregateTableName`: `aggregate:<queryID>:<alias path>`, the table of an
+/// aggregate relationship's rows. `parentName` is the parent's pipeline name.
+package func aggregateTableName(
+  _ queryID: String, _ sq: AST.CorrelatedSubquery, parentName: String = ""
+) -> String {
+  aggregateTablePrefix + queryID + ":" + String(childPipelineName(parentName, sq).dropFirst())
+}
+
+/// `topLevelAggregateTableName`: `aggregate:<queryID>`.
+package func topLevelAggregateTableName(_ queryID: String) -> String {
+  aggregateTablePrefix + queryID
+}
+
+/// `groupTableName`: `aggregate:<queryID>:#group`, the table of a grouped
+/// query's rows. An escaped alias never has a `#`.
+package func groupTableName(_ queryID: String) -> String {
+  aggregateTablePrefix + queryID + ":#group"
+}
+
+/// `reducerOf`: what a grouped query reduces each group to, its aggregate or
+/// a count.
+func reducerOf(_ ast: AST) throws(PipelineError) -> Reducer {
+  try Reducer(ast.aggregate ?? AST.Aggregate(.count))
+}
+
+/// `groupViewInput`: the input of a grouped query's view: its rows reduced
+/// to the group columns and, for a `groupBy()` with an aggregate, the value
+/// under the function's name.
+package func groupViewInput(
+  _ input: any Input, _ ast: AST, _ delegate: any BuilderDelegate
+)
+  throws(PipelineError) -> any Input
+{
+  let names = delegate.mapAst(ast).groupBy ?? []
+  return try GroupProjection(
+    input, columns: names.map { ($0, $0) }, valueName: ast.aggregate?.fn.rawValue)
+}
+
+/// JS's `encodeURIComponent`: every UTF-8 byte but the letters, digits and
+/// `-_.!~*'()` as `%XX`; with `escapingDots`, `.` too.
+func encodeURIComponent(_ s: String, escapingDots: Bool = false) -> String {
+  var out = ""
+  for byte in s.utf8 {
+    switch byte {
+    case UInt8(ascii: "A")...UInt8(ascii: "Z"), UInt8(ascii: "a")...UInt8(ascii: "z"),
+      UInt8(ascii: "0")...UInt8(ascii: "9"):
+      out.unicodeScalars.append(Unicode.Scalar(byte))
+    case UInt8(ascii: ".") where !escapingDots:
+      out.append(".")
+    case UInt8(ascii: "-"), UInt8(ascii: "_"), UInt8(ascii: "!"),
+      UInt8(ascii: "~"), UInt8(ascii: "*"), UInt8(ascii: "'"), UInt8(ascii: "("),
+      UInt8(ascii: ")"):
+      out.unicodeScalars.append(Unicode.Scalar(byte))
+    default:
+      let hex = Array("0123456789ABCDEF")
+      out.append("%")
+      out.append(hex[Int(byte >> 4)])
+      out.append(hex[Int(byte & 0xF)])
     }
-    return aggregate != nil || groupBy != nil
-      || related?.contains { $0.aggregate != nil || $0.subquery.hasAggregate } == true
-      || self.where.map(condition) == true
   }
+  return out
 }
