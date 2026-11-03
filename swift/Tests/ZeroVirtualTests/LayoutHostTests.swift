@@ -11,7 +11,7 @@ import ZeroTesting
 final class LayoutScrollView {
   let host = LayoutHost()
   let h: Harness
-  let viewportHeight: Double
+  var viewportHeight: Double
   var heights: [String: Double] = [:]
   /// How many times each row was measured.
   var measures: [String: Int] = [:]
@@ -345,6 +345,109 @@ final class LayoutScrollView {
     h.data += (63..<66).map { TestRow(id: "r\($0)") }
     view.settle()
     #expect(view.scrollOffset == offset)
+  }
+
+  // As when the keyboard comes up under a chat. The re-pin to the bottom
+  // used to be taken back by the offset the view passed in, from before the
+  // resize, as if the user had scrolled, and the list stopped following.
+  @Test("stuck to the bottom, the viewport getting shorter keeps the bottom in view")
+  func stuckViewportShrinks() {
+    let h = Harness(rowCount: 60) {
+      $0.anchoring = .manual
+      $0.stickToBottom = true
+    }
+    let view = LayoutScrollView(h)
+    view.settle()
+    view.userScroll(.infinity)
+    view.settle()
+    #expect(view.bottomGap == 0)
+    view.viewportHeight = 250
+    view.settle()
+    #expect(view.bottomGap == 0)
+    h.data.append(TestRow(id: "r60"))
+    view.settle()
+    #expect(h.core.lastVisibleItem()?.key == "r60")
+    #expect(view.bottomGap == 0)
+  }
+
+  enum Shrink: String, CaseIterable, CustomTestStringConvertible {
+    case lastRowsDeleted, lastRowShrinks, viewportGrows
+    var testDescription: String { rawValue }
+  }
+
+  // The content getting shorter under the offset, or the viewport taller,
+  // takes the offset back, as a browser does: the platform's scroll views
+  // don't, and blank space stood below the last row until the next scroll.
+  @Test(
+    "at the bottom, content getting shorter than the offset needs takes the offset back",
+    arguments: Shrink.allCases)
+  func offsetStaysWithinTheContent(_ change: Shrink) {
+    let h = Harness(rowCount: 300) { $0.anchoring = .manual }
+    let view = LayoutScrollView(h)
+    view.heights["r299"] = 200
+    view.settle()
+    for _ in 0..<40 where h.core.lastVisibleItem()?.key != "r299" || view.bottomGap > 0 {
+      view.userScroll(view.scrollOffset + 2000)
+      view.settle()
+    }
+    #expect(view.bottomGap == 0)
+    switch change {
+    case .lastRowsDeleted: h.data.removeLast(10)
+    case .lastRowShrinks: view.heights["r299"] = 20
+    case .viewportGrows: view.viewportHeight = 550
+    }
+    view.settle()
+    h.scheduler.advance(by: 3000)
+    view.settle()
+    // Negative: the viewport reaches past the content's end.
+    #expect(view.bottomGap >= 0)
+  }
+
+  // Left where the rows were, the viewport showed none of them, and paging,
+  // finding no row on screen, paged back and forth without end.
+  @Test("a list that gets shorter than the viewport shows its rows")
+  func shortListAfterDeletes() {
+    let h = Harness(rowCount: 30) { $0.anchoring = .manual }
+    let view = LayoutScrollView(h)
+    view.settle()
+    view.userScroll(.infinity)
+    view.settle()
+    #expect(view.scrollOffset == 200)
+    h.data.removeLast(20)
+    view.settle()
+    #expect(view.scrollOffset == 0)
+    #expect(h.core.firstVisibleItem()?.key == "r0")
+    #expect(h.items.map(\.key) == (0..<10).map { "r\($0)" })
+  }
+
+  // Its window is still the permalink's, whose lookup then reports the row
+  // missing, as for a deep link to a row that never was: the list went to
+  // the top (upstream does), or here was left blank, far below it.
+  @Test(
+    "deleting the row a list opened at, or jumped to, leaves the rows around it on screen",
+    arguments: [false, true])
+  func permalinkRowDeleted(_ viaJump: Bool) {
+    let h = Harness(rowCount: 300) {
+      $0.anchoring = .manual
+      if !viaJump { $0.permalinkID = "r150" }
+    }
+    let view = LayoutScrollView(h)
+    view.settle()
+    if viaJump {
+      h.core.scrollToItem("r150", align: .start)
+      view.settle()
+    }
+    h.scheduler.advance(by: 3000)
+    view.settle()
+    #expect(h.core.firstVisibleItem()?.key == "r150")
+    let top = view.rowTop("r151")!
+    h.data.removeAll { $0.id == "r150" }
+    view.settle()
+    h.scheduler.advance(by: 3000)
+    view.settle()
+    // r151 comes up into r150's place, the rest after it.
+    #expect(view.rowTop("r151") == top - 20)
+    #expect(view.rowTop("r160") == top - 20 + 9 * 20)
   }
 
   @Test("stuck to the bottom of a list opened at its last row, a scroll up moves the rows by it")

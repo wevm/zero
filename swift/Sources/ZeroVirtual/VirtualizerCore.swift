@@ -293,6 +293,13 @@ package final class VirtualizerCore<
   /// view holds off drawing the rows it opens with until it has.
   package var isLanding: Bool { target != nil && !placed }
   private var permalinkMissing = 0
+  // The row a loaded permalink window was opened at, or jumped to, was
+  // deleted: the page to load in its place, from the rows on screen, which
+  // stay drawn until it's in.
+  private var pendingReanchor: Anchor?
+  // Where the first row of that page goes, in content coordinates: in the
+  // deleted row's place when it was on screen, as the rows below it come up.
+  private var carriedFirst: (key: AnyHashable, minY: Double)?
 
   // A restore not yet applied: from `scrollState` at first, then
   // `restore(_:)`.
@@ -352,6 +359,12 @@ package final class VirtualizerCore<
   /// Takes new rows without notifying.
   package func setRows(_ new: RowsSnapshot<Row, StartRow>) {
     let old = rows
+    if let anchor = anchorPastDeletedTarget(old, new) {
+      // Paged in from `afterUpdate`, which notifies: these rows stay.
+      pendingReanchor = anchor
+      return
+    }
+    pendingReanchor = nil
     let oldSpace = manual && host != nil ? snapshot.spaceBefore : nil
     rows = new
     version += 1
@@ -374,6 +387,11 @@ package final class VirtualizerCore<
       }
       return nil
     }
+    var carried: (key: AnyHashable, minY: Double)?
+    if rows.anchor == paging.anchor {
+      carried = carriedFirst
+      carriedFirst = nil
+    }
     var space = oldSpace
     if oldFirst == newFirst {
       // Same first row: the space stays as it was.
@@ -387,7 +405,8 @@ package final class VirtualizerCore<
       } else if let host, let from = frame(host, key: AnyHashable(oldFirst)),
         let to = frame(host, key: AnyHashable(newFirst))
       {
-        space += to.minY - from.minY
+        let top = carried?.key == AnyHashable(newFirst) ? carried!.minY : to.minY
+        space += top - from.minY
       } else {
         space += Double(removed) * rowEstimate
       }
@@ -395,6 +414,64 @@ package final class VirtualizerCore<
       return
     }
     spaceAdjust = space - estimatedSpaceBefore
+  }
+
+  /// A permalink window that was loaded and on screen, whose row is now
+  /// reported missing: its row was deleted, not a deep link to a row that
+  /// never was. The page from the first row on screen that's left, to load
+  /// in its place; nil when it's a cold miss, which goes to the top.
+  private func anchorPastDeletedTarget(
+    _ old: RowsSnapshot<Row, StartRow>, _ new: RowsSnapshot<Row, StartRow>
+  ) -> Anchor? {
+    guard isListContextCurrent, case .permalink(let targetIndex, let id) = paging.anchor,
+      new.permalinkNotFound, new.lookup?.id == id, old.anchor == paging.anchor,
+      !old.rowsEmpty, old.complete, let host,
+      let target = old.rowAt(targetIndex).map({ AnyHashable(options.rowKey($0)) })
+    else { return nil }
+    let top = host.scrollOffset
+    let frames = host.rowFrames()
+    guard let first = frames.first(where: { $0.key != target && $0.maxY > top + 0.5 }),
+      first.minY < top + host.viewportHeight
+    else { return nil }
+    // A page forward from the row before it, skipping the deleted one.
+    var before = first.index - 1
+    var index = first.index
+    if before == targetIndex {
+      before -= 1
+      index -= 1
+    }
+    let anchor: Anchor
+    if before >= old.firstRowIndex, let row = old.rowAt(before) {
+      anchor = .forward(index: index, startRow: options.toStartRow(row))
+    } else if old.atStart {
+      anchor = .top
+    } else {
+      return nil
+    }
+    // The rows below a deleted row on screen come up into its place; those
+    // above it stay.
+    var minY = first.minY
+    if let gone = frames.first(where: { $0.key == target }), gone.minY < first.minY,
+      gone.maxY > top
+    {
+      minY = gone.minY
+    }
+    carriedFirst = (first.key, minY)
+    return anchor
+  }
+
+  private func reanchorPastDeletedTarget() {
+    guard let anchor = pendingReanchor else { return }
+    pendingReanchor = nil
+    // A jump still landing on the deleted row has nothing to land on.
+    if case .permalink(_, let id) = paging.anchor, case .row(let p) = target, p.id == id {
+      setTarget(nil)
+    }
+    if let carriedFirst, manual {
+      anchorKey = carriedFirst.key
+      anchorOffset = carriedFirst.minY
+    }
+    setAnchor(anchor)
   }
 
   /// The queries the rows must answer.
@@ -555,6 +632,7 @@ package final class VirtualizerCore<
     // the rows aren't where paging would read them until then.
     var respaced = measureAndCompensate()
     if dropSpaceAtStart() { respaced = true }
+    reanchorPastDeletedTarget()
     restoreOrReset()
     updatePageSize()
     land()
