@@ -569,6 +569,39 @@ final class LayoutScrollView {
     #expect(h.core.snapshot.spaceBefore == 0)
   }
 
+  // The page before the loaded rows shares none of them, and stood under
+  // the reserve of space a list opened away from its start keeps, where the
+  // old rows were, below the viewport: the list paged on to its start and
+  // back, blank for a page query each.
+  @Test(
+    "scrolled up past the loaded rows of a list opened at a permalink, the next page is on screen")
+  func scrollUpPastAPermalinksRows() {
+    let h = Harness(rowCount: 300) {
+      $0.anchoring = .manual
+      $0.minPageSize = 40
+      $0.permalinkID = "r200"
+    }
+    let view = LayoutScrollView(h)
+    view.settle()
+    h.scheduler.advance(by: 3000)
+    view.settle()
+    #expect(h.items.first?.key == "r170")
+    view.userScroll(view.scrollOffset - 1500)
+    var windows: [String] = []
+    var blank = 0
+    for _ in 0..<20 {
+      view.pass()
+      view.frameDrawn()
+      let w = "\(h.items.first?.key ?? "-")…\(h.items.last?.key ?? "-")"
+      if windows.last != w { windows.append(w) }
+      if h.core.firstVisibleItem() == nil { blank += 1 }
+    }
+    // The page before r170 comes in on screen, and the list doesn't go to
+    // its start.
+    #expect(blank == 0, "windows: \(windows)")
+    #expect(!windows.contains { $0.hasPrefix("r0…") }, "windows: \(windows)")
+  }
+
   @Test("only the rows near the viewport are measured")
   func measuresNearRows() {
     let h = Harness(rowCount: 1000) { $0.anchoring = .manual }
@@ -643,6 +676,60 @@ final class LayoutScrollView {
       }
       #expect(view.measures[skipped] != nil)
     }
+  }
+
+  // Nothing below the loaded rows has been seen, so there's no space after
+  // them and the scroll is clamped at their end: the row lines up as the
+  // page below loads. (Upstream releases the jump clamped; see UPSTREAM.md.)
+  @Test("a jump to a loaded row near the end of the loaded rows lines it up once rows load below")
+  func clampedJumpNearTheWindowsEnd() {
+    let h = Harness(rowCount: 300) {
+      $0.anchoring = .manual
+      $0.minPageSize = 40
+    }
+    let view = LayoutScrollView(h)
+    view.settle()
+    #expect(h.items.last?.key == "r59")
+    h.core.scrollToItem("r58", align: .center)
+    view.settle()
+    h.scheduler.advance(by: 3000)
+    view.settle()
+    #expect(h.items.last.map { $0.index > 70 } == true)
+    #expect(view.rowTop("r58") == (view.viewportHeight - 20) / 2)
+  }
+
+  // Scrolled into the space above the loaded rows, the reference row the
+  // scroll picked is their first, below the viewport; the page loading
+  // above pushes it down the screen. It's picked again once the rows are in
+  // place. (Upstream picks it only at a scroll; see UPSTREAM.md.)
+  @Test(
+    "after scrolling up past the loaded rows, a row on screen growing moves only the rows below it")
+  func anchorAfterPagingUp() {
+    let h = Harness(rowCount: 300) {
+      $0.anchoring = .manual
+      $0.minPageSize = 40
+    }
+    let view = LayoutScrollView(h)
+    view.settle()
+    for _ in 0..<10 {
+      view.userScroll(view.scrollOffset + 300)
+      view.settle()
+    }
+    h.scheduler.advance(by: 3000)
+    view.settle()
+    let first = h.items.first!.index
+    // Up past the loaded rows' first, in one frame (a fast fling).
+    view.userScroll(Double(first) * 20 - 300)
+    view.settle()
+    h.scheduler.advance(by: 3000)
+    view.settle()
+    let top = h.core.firstVisibleItem()!
+    #expect(top.index < first)
+    let topY = view.rowTop(top.key)!
+    // A row a few rows down the screen grows.
+    view.heights["r\(top.index + 3)"] = 80
+    view.settle()
+    #expect(view.rowTop(top.key) == topY)
   }
 
   @Test("jumps to rows not measured yet land on them")
