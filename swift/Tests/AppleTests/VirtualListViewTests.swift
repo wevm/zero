@@ -172,6 +172,135 @@
       withExtendedLifetime((zero, window)) {}
     }
 
+    typealias NoteList = VirtualListView<Void, Note, String, String, String>
+
+    func noteList(_ list: VirtualListTests.List) -> NoteList {
+      VirtualListView(list) { item, reusing in
+        let row = reusing as? NoteView ?? NoteView()
+        row.id = item.row.id
+        return row
+      }
+    }
+
+    // Rows going at the bottom take the offset back with them: the scroll
+    // view kept it, and blank space below the last row.
+    @Test func rowsDeletedAtTheBottom() async throws {
+      let t = VirtualListTests()
+      let server = LoopbackServer()
+      let (zero, list) = try t.makeList(server: server)
+      let view = noteList(list)
+      let window = show(view)
+      try await t.run(30) { list.snapshot.complete && !list.snapshot.items.isEmpty }
+      try await scrollToBottom(t, view, list, last: VirtualListTests.id(299))
+      let before = geometry(view)
+      for i in 290..<300 { server.delete("note", ["id": .string(VirtualListTests.id(i))]) }
+      try await t.run(2) { false }
+      let after = geometry(view)
+      #expect(before.offset + before.viewport == before.content)
+      #expect(
+        after.offset + after.viewport <= after.content + 0.5,
+        "\(after.offset + after.viewport - after.content) blank below the last row")
+      withExtendedLifetime((zero, window)) {}
+    }
+
+    // The row a jump landed on is deleted: the rows below it come up, and
+    // the list doesn't go anywhere else.
+    @Test func theRowAJumpLandedOnIsDeleted() async throws {
+      let t = VirtualListTests()
+      let server = LoopbackServer()
+      let (zero, list) = try t.makeList(server: server)
+      let view = noteList(list)
+      let window = show(view)
+      try await t.run(30) { list.snapshot.complete && !list.snapshot.items.isEmpty }
+      list.scrollToItem(VirtualListTests.id(150), align: .start)
+      try await t.run(30) { list.firstVisibleItem()?.key == VirtualListTests.id(150) }
+      try await t.run(0.5) { false }
+      #expect(list.firstVisibleItem()?.key == VirtualListTests.id(150))
+      server.delete("note", ["id": .string(VirtualListTests.id(150))])
+      try await t.run(2) { false }
+      // n151 comes up into its place.
+      #expect(
+        list.firstVisibleItem()?.key == VirtualListTests.id(151),
+        "on screen: \(list.firstVisibleItem()?.key ?? "nothing")")
+      withExtendedLifetime((zero, window)) {}
+    }
+
+    // Stuck to the bottom, the viewport gets shorter, as when a keyboard
+    // comes up: the bottom stays in view, and new rows follow.
+    @Test func stuckToTheBottomTheViewportShrinks() async throws {
+      let t = VirtualListTests()
+      let server = LoopbackServer()
+      let (zero, list) = try t.makeList(server: server)
+      list.stickToBottom = true
+      let view = noteList(list)
+      let window = show(view)
+      try await t.run(30) { list.snapshot.complete && !list.snapshot.items.isEmpty }
+      try await scrollToBottom(t, view, list, last: VirtualListTests.id(299))
+      resize(window, width: 300, height: 250)
+      try await t.run(1) { false }
+      let after = geometry(view)
+      #expect(abs(after.content - after.offset - after.viewport) <= 0.5)
+      // And it still follows.
+      server.put("note", ["id": .string(VirtualListTests.id(300)), "text": .string("new")])
+      try await t.run(2) { list.lastVisibleItem()?.key == VirtualListTests.id(300) }
+      #expect(list.lastVisibleItem()?.key == VirtualListTests.id(300))
+      withExtendedLifetime((zero, window)) {}
+    }
+    /// Offset, viewport and content height as the platform scroll view has
+    /// them.
+    func geometry(
+      _ view: NoteList
+    ) -> (
+      offset: Double, viewport: Double, content: Double
+    ) {
+      #if canImport(UIKit)
+        let s = view.scrollView
+        let inset = s.adjustedContentInset
+        return (
+          Double(s.contentOffset.y + inset.top), Double(s.bounds.height - inset.top - inset.bottom),
+          Double(s.contentSize.height)
+        )
+      #else
+        let s = view.scrollView
+        let inset = s.contentInsets
+        return (
+          Double(s.contentView.bounds.origin.y + inset.top),
+          Double(s.contentView.bounds.height - inset.top - inset.bottom),
+          Double(s.documentView!.frame.height)
+        )
+      #endif
+    }
+
+    /// Scrolls as the user does, within the content.
+    func userScroll(_ view: NoteList, by dy: Double) {
+      let g = geometry(view)
+      let to = max(0, min(g.offset + dy, g.content - g.viewport))
+      scroll(view.scrollView, by: to - g.offset)
+    }
+
+    func resize(_ window: AnyObject, width: Double, height: Double) {
+      #if canImport(UIKit)
+        let w = window as! UIWindow
+        w.frame = CGRect(x: 0, y: 0, width: width, height: height)
+        w.layoutIfNeeded()
+      #else
+        (window as! NSWindow).setContentSize(NSSize(width: width, height: height))
+      #endif
+    }
+
+    func scrollToBottom(
+      _ t: VirtualListTests, _ view: NoteList,
+      _ list: VirtualListTests.List, last: String
+    ) async throws {
+      for _ in 0..<300 {
+        let g = geometry(view)
+        if list.lastVisibleItem()?.key == last, g.content - g.offset - g.viewport < 0.5 { break }
+        userScroll(view, by: 300)
+        try await t.run(0.03) { false }
+      }
+      try await t.run(0.5) { false }
+    }
+
     func scroll(_ scrollView: AnyObject, by dy: Double) {
       #if canImport(UIKit)
         let s = scrollView as! UIScrollView

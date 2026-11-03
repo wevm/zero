@@ -132,10 +132,6 @@ package final class LayoutHost: VirtualHost {
       frameStarted = false
       deadline = now() + frameBudget
     }
-    if viewport != viewportHeight {
-      viewportHeight = viewport
-      viewportDidResize()
-    }
     if scrolled {
       scrolled = false
     } else if offset != scrollOffset {
@@ -144,12 +140,32 @@ package final class LayoutHost: VirtualHost {
       scrollOffset = offset
       didScroll()
     }
+    // After the user's scroll, which was at the viewport it had: the core's
+    // scroll about the new size (back to the bottom, stuck there) is the
+    // offset this pass applies.
+    if viewport != viewportHeight {
+      viewportHeight = viewport
+      viewportDidResize()
+    }
     // What the core does about the update can be a new snapshot, or a
     // scroll to rows not measured yet; they're laid out in this pass too.
-    for _ in 0..<8 where stale || !rowsOnScreenMeasured() {
-      stale = false
-      place()
-      afterUpdate()
+    for _ in 0..<8 {
+      if stale || !rowsOnScreenMeasured() {
+        stale = false
+        place()
+        afterUpdate()
+        continue
+      }
+      // The content laid out ends above the viewport's bottom, as when rows
+      // there went or got shorter, or the viewport got taller: the offset
+      // comes back within it, as a browser clamps it, reported as a scroll.
+      // The platform's scroll view wouldn't: it keeps the offset, and blank
+      // space below the rows, until the user scrolls.
+      let end = max(0, contentHeight - viewportHeight)
+      guard scrollOffset > end else { break }
+      scrollOffset = end
+      stale = true
+      didScroll()
     }
     if !framePending, !nearRowsMeasured() {
       framePending = true
