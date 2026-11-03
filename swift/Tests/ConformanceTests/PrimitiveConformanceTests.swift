@@ -68,6 +68,19 @@ struct PrimitiveConformanceTests {
     }
   }
 
+  @Test func aggregateRowKey() throws {
+    for c in try Vectors.cases("aggregate-row-key") {
+      let table = c["table"]!.stringValue!
+      let row = c["row"]!.objectValue!
+      #expect(
+        Keys.aggregateRowKeyColumns(table: table, columns: row.keys)
+          == c["columns"]!.arrayValue!.map { $0.stringValue! }, "\(table) \(row)")
+      let key = try? Keys.aggregateRowKey(table: table, row: row)
+      #expect(key == c["key"]?.stringValue, "\(table) \(row)")
+      #expect((key == nil) == (c["throws"]?.boolValue ?? false), "\(table) \(row)")
+    }
+  }
+
   @Test func like() throws {
     for c in try Vectors.cases("like") {
       let pattern = c["pattern"]!.stringValue!

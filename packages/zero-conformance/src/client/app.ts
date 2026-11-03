@@ -9,6 +9,7 @@ import {defineMutators} from '../../../zql/src/mutate/mutator-registry.ts';
 import {defineMutator} from '../../../zql/src/mutate/mutator.ts';
 import {createBuilder} from '../../../zql/src/query/create-builder.ts';
 import {
+  addContextToQuery,
   defineQueries,
   defineQuery,
 } from '../../../zql/src/query/query-registry.ts';
@@ -59,6 +60,129 @@ export const queries = defineQueries({
   },
   users: {
     all: defineQuery(() => zql.user.orderBy('id', 'asc')),
+  },
+  // Aggregates, distinct and groupBy, which the server computes.
+  aggregates: {
+    issueCount: defineQuery(() => zql.issue.count()),
+    openIssueCount: defineQuery(() => zql.issue.where('closed', false).count()),
+    commentCounts: defineQuery(() =>
+      zql.issue.related('comments', q => q.count()).orderBy('id', 'asc'),
+    ),
+    commentTimes: defineQuery(() =>
+      zql.issue
+        .related('comments', q =>
+          q.where('authorId', '!=', 'u9').avg('createdAt'),
+        )
+        .orderBy('id', 'asc'),
+    ),
+    labelCounts: defineQuery(() =>
+      zql.issue.related('labels', q => q.count()).orderBy('id', 'asc'),
+    ),
+    owners: defineQuery(() => zql.issue.distinct('ownerId')),
+    commentsByIssue: defineQuery(() => zql.comment.groupBy('issueId').count()),
+    timeByAuthor: defineQuery(() =>
+      zql.comment.groupBy('authorId').sum('createdAt'),
+    ),
+    // From zero-client's aggregate-read-your-writes, group-read-your-writes,
+    // context, crud-impl and custom tests.
+    issueWithCommentCount: defineQuery(({args}: {args: string}) =>
+      zql.issue
+        .where('id', args)
+        .related('comments', q => q.count())
+        .one(),
+    ),
+    openByState: defineQuery(() =>
+      zql.issue.where('closed', false).groupBy('closed').count(),
+    ),
+    issueStates: defineQuery(() => zql.issue.distinct('closed')),
+    issueStateCount: defineQuery(() => zql.issue.distinct('closed').count()),
+    countByState: defineQuery(() => zql.issue.groupBy('closed').count()),
+    timeByState: defineQuery(() =>
+      zql.issue.groupBy('closed').sum('createdAt'),
+    ),
+    avgTimeByState: defineQuery(() =>
+      zql.issue.groupBy('closed').avg('createdAt'),
+    ),
+    issuesByOwner: defineQuery(() =>
+      zql.issue.groupBy('closed', 'ownerId').count().orderBy('ownerId', 'desc'),
+    ),
+    latestIssueTime: defineQuery(() => zql.issue.max('createdAt')),
+    commentAndLabelCounts: defineQuery(() =>
+      zql.issue
+        .related('comments', q => q.count())
+        .related('labels', q => q.count())
+        .orderBy('id', 'asc'),
+    ),
+    commentTimeSums: defineQuery(() =>
+      zql.issue
+        .related('comments', q => q.sum('createdAt'))
+        .orderBy('id', 'asc'),
+    ),
+    userIssueCounts: defineQuery(() =>
+      zql.user.related('issues', q => q.count()).orderBy('id', 'asc'),
+    ),
+    // `points` isn't in the metadata's declared type, which only the
+    // builder's types check.
+    pointsByName: defineQuery(() =>
+      zql.user
+        .groupBy('name')
+        // oxlint-disable-next-line @typescript-eslint/no-explicit-any
+        .sum(({json}) => (json as any)('metadata', 'points')),
+    ),
+    avgPointsByName: defineQuery(() =>
+      zql.user
+        .groupBy('name')
+        // oxlint-disable-next-line @typescript-eslint/no-explicit-any
+        .avg(({json}) => (json as any)('metadata', 'points')),
+    ),
+    labelMax: defineQuery(() =>
+      zql.issue.related('labels', q => q.max('name')).orderBy('id', 'asc'),
+    ),
+    bugLabelCounts: defineQuery(() =>
+      zql.issue
+        .related('labels', q => q.where('name', 'bug').count())
+        .orderBy('id', 'asc'),
+    ),
+  },
+  // More aggregates, for the aggregate bug hunt (`bughunt.test.ts`).
+  bughunt: {
+    allComments: defineQuery(() => zql.comment.orderBy('id', 'asc')),
+    allLabels: defineQuery(() => zql.label.orderBy('id', 'asc')),
+    maxCommentText: defineQuery(() => zql.comment.max('text')),
+    minIssueTitle: defineQuery(() => zql.issue.min('title')),
+    pointsSum: defineQuery(() =>
+      // oxlint-disable-next-line @typescript-eslint/no-explicit-any
+      zql.user.sum(({json}) => (json as any)('metadata', 'points')),
+    ),
+    ownerIssueCounts: defineQuery(() =>
+      zql.issue
+        .related('owner', o => o.related('issues', i => i.count()))
+        .orderBy('id', 'asc'),
+    ),
+    commentAvgWhere: defineQuery(() =>
+      zql.issue
+        .related('comments', q => q.where('createdAt', '>', 3).avg('createdAt'))
+        .orderBy('id', 'asc'),
+    ),
+    commentsByAuthorAndIssue: defineQuery(() =>
+      zql.comment.groupBy('authorId', 'issueId').count(),
+    ),
+    avgTimeByIssueWhere: defineQuery(() =>
+      zql.comment
+        .where('authorId', '!=', 'u3')
+        .groupBy('issueId')
+        .avg('createdAt'),
+    ),
+    commentCountsLimited: defineQuery(() =>
+      zql.issue
+        .related('comments', q => q.count())
+        .orderBy('createdAt', 'desc')
+        .limit(3),
+    ),
+    ownerCount: defineQuery(() => zql.issue.distinct('ownerId').count()),
+    sumTimeByOwner: defineQuery(() =>
+      zql.issue.groupBy('ownerId').sum('createdAt'),
+    ),
   },
   // A table with a compound primary key.
   issueLabels: {
@@ -177,9 +301,66 @@ const harden = {
   }),
 };
 
+type QueryRef = {name: string; args?: ReadonlyJSONValue};
+
+/** What each of `refs` reads through `tx`, as JSON. */
+async function readAll(tx: Tx, refs: QueryRef[]): Promise<ReadonlyJSONValue[]> {
+  const out: ReadonlyJSONValue[] = [];
+  for (const {name, args: queryArgs} of refs) {
+    let v: unknown = queries;
+    for (const part of name.split('.')) {
+      v = (v as Record<string, unknown>)[part];
+    }
+    const request = (v as (...a: unknown[]) => unknown)(
+      ...(queryArgs === undefined ? [] : [queryArgs]),
+    );
+    // oxlint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await tx.run(addContextToQuery(request as any, undefined));
+    out.push(JSON.parse(JSON.stringify(result ?? null)));
+  }
+  return out;
+}
+
+const aggregates = {
+  /**
+   * Runs `ops` (CRUD operations, as `harden.ops` does), then each of the named
+   * `queries` through the transaction, and returns what they read: a query the
+   * server has answered reads its synced aggregates, any other computes them.
+   */
+  read: defineMutator(async ({tx, args}: {tx: Tx; args: JSONObject}) => {
+    for (const o of (args['ops'] ?? []) as CRUDOp[]) {
+      await tx.mutate[o.table][o.op](o.value);
+    }
+    return readAll(tx, (args['queries'] ?? []) as QueryRef[]);
+  }),
+  /**
+   * Reads the `queries`, runs `ops`, and reads them again; returns both
+   * reads. With `record`, it also upserts the user `record` with the
+   * transaction's reason as its name and the reads as its metadata, so a
+   * view of the users shows what the latest run, a rebase too, read.
+   */
+  record: defineMutator(async ({tx, args}: {tx: Tx; args: JSONObject}) => {
+    const refs = (args['queries'] ?? []) as QueryRef[];
+    const before = await readAll(tx, refs);
+    for (const o of (args['ops'] ?? []) as CRUDOp[]) {
+      await tx.mutate[o.table][o.op](o.value);
+    }
+    const after = await readAll(tx, refs);
+    if (typeof args['record'] === 'string') {
+      await tx.mutate.user.upsert({
+        id: args['record'],
+        name: tx.reason,
+        metadata: {before, after},
+      });
+    }
+    return {before, after};
+  }),
+};
+
 export const mutators = defineMutators({
   issue,
   harden,
+  aggregates,
   comment: {
     add: defineMutator(async ({tx, args}: {tx: Tx; args: JSONObject}) => {
       await tx.mutate.comment.insert({

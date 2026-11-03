@@ -1,8 +1,23 @@
 /// Builds pipelines over the sources of an IVM branch.
 final class BranchDelegate: BuilderDelegate {
   let branch: IVMBranch
-  init(_ branch: IVMBranch) { self.branch = branch }
+  /// The synced client reads aggregates from the rows the server streams;
+  /// a mutator's query the server hasn't answered computes them.
+  let aggregatesFromSource: Bool
+  init(_ branch: IVMBranch, aggregatesFromSource: Bool = true) {
+    self.branch = branch
+    self.aggregatesFromSource = aggregatesFromSource
+  }
   func getSource(_ tableName: String) -> (any Source)? { branch.source(tableName) }
+  func getAggregateSource(
+    _ name: String, columns: [(String, ColumnSchema)], primaryKey: [String],
+    optimistic: OptimisticAggregate?
+  ) -> (any Source)? {
+    branch.aggregateSource(name, columns: columns, primaryKey: primaryKey, optimistic: optimistic)
+  }
+  func aggregateKeyColumns(_ table: String, _ columns: [String]) -> [String] {
+    branch.serverColumnNames(table, columns)
+  }
 }
 
 /// Materializes queries over an IVM branch, registers named ones with the
@@ -49,10 +64,11 @@ final class QueryContext {
     batchViewUpdates: @escaping (() -> Void) -> Void,
     microtask: @escaping (@escaping () -> Void) -> Void,
     log: Log? = nil,
-    closedReason: @escaping () -> ConnectionError? = { nil }
+    closedReason: @escaping () -> ConnectionError? = { nil },
+    aggregatesFromSource: Bool = true
   ) {
     self.branch = branch
-    self.delegate = BranchDelegate(branch)
+    self.delegate = BranchDelegate(branch, aggregatesFromSource: aggregatesFromSource)
     self.addCustomQuery = addCustomQuery
     self.updateCustomQuery = updateCustomQuery
     self.batchViewUpdatesImpl = batchViewUpdates
@@ -88,11 +104,12 @@ final class QueryContext {
   }
 
   /// A context for the queries a mutator runs: nothing is registered with
-  /// the server, and the branch is already populated.
-  static func local(_ branch: IVMBranch) -> QueryContext {
+  /// the server, and the branch is already populated. `aggregatesFromSource`
+  /// reads aggregates from the synced rows rather than computing them.
+  static func local(_ branch: IVMBranch, aggregatesFromSource: Bool) -> QueryContext {
     let context = QueryContext(
       branch: branch, addCustomQuery: { _, _, _, _ in {} }, updateCustomQuery: { _, _ in },
-      batchViewUpdates: { $0() }, microtask: { $0() })
+      batchViewUpdates: { $0() }, microtask: { $0() }, aggregatesFromSource: aggregatesFromSource)
     context.markPipelinesReady()
     return context
   }

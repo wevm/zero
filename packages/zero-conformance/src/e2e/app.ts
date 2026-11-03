@@ -30,6 +30,27 @@ export const queries = defineQueries({
       zql.issue.where('id', args).related('comments').one(),
     ),
   },
+  // Aggregates the server computes. The tests create issues but no
+  // comments, so the comment counts stay the fixture's; the `titled` ones
+  // see only the issues a test creates with its own title.
+  aggregates: {
+    commentCount: defineQuery(() => zql.comment.count()),
+    commentCounts: defineQuery(() =>
+      zql.issue
+        .where('id', 'IN', ['i1', 'i2', 'i3', 'i4'])
+        .related('comments', q => q.count())
+        .orderBy('id', 'asc'),
+    ),
+    commentsByAuthor: defineQuery(() =>
+      zql.comment.groupBy('authorId').count(),
+    ),
+    titled: defineQuery(({args}: {args: string}) =>
+      zql.issue.where('title', args).count(),
+    ),
+    titledOwners: defineQuery(({args}: {args: string}) =>
+      zql.issue.where('title', args).groupBy('ownerId').count(),
+    ),
+  },
 });
 
 type CreateIssue = {id: string; title: string; ownerId?: string | undefined};

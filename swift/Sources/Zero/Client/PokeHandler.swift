@@ -283,6 +283,7 @@ final class PokeHandler {
   }
 
   private func rowPatchOp(_ op: RowPatchOp) throws -> KVPatchOp? {
+    if let aggregate = try Self.aggregateRowPatchOp(op) { return aggregate }
     switch op {
     case .clear:
       return .clear
@@ -301,6 +302,24 @@ final class PokeHandler {
       return .update(
         key: try key(table, try serverToClient.row(serverTable, id)), merge: mergeRow,
         constrain: try constrain.map { try serverToClient.columns(serverTable, $0) })
+    }
+  }
+
+  /// `aggregateRowsPatchOp`: a synced aggregate row goes to its synthetic
+  /// table's `a/` key. Such tables aren't in the schema, and their columns
+  /// have no client names, so the row is kept as sent. Nil for another op.
+  private static func aggregateRowPatchOp(_ op: RowPatchOp) throws -> KVPatchOp? {
+    switch op {
+    case .put(let table, let value) where isAggregateTableName(table):
+      return .put(key: try Keys.aggregateRowKey(table: table, row: value), value: .object(value))
+    case .del(let table, let id) where isAggregateTableName(table):
+      return .del(key: try Keys.aggregateRowKey(table: table, row: id))
+    case .update(let table, let id, let merge, let constrain) where isAggregateTableName(table):
+      return .update(
+        key: try Keys.aggregateRowKey(table: table, row: id),
+        merge: merge.map { $0.objectValue ?? [:] }, constrain: constrain)
+    default:
+      return nil
     }
   }
 

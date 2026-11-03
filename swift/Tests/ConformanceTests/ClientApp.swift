@@ -31,6 +31,88 @@ enum ClientApp {
         .orderBy("id", .asc)
     },
     "users.all": { _ in zql("user").orderBy("id", .asc) },
+    "aggregates.issueCount": { _ in zql("issue").count() },
+    "aggregates.openIssueCount": { _ in zql("issue").where("closed", false).count() },
+    "aggregates.commentCounts": { _ in
+      zql("issue").related("comments") { $0.count() }.orderBy("id", .asc)
+    },
+    "aggregates.commentTimes": { _ in
+      zql("issue")
+        .related("comments") { $0.where("authorId", .ne, "u9").avg("createdAt") }
+        .orderBy("id", .asc)
+    },
+    "aggregates.labelCounts": { _ in
+      zql("issue").related("labels") { $0.count() }.orderBy("id", .asc)
+    },
+    "aggregates.owners": { _ in zql("issue").distinct("ownerId") },
+    "aggregates.commentsByIssue": { _ in zql("comment").groupBy("issueId").count() },
+    "aggregates.timeByAuthor": { _ in zql("comment").groupBy("authorId").sum("createdAt") },
+    // From zero-client's aggregate-read-your-writes, group-read-your-writes,
+    // context, crud-impl and custom tests.
+    "aggregates.issueWithCommentCount": { args in
+      zql("issue").where("id", args ?? .null).related("comments") { $0.count() }.one()
+    },
+    "aggregates.openByState": { _ in
+      zql("issue").where("closed", false).groupBy("closed").count()
+    },
+    "aggregates.issueStates": { _ in zql("issue").distinct("closed") },
+    "aggregates.issueStateCount": { _ in zql("issue").distinct("closed").count() },
+    "aggregates.countByState": { _ in zql("issue").groupBy("closed").count() },
+    "aggregates.timeByState": { _ in zql("issue").groupBy("closed").sum("createdAt") },
+    "aggregates.avgTimeByState": { _ in zql("issue").groupBy("closed").avg("createdAt") },
+    "aggregates.issuesByOwner": { _ in
+      zql("issue").groupBy("closed", "ownerId").count().orderBy("ownerId", .desc)
+    },
+    "aggregates.latestIssueTime": { _ in zql("issue").max("createdAt") },
+    "aggregates.commentAndLabelCounts": { _ in
+      zql("issue")
+        .related("comments") { $0.count() }
+        .related("labels") { $0.count() }
+        .orderBy("id", .asc)
+    },
+    "aggregates.commentTimeSums": { _ in
+      zql("issue").related("comments") { $0.sum("createdAt") }.orderBy("id", .asc)
+    },
+    "aggregates.userIssueCounts": { _ in
+      zql("user").related("issues") { $0.count() }.orderBy("id", .asc)
+    },
+    "aggregates.pointsByName": { _ in
+      zql("user").groupBy("name").sum(json: "metadata", "points")
+    },
+    "aggregates.avgPointsByName": { _ in
+      zql("user").groupBy("name").avg(json: "metadata", "points")
+    },
+    "aggregates.labelMax": { _ in
+      zql("issue").related("labels") { $0.max("name") }.orderBy("id", .asc)
+    },
+    "aggregates.bugLabelCounts": { _ in
+      zql("issue").related("labels") { $0.where("name", "bug").count() }.orderBy("id", .asc)
+    },
+    // More aggregates, for the aggregate bug hunt (`bughunt.test.ts`).
+    "bughunt.allComments": { _ in zql("comment").orderBy("id", .asc) },
+    "bughunt.allLabels": { _ in zql("label").orderBy("id", .asc) },
+    "bughunt.maxCommentText": { _ in zql("comment").max("text") },
+    "bughunt.minIssueTitle": { _ in zql("issue").min("title") },
+    "bughunt.pointsSum": { _ in zql("user").sum(json: "metadata", "points") },
+    "bughunt.ownerIssueCounts": { _ in
+      zql("issue").related("owner") { $0.related("issues") { $0.count() } }.orderBy("id", .asc)
+    },
+    "bughunt.commentAvgWhere": { _ in
+      zql("issue")
+        .related("comments") { $0.where("createdAt", .gt, 3).avg("createdAt") }
+        .orderBy("id", .asc)
+    },
+    "bughunt.commentsByAuthorAndIssue": { _ in
+      zql("comment").groupBy("authorId", "issueId").count()
+    },
+    "bughunt.avgTimeByIssueWhere": { _ in
+      zql("comment").where("authorId", .ne, "u3").groupBy("issueId").avg("createdAt")
+    },
+    "bughunt.commentCountsLimited": { _ in
+      zql("issue").related("comments") { $0.count() }.orderBy("createdAt", .desc).limit(3)
+    },
+    "bughunt.ownerCount": { _ in zql("issue").distinct("ownerId").count() },
+    "bughunt.sumTimeByOwner": { _ in zql("issue").groupBy("ownerId").sum("createdAt") },
     "issueLabels.all": { _ in
       zql("issueLabel").orderBy("issueId", .asc).orderBy("labelId", .asc)
     },
@@ -40,6 +122,28 @@ enum ClientApp {
   static func request(_ name: String, _ args: JSONValue?) throws -> AnyQuery {
     guard let build = queries[name] else { throw Failure("Unknown name \(name)") }
     return build(args).nameAndArgs(name, args.map { [$0] } ?? [])
+  }
+
+  /// Runs the CRUD operations `ops` through `tx`.
+  @MainActor static func runOps(_ tx: Transaction, _ ops: JSONValue?) throws {
+    for o in ops?.arrayValue ?? [] {
+      let table = tx.mutate.table(o["table"]?.stringValue ?? "")
+      let value = Row(o["value"]?.objectValue ?? [:])
+      switch o["op"]?.stringValue {
+      case "insert": try table.insert(value)
+      case "upsert": try table.upsert(value)
+      case "update": try table.update(value)
+      case "delete": try table.delete(value)
+      default: throw Failure("Unknown op")
+      }
+    }
+  }
+
+  /// What each named query in `refs` reads through `tx`.
+  @MainActor static func readAll(_ tx: Transaction, _ refs: JSONValue?) throws -> [JSONValue] {
+    try (refs?.arrayValue ?? []).map {
+      try tx.run(request($0["name"]?.stringValue ?? "", $0["args"])).json ?? .null
+    }
   }
 
   struct Failure: Error, CustomStringConvertible {
@@ -153,6 +257,27 @@ enum ClientApp {
         return ["mutationID": .number(Double(tx.mutationID)), "read": .object(out)]
       }
       return args?["return"]
+    },
+    // Runs CRUD operations, then each named query through the transaction,
+    // and returns what they read (`aggregates.read` in app.ts).
+    JSONMutator(name: "aggregates.read") { tx, args in
+      try runOps(tx, args?["ops"])
+      return .array(try readAll(tx, args?["queries"]))
+    },
+    // Reads the queries, runs the operations, reads them again, and returns
+    // both reads; with `record`, also upserts that user with the reason of
+    // the run and the reads (`aggregates.record` in app.ts).
+    JSONMutator(name: "aggregates.record") { tx, args in
+      let before = try readAll(tx, args?["queries"])
+      try runOps(tx, args?["ops"])
+      let after = try readAll(tx, args?["queries"])
+      let reads: JSONValue = ["before": .array(before), "after": .array(after)]
+      if let id = args?["record"]?.stringValue {
+        try tx.mutate.table("user").upsert([
+          "id": .string(id), "name": .string(tx.reason.rawValue), "metadata": reads,
+        ])
+      }
+      return reads
     },
     JSONMutator(name: "comment.add") { tx, args in
       var row: Row = [

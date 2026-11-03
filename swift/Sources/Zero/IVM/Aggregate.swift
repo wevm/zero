@@ -14,6 +14,8 @@ package enum AggregateColumns {
 
   /// The payload columns, which aren't part of a row's key.
   package static let payload: Set<String> = [value, sum, count, rows]
+  /// The payload columns in JS's order.
+  package static let payloadOrder = [value, sum, count, rows]
 
   /// `isSyntheticColumn`.
   package static func isSynthetic(_ column: String) -> Bool {

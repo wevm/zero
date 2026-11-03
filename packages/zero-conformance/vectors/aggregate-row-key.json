@@ -1,0 +1,1796 @@
+{
+  "formatVersion": 1,
+  "kind": "aggregate-row-key",
+  "description": "aggregateRowKeyColumns(table, row) and aggregateRowKey(table, row): the `a/` storage key of a synced aggregate row; `throws` when a key value is invalid.",
+  "cases": [
+    {
+      "table": "aggregate:q1",
+      "row": {
+        "_0_key": true,
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1/true"
+    },
+    {
+      "table": "aggregate:q2:labels",
+      "row": {
+        "b": "😀",
+        "a": " ",
+        "_0_key": "ı",
+        "_0_version": "02",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key",
+        "a",
+        "b"
+      ],
+      "key": "a/q2:labels/156631047782885871426998179746928191943"
+    },
+    {
+      "table": "aggregate:q1",
+      "row": {
+        "_0_key": "abc",
+        "closed": "𝒜",
+        "_0_version": "01",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1/abc"
+    },
+    {
+      "table": "aggregate:q1:comments",
+      "row": {
+        "issueId": "中文",
+        "_0_key": "😀",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key",
+        "issueId"
+      ],
+      "key": "a/q1:comments/101718917366446299477895636544490698238"
+    },
+    {
+      "table": "aggregate:#",
+      "row": {
+        "_0_key": "Ω",
+        "closed": "𝒜",
+        "_0_version": "01",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/#/Ω"
+    },
+    {
+      "table": "aggregate:q1:comments",
+      "row": {
+        "b": "\u001f",
+        "a": "A",
+        "_0_version": "02",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "a",
+        "b"
+      ],
+      "key": "a/q1:comments/253494598612829295466353012358671237038"
+    },
+    {
+      "table": "aggregate:q1:#group",
+      "row": {
+        "_0_key": " ",
+        "_0_value": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1:#group/ "
+    },
+    {
+      "table": "aggregate:q2:labels",
+      "row": {
+        "issueId": "\\",
+        "_0_key": "z",
+        "_0_version": "02",
+        "_0_value": 3
+      },
+      "columns": [
+        "_0_key",
+        "issueId"
+      ],
+      "key": "a/q2:labels/275359418673279422273815927308651637405"
+    },
+    {
+      "table": "aggregate:q1",
+      "row": {
+        "_0_key": "ω",
+        "closed": "ı",
+        "_0_value": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1/ω"
+    },
+    {
+      "table": "aggregate:q2:labels",
+      "row": {
+        "b": "ı",
+        "a": "\"",
+        "_0_key": "ω",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key",
+        "a",
+        "b"
+      ],
+      "key": "a/q2:labels/259082913063992690510303315935456243085"
+    },
+    {
+      "table": "aggregate:q1",
+      "row": {
+        "_0_key": "b",
+        "closed": 0,
+        "_0_value": 3
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1/b"
+    },
+    {
+      "table": "aggregate:q2:labels",
+      "row": {
+        "b": "𝒜",
+        "a": "a",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "a",
+        "b"
+      ],
+      "key": "a/q2:labels/107325452672446167370544837745691598846"
+    },
+    {
+      "table": "aggregate:q1:#group",
+      "row": {
+        "_0_key": "�",
+        "closed": "ß",
+        "_0_version": "01",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1:#group/�"
+    },
+    {
+      "table": "aggregate:q1:comments",
+      "row": {
+        "b": "中文",
+        "a": "\\",
+        "_0_version": "02",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "a",
+        "b"
+      ],
+      "key": "a/q1:comments/330497054020412877977965114737753886598"
+    },
+    {
+      "table": "aggregate:q1:#group",
+      "row": {
+        "_0_key": "9",
+        "_0_version": "01",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1:#group/9"
+    },
+    {
+      "table": "aggregate:q1:comments",
+      "row": {
+        "issueId": "é",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "issueId"
+      ],
+      "key": "a/q1:comments/é"
+    },
+    {
+      "table": "aggregate:#",
+      "row": {
+        "_0_key": 1.5,
+        "closed": "�",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/#/1.5"
+    },
+    {
+      "table": "aggregate:q2:labels",
+      "row": {
+        "issueId": "Ω",
+        "_0_value": null
+      },
+      "columns": [
+        "issueId"
+      ],
+      "key": "a/q2:labels/Ω"
+    },
+    {
+      "table": "aggregate:#",
+      "row": {
+        "_0_key": "ab",
+        "closed": 0,
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/#/ab"
+    },
+    {
+      "table": "aggregate:q2:labels",
+      "row": {
+        "issueId": 1,
+        "_0_key": "b",
+        "_0_version": "02",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key",
+        "issueId"
+      ],
+      "key": "a/q2:labels/131287170940107068189833748638085139399"
+    },
+    {
+      "table": "aggregate:#",
+      "row": {
+        "_0_key": "é",
+        "closed": "�",
+        "_0_version": "01",
+        "_0_value": null
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/#/é"
+    },
+    {
+      "table": "aggregate:q2:labels",
+      "row": {
+        "issueId": "Ω",
+        "_0_key": "￿",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key",
+        "issueId"
+      ],
+      "key": "a/q2:labels/241057040618309218168109349550314558222"
+    },
+    {
+      "table": "aggregate:#",
+      "row": {
+        "_0_key": "😀a",
+        "_0_version": "01",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/#/😀a"
+    },
+    {
+      "table": "aggregate:q1:comments",
+      "row": {
+        "issueId": "ß",
+        "_0_key": " ",
+        "_0_version": "02",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key",
+        "issueId"
+      ],
+      "key": "a/q1:comments/311087864027331280325584174532034131791"
+    },
+    {
+      "table": "aggregate:#",
+      "row": {
+        "_0_key": "ﬀ",
+        "_0_version": "01",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/#/ﬀ"
+    },
+    {
+      "table": "aggregate:q1:comments",
+      "row": {
+        "b": "ω",
+        "a": "\n",
+        "_0_key": "é",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key",
+        "a",
+        "b"
+      ],
+      "key": "a/q1:comments/170852574939168841201845766629266513274"
+    },
+    {
+      "table": "aggregate:q1",
+      "row": {
+        "_0_key": "é",
+        "closed": 0,
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1/é"
+    },
+    {
+      "table": "aggregate:q2:labels",
+      "row": {
+        "issueId": " ",
+        "_0_key": "\\",
+        "_0_version": "02",
+        "_0_value": 3
+      },
+      "columns": [
+        "_0_key",
+        "issueId"
+      ],
+      "key": "a/q2:labels/217952664778456665839337002188719679975"
+    },
+    {
+      "table": "aggregate:#",
+      "row": {
+        "_0_key": "\u0000",
+        "_0_value": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/#/\u0000"
+    },
+    {
+      "table": "aggregate:q2:labels",
+      "row": {
+        "issueId": "�",
+        "_0_key": "ß",
+        "_0_version": "02",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key",
+        "issueId"
+      ],
+      "key": "a/q2:labels/211464393569957171780078204392551827881"
+    },
+    {
+      "table": "aggregate:q1:#group",
+      "row": {
+        "_0_key": "￿",
+        "closed": "😀",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1:#group/￿"
+    },
+    {
+      "table": "aggregate:q1:comments",
+      "row": {
+        "issueId": "😀",
+        "_0_version": "02",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "issueId"
+      ],
+      "key": "a/q1:comments/😀"
+    },
+    {
+      "table": "aggregate:#",
+      "row": {
+        "_0_key": "a😀",
+        "closed": 0,
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/#/a😀"
+    },
+    {
+      "table": "aggregate:q2:labels",
+      "row": {
+        "b": "0",
+        "a": "A",
+        "_0_key": "b",
+        "_0_version": "02",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key",
+        "a",
+        "b"
+      ],
+      "key": "a/q2:labels/297949515111589737440908332210213489346"
+    },
+    {
+      "table": "aggregate:q1",
+      "row": {
+        "_0_key": "Z",
+        "closed": 1.5,
+        "_0_version": "01",
+        "_0_value": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1/Z"
+    },
+    {
+      "table": "aggregate:q2:labels",
+      "row": {
+        "b": "0",
+        "a": 0,
+        "_0_key": "😀a",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key",
+        "a",
+        "b"
+      ],
+      "key": "a/q2:labels/193428358300156941902051175876813588225"
+    },
+    {
+      "table": "aggregate:#",
+      "row": {
+        "_0_key": true,
+        "_0_version": "01",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/#/true"
+    },
+    {
+      "table": "aggregate:q1:comments",
+      "row": {
+        "b": false,
+        "a": "�",
+        "_0_key": "z",
+        "_0_value": null
+      },
+      "columns": [
+        "_0_key",
+        "a",
+        "b"
+      ],
+      "key": "a/q1:comments/74336746898964573246397375360765557933"
+    },
+    {
+      "table": "aggregate:q1",
+      "row": {
+        "_0_key": "Ω",
+        "closed": "\u001f",
+        "_0_value": null
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1/Ω"
+    },
+    {
+      "table": "aggregate:q2:labels",
+      "row": {
+        "issueId": "a",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "issueId"
+      ],
+      "key": "a/q2:labels/a"
+    },
+    {
+      "table": "aggregate:q1",
+      "row": {
+        "_0_key": false,
+        "closed": true,
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1/false"
+    },
+    {
+      "table": "aggregate:q1:comments",
+      "row": {
+        "b": "ﬀ",
+        "a": "\u001f",
+        "_0_key": true,
+        "_0_value": 3
+      },
+      "columns": [
+        "_0_key",
+        "a",
+        "b"
+      ],
+      "key": "a/q1:comments/12342883190522700845073940521368606531"
+    },
+    {
+      "table": "aggregate:#",
+      "row": {
+        "_0_key": "\"",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/#/\""
+    },
+    {
+      "table": "aggregate:q1:comments",
+      "row": {
+        "issueId": "ﬀ",
+        "_0_version": "02",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "issueId"
+      ],
+      "key": "a/q1:comments/ﬀ"
+    },
+    {
+      "table": "aggregate:q1",
+      "row": {
+        "_0_key": "ı",
+        "closed": "\"",
+        "_0_value": 3
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1/ı"
+    },
+    {
+      "table": "aggregate:q1:comments",
+      "row": {
+        "b": "a",
+        "a": "�",
+        "_0_version": "02",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "a",
+        "b"
+      ],
+      "key": "a/q1:comments/187447120347154819913647007327752975575"
+    },
+    {
+      "table": "aggregate:#",
+      "row": {
+        "_0_key": "b",
+        "_0_version": "01",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/#/b"
+    },
+    {
+      "table": "aggregate:q1:comments",
+      "row": {
+        "issueId": false,
+        "_0_key": "𝒜",
+        "_0_version": "02",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key",
+        "issueId"
+      ],
+      "key": "a/q1:comments/40975003784943063047585115121857130899"
+    },
+    {
+      "table": "aggregate:#",
+      "row": {
+        "_0_key": "\u001f",
+        "closed": 1,
+        "_0_version": "01",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/#/\u001f"
+    },
+    {
+      "table": "aggregate:q1:comments",
+      "row": {
+        "issueId": 9007199254740992,
+        "_0_key": "a",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key",
+        "issueId"
+      ],
+      "key": "a/q1:comments/192798114354683292779073701397039243429"
+    },
+    {
+      "table": "aggregate:q1",
+      "row": {
+        "_0_key": 1.5,
+        "closed": "😀",
+        "_0_version": "01",
+        "_0_value": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1/1.5"
+    },
+    {
+      "table": "aggregate:q2:labels",
+      "row": {
+        "b": "Z",
+        "a": "😀",
+        "_0_version": "02",
+        "_0_value": null
+      },
+      "columns": [
+        "a",
+        "b"
+      ],
+      "key": "a/q2:labels/162326200827063407909572723087875217268"
+    },
+    {
+      "table": "aggregate:q1",
+      "row": {
+        "_0_key": "Ω",
+        "_0_value": null
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1/Ω"
+    },
+    {
+      "table": "aggregate:q2:labels",
+      "row": {
+        "b": "z",
+        "a": "A",
+        "_0_key": true,
+        "_0_version": "02",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key",
+        "a",
+        "b"
+      ],
+      "key": "a/q2:labels/139171651594264903868812938453589582903"
+    },
+    {
+      "table": "aggregate:q1",
+      "row": {
+        "_0_key": "\u001f",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1/\u001f"
+    },
+    {
+      "table": "aggregate:q2:labels",
+      "row": {
+        "issueId": "􏿿",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "issueId"
+      ],
+      "key": "a/q2:labels/􏿿"
+    },
+    {
+      "table": "aggregate:q1",
+      "row": {
+        "_0_key": "ab",
+        "_0_version": "01",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1/ab"
+    },
+    {
+      "table": "aggregate:q2:labels",
+      "row": {
+        "b": "a😀",
+        "a": "￿",
+        "_0_key": 0,
+        "_0_version": "02",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key",
+        "a",
+        "b"
+      ],
+      "key": "a/q2:labels/50876109455147000903841395024858976167"
+    },
+    {
+      "table": "aggregate:q1",
+      "row": {
+        "_0_key": "é",
+        "_0_value": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1/é"
+    },
+    {
+      "table": "aggregate:q1:comments",
+      "row": {
+        "issueId": "b",
+        "_0_key": "Ω",
+        "_0_version": "02",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key",
+        "issueId"
+      ],
+      "key": "a/q1:comments/149324162463867099562130838562677612239"
+    },
+    {
+      "table": "aggregate:q1",
+      "row": {
+        "_0_key": "ω",
+        "closed": "",
+        "_0_version": "01",
+        "_0_value": 3
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1/ω"
+    },
+    {
+      "table": "aggregate:q2:labels",
+      "row": {
+        "issueId": "é",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "issueId"
+      ],
+      "key": "a/q2:labels/é"
+    },
+    {
+      "table": "aggregate:q1",
+      "row": {
+        "_0_key": "😀",
+        "closed": "ı",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1/😀"
+    },
+    {
+      "table": "aggregate:q2:labels",
+      "row": {
+        "issueId": "z",
+        "_0_key": "􏿿",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key",
+        "issueId"
+      ],
+      "key": "a/q2:labels/93491842394695852304698550219164132360"
+    },
+    {
+      "table": "aggregate:q1:#group",
+      "row": {
+        "_0_key": "é",
+        "closed": "9",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1:#group/é"
+    },
+    {
+      "table": "aggregate:q2:labels",
+      "row": {
+        "b": "ﬀ",
+        "a": "Ω",
+        "_0_value": 0
+      },
+      "columns": [
+        "a",
+        "b"
+      ],
+      "key": "a/q2:labels/36520884848527769869584295979815071932"
+    },
+    {
+      "table": "aggregate:#",
+      "row": {
+        "_0_key": "Ω",
+        "closed": "z",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/#/Ω"
+    },
+    {
+      "table": "aggregate:q2:labels",
+      "row": {
+        "b": "",
+        "a": "é",
+        "_0_key": "\u001f",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key",
+        "a",
+        "b"
+      ],
+      "key": "a/q2:labels/24800932752331141705543058892556376152"
+    },
+    {
+      "table": "aggregate:#",
+      "row": {
+        "_0_key": "abc",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/#/abc"
+    },
+    {
+      "table": "aggregate:q2:labels",
+      "row": {
+        "b": "😀a",
+        "a": "ω",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "a",
+        "b"
+      ],
+      "key": "a/q2:labels/84759063139452653896005669827304217644"
+    },
+    {
+      "table": "aggregate:q1:#group",
+      "row": {
+        "_0_key": "9",
+        "closed": 0,
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1:#group/9"
+    },
+    {
+      "table": "aggregate:q1:comments",
+      "row": {
+        "b": "\u0000",
+        "a": "a",
+        "_0_key": "9",
+        "_0_version": "02",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key",
+        "a",
+        "b"
+      ],
+      "key": "a/q1:comments/62550142395451932666061351421927599877"
+    },
+    {
+      "table": "aggregate:q1",
+      "row": {
+        "_0_key": "A",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1/A"
+    },
+    {
+      "table": "aggregate:q1:comments",
+      "row": {
+        "issueId": "ß",
+        "_0_version": "02",
+        "_0_value": 3
+      },
+      "columns": [
+        "issueId"
+      ],
+      "key": "a/q1:comments/ß"
+    },
+    {
+      "table": "aggregate:#",
+      "row": {
+        "_0_key": 0,
+        "closed": "Z",
+        "_0_version": "01",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/#/0"
+    },
+    {
+      "table": "aggregate:q1:comments",
+      "row": {
+        "issueId": "😀",
+        "_0_version": "02",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "issueId"
+      ],
+      "key": "a/q1:comments/😀"
+    },
+    {
+      "table": "aggregate:q1:#group",
+      "row": {
+        "_0_key": "z",
+        "closed": "\u0000",
+        "_0_version": "01",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1:#group/z"
+    },
+    {
+      "table": "aggregate:q1:comments",
+      "row": {
+        "issueId": "􏿿",
+        "_0_key": "",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key",
+        "issueId"
+      ],
+      "key": "a/q1:comments/117548740108254688086540036149019764094"
+    },
+    {
+      "table": "aggregate:q1",
+      "row": {
+        "_0_key": 1,
+        "closed": 9007199254740992,
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1/1"
+    },
+    {
+      "table": "aggregate:q2:labels",
+      "row": {
+        "b": "é",
+        "a": "Z",
+        "_0_value": 0
+      },
+      "columns": [
+        "a",
+        "b"
+      ],
+      "key": "a/q2:labels/325466968069441688793335171179812968308"
+    },
+    {
+      "table": "aggregate:q1:#group",
+      "row": {
+        "_0_key": "é",
+        "closed": "𝒜",
+        "_0_version": "01",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1:#group/é"
+    },
+    {
+      "table": "aggregate:q1:comments",
+      "row": {
+        "issueId": "abc",
+        "_0_key": "😀a",
+        "_0_version": "02",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key",
+        "issueId"
+      ],
+      "key": "a/q1:comments/245677117039437240313871861748431845039"
+    },
+    {
+      "table": "aggregate:#",
+      "row": {
+        "_0_key": "😀",
+        "closed": "z",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/#/😀"
+    },
+    {
+      "table": "aggregate:q1:comments",
+      "row": {
+        "issueId": "😀a",
+        "_0_key": " ",
+        "_0_version": "02",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key",
+        "issueId"
+      ],
+      "key": "a/q1:comments/327083438832788622566427568356887504744"
+    },
+    {
+      "table": "aggregate:#",
+      "row": {
+        "_0_key": "ß",
+        "_0_version": "01",
+        "_0_value": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/#/ß"
+    },
+    {
+      "table": "aggregate:q2:labels",
+      "row": {
+        "issueId": "İ",
+        "_0_key": "0",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key",
+        "issueId"
+      ],
+      "key": "a/q2:labels/223171369741914826854501957862931939589"
+    },
+    {
+      "table": "aggregate:q1",
+      "row": {
+        "_0_key": "9",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1/9"
+    },
+    {
+      "table": "aggregate:q1:comments",
+      "row": {
+        "issueId": "9",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "issueId"
+      ],
+      "key": "a/q1:comments/9"
+    },
+    {
+      "table": "aggregate:#",
+      "row": {
+        "_0_key": "中文",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/#/中文"
+    },
+    {
+      "table": "aggregate:q2:labels",
+      "row": {
+        "b": "􏿿",
+        "a": "\n",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "a",
+        "b"
+      ],
+      "key": "a/q2:labels/287413044363108328751638218724697824358"
+    },
+    {
+      "table": "aggregate:q1:#group",
+      "row": {
+        "_0_key": "abc",
+        "closed": "z",
+        "_0_value": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1:#group/abc"
+    },
+    {
+      "table": "aggregate:q1:comments",
+      "row": {
+        "issueId": 1,
+        "_0_version": "02",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "issueId"
+      ],
+      "key": "a/q1:comments/1"
+    },
+    {
+      "table": "aggregate:q1",
+      "row": {
+        "_0_key": "Ω",
+        "closed": "𝒜",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1/Ω"
+    },
+    {
+      "table": "aggregate:q2:labels",
+      "row": {
+        "issueId": "中文",
+        "_0_key": "",
+        "_0_value": null
+      },
+      "columns": [
+        "_0_key",
+        "issueId"
+      ],
+      "key": "a/q2:labels/208855635852580089004030315336708308440"
+    },
+    {
+      "table": "aggregate:q1",
+      "row": {
+        "_0_key": "￿",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1/￿"
+    },
+    {
+      "table": "aggregate:q2:labels",
+      "row": {
+        "issueId": "\u001f",
+        "_0_key": "A",
+        "_0_version": "02",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key",
+        "issueId"
+      ],
+      "key": "a/q2:labels/253494598612829295466353012358671237038"
+    },
+    {
+      "table": "aggregate:#",
+      "row": {
+        "_0_key": "é",
+        "closed": " ",
+        "_0_version": "01",
+        "_0_value": null
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/#/é"
+    },
+    {
+      "table": "aggregate:q2:labels",
+      "row": {
+        "b": "�",
+        "a": " ",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "a",
+        "b"
+      ],
+      "key": "a/q2:labels/17327414818598726598999821881078743270"
+    },
+    {
+      "table": "aggregate:q1:#group",
+      "row": {
+        "_0_key": 0,
+        "closed": "0",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1:#group/0"
+    },
+    {
+      "table": "aggregate:q2:labels",
+      "row": {
+        "issueId": "ab",
+        "_0_key": "é",
+        "_0_version": "02",
+        "_0_value": 0
+      },
+      "columns": [
+        "_0_key",
+        "issueId"
+      ],
+      "key": "a/q2:labels/10452058293472187974925376530387777406"
+    },
+    {
+      "table": "aggregate:q1:#group",
+      "row": {
+        "_0_key": "a",
+        "_0_version": "01",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1:#group/a"
+    },
+    {
+      "table": "aggregate:q1:comments",
+      "row": {
+        "b": " ",
+        "a": 1,
+        "_0_key": "ω",
+        "_0_version": "02",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key",
+        "a",
+        "b"
+      ],
+      "key": "a/q1:comments/327840771041439189072094833307203068931"
+    },
+    {
+      "table": "aggregate:q1:#group",
+      "row": {
+        "_0_key": 9007199254740992,
+        "_0_version": "01",
+        "_0_value": null
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1:#group/9007199254740992"
+    },
+    {
+      "table": "aggregate:q1:comments",
+      "row": {
+        "b": 9007199254740992,
+        "a": "z",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "a",
+        "b"
+      ],
+      "key": "a/q1:comments/2500749764263746202473845560558549756"
+    },
+    {
+      "table": "aggregate:q1",
+      "row": {
+        "_0_key": "é",
+        "closed": 9007199254740992,
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1/é"
+    },
+    {
+      "table": "aggregate:q1:comments",
+      "row": {
+        "b": "\n",
+        "a": "�",
+        "_0_key": "0",
+        "_0_version": "02",
+        "_0_value": null
+      },
+      "columns": [
+        "_0_key",
+        "a",
+        "b"
+      ],
+      "key": "a/q1:comments/140044415761150807955647765974736326780"
+    },
+    {
+      "table": "aggregate:q1:#group",
+      "row": {
+        "_0_key": false,
+        "closed": "𝒜",
+        "_0_version": "01",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1:#group/false"
+    },
+    {
+      "table": "aggregate:q1:comments",
+      "row": {
+        "b": 9007199254740992,
+        "a": "ab",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "a",
+        "b"
+      ],
+      "key": "a/q1:comments/217781012334280161020417414279952942549"
+    },
+    {
+      "table": "aggregate:q1:#group",
+      "row": {
+        "_0_key": "ß",
+        "closed": 0,
+        "_0_version": "01",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1:#group/ß"
+    },
+    {
+      "table": "aggregate:q2:labels",
+      "row": {
+        "b": "é",
+        "a": "9",
+        "_0_version": "02",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "a",
+        "b"
+      ],
+      "key": "a/q2:labels/7065857705056541004346072310487412216"
+    },
+    {
+      "table": "aggregate:q1",
+      "row": {
+        "_0_key": "abc",
+        "_0_version": "01",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1/abc"
+    },
+    {
+      "table": "aggregate:q1:comments",
+      "row": {
+        "issueId": "😀a",
+        "_0_key": "😀",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key",
+        "issueId"
+      ],
+      "key": "a/q1:comments/138237440500213278766544576420175538153"
+    },
+    {
+      "table": "aggregate:#",
+      "row": {
+        "_0_key": "ı",
+        "closed": 0,
+        "_0_value": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/#/ı"
+    },
+    {
+      "table": "aggregate:q2:labels",
+      "row": {
+        "b": "é",
+        "a": "中文",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "a",
+        "b"
+      ],
+      "key": "a/q2:labels/46942451689340533355549146697318881875"
+    },
+    {
+      "table": "aggregate:q1:#group",
+      "row": {
+        "_0_key": "Ω",
+        "closed": "a",
+        "_0_version": "01",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1:#group/Ω"
+    },
+    {
+      "table": "aggregate:q2:labels",
+      "row": {
+        "b": "😀a",
+        "a": "z",
+        "_0_key": "0",
+        "_0_value": 1.5,
+        "_0_sum": 3,
+        "_0_count": 2,
+        "_0_rows": 2
+      },
+      "columns": [
+        "_0_key",
+        "a",
+        "b"
+      ],
+      "key": "a/q2:labels/281378494539073334830367030762091931482"
+    },
+    {
+      "table": "aggregate:q1:#group",
+      "row": {
+        "_0_key": "中文",
+        "closed": "",
+        "_0_version": "01",
+        "_0_value": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/q1:#group/中文"
+    },
+    {
+      "table": "aggregate:q1:comments",
+      "row": {
+        "issueId": "\"",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "issueId"
+      ],
+      "key": "a/q1:comments/\""
+    },
+    {
+      "table": "aggregate:#",
+      "row": {
+        "_0_key": "A",
+        "closed": "A",
+        "_0_version": "01",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "key": "a/#/A"
+    },
+    {
+      "table": "aggregate:q1:comments",
+      "row": {
+        "b": "9",
+        "a": "a",
+        "_0_key": "b",
+        "_0_value": null,
+        "_0_sum": 0,
+        "_0_count": 0
+      },
+      "columns": [
+        "_0_key",
+        "a",
+        "b"
+      ],
+      "key": "a/q1:comments/157500501030969852608456868797404635372"
+    },
+    {
+      "table": "aggregate:q1",
+      "row": {
+        "_0_key": null,
+        "_0_value": 1
+      },
+      "columns": [
+        "_0_key"
+      ],
+      "throws": true
+    },
+    {
+      "table": "aggregate:q1:comments",
+      "row": {
+        "issueId": null,
+        "_0_value": 1
+      },
+      "columns": [
+        "issueId"
+      ],
+      "throws": true
+    }
+  ]
+}
