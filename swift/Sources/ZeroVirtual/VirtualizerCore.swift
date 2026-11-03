@@ -422,8 +422,20 @@ package final class VirtualizerCore<
       // from the space as it was, not from an estimate: a list opened away
       // from its start keeps a reserve there, which isn't where the rows
       // are. (A jump or a restore numbers its rows anew, and owns the
-      // position until it lands.)
-      space += Double(rows.firstRowIndex - old.firstRowIndex) * rowEstimate
+      // position until it lands.) Paging forward, the rows passed are the
+      // last page's, laid out: the next page starts where they end, or
+      // the viewport between that and their estimate shows neither page,
+      // and paging flips between them.
+      let oldEnd = old.firstRowIndex + old.rowsLength
+      if rows.firstRowIndex >= oldEnd, let host,
+        let from = frame(host, key: AnyHashable(oldFirst)),
+        let last = old.rowAt(oldEnd - 1).map(options.rowKey),
+        let to = frame(host, key: AnyHashable(last))
+      {
+        space += to.maxY - from.minY + Double(rows.firstRowIndex - oldEnd) * rowEstimate
+      } else {
+        space += Double(rows.firstRowIndex - old.firstRowIndex) * rowEstimate
+      }
     } else {
       return
     }
@@ -1257,6 +1269,10 @@ package final class VirtualizerCore<
       let index = boundIndex(targetIndex, rows.firstRowIndex, rows.rowsLength)
       let row = rows.rowAt(index)
       switch direction {
+      case .forward where rows.atStart && index == rows.firstRowIndex && offset == 1:
+        // The page after the list's first row would drop it: page from the
+        // start instead.
+        setAnchor(.top)
       case .forward:
         setAnchor(.forward(index: index + offset, startRow: row.map(options.toStartRow)))
       case .backward:

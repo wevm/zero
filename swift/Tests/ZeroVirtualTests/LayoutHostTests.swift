@@ -450,6 +450,26 @@ final class LayoutScrollView {
     #expect(view.rowTop("r160") == top - 20 + 9 * 20)
   }
 
+  @Test("deleting the row a list shorter than a page opened at, the list settles on all its rows")
+  func shortPermalinkRowDeleted() {
+    let h = Harness(rowCount: 15, rowHeight: 30) {
+      $0.anchoring = .manual
+      $0.minPageSize = 40
+      $0.permalinkID = "r7"
+    }
+    let view = LayoutScrollView(h)
+    view.settle()
+    h.scheduler.advance(by: 3000)
+    view.settle()
+    view.userScroll(.infinity)
+    view.settle()
+    h.data.removeAll { $0.id == "r7" }
+    // Paging from the window's first row, r1, leaves r0 out, and paging back
+    // from its last row leaves r14 out: the window mustn't flip between them.
+    view.settle()
+    #expect(h.items.map(\.key) == h.data.map(\.id))
+  }
+
   @Test("stuck to the bottom of a list opened at its last row, a scroll up moves the rows by it")
   func scrollUpFromTheBottom() {
     let h = Harness(rowCount: 400, rowHeight: 80) {
@@ -600,6 +620,41 @@ final class LayoutScrollView {
     // its start.
     #expect(blank == 0, "windows: \(windows)")
     #expect(!windows.contains { $0.hasPrefix("r0…") }, "windows: \(windows)")
+  }
+
+  @Test("scrolled past the loaded rows of rows shorter than estimated, the next page is on screen")
+  func scrollDownPastShortRows() {
+    let h = Harness(rowCount: 300) {
+      $0.anchoring = .manual
+      $0.minPageSize = 40
+    }
+    let view = LayoutScrollView(h, viewportHeight: 225)
+    for r in h.data { view.heights[r.id] = 12 }
+    view.settle()
+    // A jump and back leaves space estimated after the rows.
+    h.core.scrollToItem("r65", align: .start)
+    view.settle()
+    h.scheduler.advance(by: 3000)
+    view.settle()
+    view.userScroll(0)
+    view.settle()
+    h.scheduler.advance(by: 3000)
+    view.settle()
+    #expect(h.items.first?.key == "r0")
+    view.userScroll(.infinity)
+    var windows: [String] = []
+    var blank = 0
+    for _ in 0..<20 {
+      view.pass()
+      view.frameDrawn()
+      let w = "\(h.items.first?.key ?? "-")…\(h.items.last?.key ?? "-")"
+      if windows.last != w { windows.append(w) }
+      if h.core.firstVisibleItem() == nil { blank += 1 }
+    }
+    // The page after the rows comes in where they end, not where their
+    // estimate does, below the viewport: the list doesn't page back to r0.
+    #expect(blank == 0, "windows: \(windows)")
+    #expect(!windows.dropFirst().contains { $0.hasPrefix("r0…") }, "windows: \(windows)")
   }
 
   @Test("only the rows near the viewport are measured")
