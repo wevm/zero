@@ -293,6 +293,11 @@ package final class VirtualizerCore<
   /// view holds off drawing the rows it opens with until it has.
   package var isLanding: Bool { target != nil && !placed }
   private var permalinkMissing = 0
+  // A jump that landed short, clamped at the end of the rows loaded so far:
+  // lined up again as rows load past them, until it lines up, the list's
+  // own end clamps it, or the user scrolls. Not a target: paging, which
+  // loads those rows, carries on.
+  private var realign: PendingScroll?
   // The row a loaded permalink window was opened at, or jumped to, was
   // deleted: the page to load in its place, from the rows on screen, which
   // stay drawn until it's in.
@@ -410,6 +415,15 @@ package final class VirtualizerCore<
       } else {
         space += Double(removed) * rowEstimate
       }
+    } else if !landing, !anchorSuppressed {
+      // A page that shares no row with the last one, as paging past its
+      // edge into space loads, numbered as the last one was: it goes
+      // where the space estimated its rows, a row's estimate each. Taken
+      // from the space as it was, not from an estimate: a list opened away
+      // from its start keeps a reserve there, which isn't where the rows
+      // are. (A jump or a restore numbers its rows anew, and owns the
+      // position until it lands.)
+      space += Double(rows.firstRowIndex - old.firstRowIndex) * rowEstimate
     } else {
       return
     }
@@ -593,6 +607,7 @@ package final class VirtualizerCore<
   // A probe is a query input; other targets aren't.
   private func setTarget(_ new: Target?) {
     if target?.isProbe == true || new?.isProbe == true { version += 1 }
+    if new != nil { realign = nil }
     target = new
     placed = false
   }
@@ -636,6 +651,7 @@ package final class VirtualizerCore<
     restoreOrReset()
     updatePageSize()
     land()
+    lineUpAgain()
     recoverFromMissingPermalink()
 
     liftAnchorSuppression()
@@ -857,7 +873,14 @@ package final class VirtualizerCore<
     }
     let delta = ref.minY - anchorOffset
     defer { reconciling = false }
-    if abs(delta) < 0.5 { return false }
+    if abs(delta) < 0.5 {
+      // In place: the reference is the row on screen now, as native
+      // anchoring picks it each layout. Picked only at a scroll, it can be a
+      // row the rows that loaded above it since have pushed down the screen,
+      // and a row above it changing height would move what's above it.
+      refreshAnchor()
+      return false
+    }
     // Taken up by the space before the rows, which moves them back, when
     // it can be: the scroll view isn't touched, so a fling carries on.
     let space = snapshot.spaceBefore - delta
@@ -939,6 +962,7 @@ package final class VirtualizerCore<
     let programmatic = programmaticScroll
     programmaticScroll = false
     if !programmatic, case .offset = target { target = nil }
+    if !programmatic { realign = nil }
     // Our own scrolls keep it as it was: compensation, or the re-pin.
     if !programmatic { measureStuck() }
     if manual && !programmatic { refreshAnchor() }
@@ -1162,8 +1186,32 @@ package final class VirtualizerCore<
     }
     placed = true
     if rowsSettled {
+      var short: PendingScroll?
+      if case .row(let p) = target, let host, let f = findTarget(host, p),
+        abs(alignDelta(host, f, p.align)) > 1
+      {
+        short = p
+      }
       setTarget(nil)
+      realign = short
       landed()
+    }
+  }
+
+  /// A jump that landed short scrolls on to its row as the rows loaded past
+  /// the ones it was clamped at make room.
+  private func lineUpAgain() {
+    guard let p = realign, target == nil, let host else { return }
+    guard isListContextCurrent, let f = findTarget(host, p) else {
+      realign = nil
+      return
+    }
+    let delta = alignDelta(host, f, p.align)
+    if abs(delta) > 1, setScrollOffset(host.scrollOffset + delta) { landed() }
+    // Clamped at the list's own end, or lined up: done.
+    let left = alignDelta(host, f, p.align)
+    if abs(left) <= 1 || (left > 0 && rows.atEnd) || (left < 0 && rows.atStart) {
+      realign = nil
     }
   }
 
