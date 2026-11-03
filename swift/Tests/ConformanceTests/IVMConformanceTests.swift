@@ -101,6 +101,17 @@ struct IVMConformanceTests {
       return q.start(op["row"]!.objectValue!, inclusive: op["inclusive"]?.boolValue ?? false)
     case "one":
       return q.one()
+    case "count":
+      return q.count()
+    case "sum", "avg", "min", "max":
+      let fn = AST.AggregateFunction(rawValue: op["op"]!.stringValue!)!
+      return q.aggregate(fn, field: op["field"]!.stringValue!, path: op["path"].flatMap(path))
+    case "distinct":
+      return q.distinct(op["columns"]!.arrayValue!.map { $0.stringValue! })
+    case "groupBy":
+      return q.groupBy(op["columns"]!.arrayValue!.map { $0.stringValue! }).reduce(
+        AST.AggregateFunction(rawValue: op["fn"]!.stringValue!)!, op["field"]?.stringValue,
+        op["path"].flatMap(path))
     case let other:
       fatalError("unknown op \(other)")
     }
@@ -142,6 +153,7 @@ struct IVMConformanceTests {
     switch v {
     case .object(let o):
       if let c = o["cmpJson"]?.arrayValue, path(c[1]) == nil { return true }
+      if let p = o["path"], p.arrayValue != nil, path(p) == nil { return true }
       return o.values.contains(where: hasUnwritablePath)
     case .array(let a): return a.contains(where: hasUnwritablePath)
     default: return false
@@ -182,10 +194,13 @@ struct IVMConformanceTests {
     do {
       let input = try buildPipeline(ast, delegate, queryID: "q")
       recorder = Recorder(input)
-      view = ArrayView(recorder, format: format, complete: true)
+      let viewInput = ast.groupBy != nil ? try groupViewInput(recorder, ast, delegate) : recorder
+      view = try PipelineFailure.capture {
+        ArrayView(viewInput, format: format, complete: true)
+      }
     } catch {
       if let expected = result["error"]?.stringValue {
-        return error.description == expected ? nil : "error \(error) != \(expected)"
+        return "\(error)" == expected ? nil : "error \(error) != \(expected)"
       }
       return "unexpected error \(error)"
     }
@@ -240,5 +255,9 @@ struct IVMConformanceTests {
 
   @Test(.enabled(if: Vectors.generatedAvailable)) func fuzz() throws {
     try Self.runAll(try Vectors.generatedFile("ivm-fuzz"))
+  }
+
+  @Test(.enabled(if: Vectors.generatedAvailable)) func featuresFuzz() throws {
+    try Self.runAll(try Vectors.generatedFile("ivm-features-fuzz"))
   }
 }

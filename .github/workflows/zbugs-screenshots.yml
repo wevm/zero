@@ -21,8 +21,8 @@ on:
       - 'swift/Sources/ZeroTesting/**'
       - 'swift/TestHost/**'
       - '.github/workflows/zbugs-screenshots.yml'
+  # Any base, so a PR stacked on another one gets checked too.
   pull_request:
-    branches: [main]
     paths:
       - 'apps/zbugs-swift/**'
       - 'swift/Sources/ZeroUI/**'

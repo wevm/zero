@@ -193,6 +193,12 @@ is written or sent.
   `tx.mutate.<table>` calls can't write one; a mutator can only write one
   through the untyped `tx.mutate.table(_:)`, and the server rejects such a
   mutation, so its row goes when the next poke comes.
+- **min and max of values JS can't compare.** `min` or `max` of a json
+  column without a path, over two or more objects or arrays, fails the
+  query as in JS, with JS's message ("Unsupported type: object"). One
+  difference: JS compares each row's value by reference first, so two
+  equal objects still fail there, while Swift compares by value and finds
+  them equal.
 - **Error messages.** Messages about data the client can't read follow
   valita's wording, as JS's do. A server frame that isn't JSON is the
   exception: JS shows the engine's `JSON.parse` message, and Swift its

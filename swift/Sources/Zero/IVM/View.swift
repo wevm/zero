@@ -40,6 +40,7 @@ public struct ViewEntry: Sendable {
       case .many(let entries): o[name] = .array(entries.map(\.json))
       case .one(let entry?): o[name] = entry.json
       case .one(nil): o[name] = nil
+      case .value(let v): o[name] = v
       }
     }
     return .object(o)
@@ -54,25 +55,44 @@ extension ViewEntry: Equatable {
   }
 }
 
-/// A relationship in a view: several rows, or at most one.
+/// A relationship in a view: several rows, at most one, or an aggregate's
+/// value.
 public enum ViewValue: Sendable, Equatable {
   case many([ViewEntry])
   case one(ViewEntry?)
+  /// The value of an aggregate (`count()`, `sum(...)`, …): a number, or
+  /// `null` for an empty `sum`, `avg`, `min` or `max`.
+  case value(JSONValue)
+
+  /// The value of an aggregate over no rows, as in SQL: `count` is 0, the
+  /// rest null (`emptyViewValue`).
+  package static func empty(_ format: Format) -> ViewValue {
+    if let aggregate = format.aggregate { return .value(emptyAggregateValue(aggregate)) }
+    return format.singular ? .one(nil) : .many([])
+  }
 
   /// The value as JS views present it; `nil` for a missing singular row.
   public var json: JSONValue? {
     switch self {
     case .many(let entries): .array(entries.map(\.json))
     case .one(let entry): entry?.json
+    case .value(let v): v
     }
   }
 
+  /// The rows; none for an aggregate's value.
   public var entries: [ViewEntry] {
     switch self {
     case .many(let e): e
     case .one(let e): e.map { [$0] } ?? []
+    case .value: []
     }
   }
+}
+
+/// `emptyAggregateValue`.
+func emptyAggregateValue(_ aggregate: AST.Aggregate) -> JSONValue {
+  aggregate.fn == .count ? 0 : .null
 }
 
 /// Applies changes to a view tree (`view-apply-change.ts`). Swift's value
@@ -112,6 +132,21 @@ enum ViewApply {
         }
         return apply(&parent, child.change, childSchema, relationship, format)
       }
+    }
+
+    // An aggregate relationship shows the bare value rather than its row:
+    // an add or edit sets it, a remove resets it to the empty value.
+    if let aggregate = format.aggregate {
+      switch change {
+      case .add(let node), .edit(let node, _):
+        parent.relationships[relationship] = .value(
+          node.row[AggregateColumns.value] ?? .null)
+      case .remove:
+        parent.relationships[relationship] = .value(emptyAggregateValue(aggregate))
+      case .child:
+        return false
+      }
+      return true
     }
 
     switch change {
@@ -315,7 +350,10 @@ enum ViewApply {
       }
       guard let childFormat = childFormats[name] else { continue }
       if childSchema.isHidden || childFormat.singular {
-        entry.relationships[name] = childFormat.singular ? .one(nil) : .many([])
+        // An aggregate starts at its empty value: a parent whose correlation
+        // value is null gets no row from the Join, but SQL still gives it 0
+        // or null.
+        entry.relationships[name] = .empty(childFormat)
         for child in stream() {
           apply(&entry, .add(child), childSchema, name, childFormat)
         }
@@ -400,7 +438,7 @@ package final class ArrayView: Output {
     self.input = input
     self.format = format
     root = ViewEntry(row: [:])
-    root.relationships[""] = format.singular ? .one(nil) : .many([])
+    root.relationships[""] = .empty(format)
     if complete {
       resultType = .complete
     } else if let error {

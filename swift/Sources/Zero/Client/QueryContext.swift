@@ -240,6 +240,7 @@ final class QueryContext {
       customQueryID.map { addCustomQuery(ast, $0, ttl, gotCallback) } ?? {}
 
     let input: any Input
+    let pipeline: any Input
     let deferred: DeferredInput?
     do {
       if deferPipeline {
@@ -251,11 +252,13 @@ final class QueryContext {
         let schema = probe.getSchema()
         probe.destroy()
         deferred = DeferredInput(schema: schema, build: build)
-        input = deferred!
+        pipeline = deferred!
       } else {
         deferred = nil
-        input = try buildPipeline(ast, delegate, queryID: queryID)
+        pipeline = try buildPipeline(ast, delegate, queryID: queryID)
       }
+      // A view of a grouped query shows only its columns and value.
+      input = ast.groupBy != nil ? try groupViewInput(pipeline, ast, delegate) : pipeline
     } catch {
       removeAddedQuery()
       throw error

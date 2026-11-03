@@ -1,9 +1,16 @@
 import type {JSONValue} from '../../../shared/src/json.ts';
-import type {AST, SimpleOperator} from '../../../zero-protocol/src/ast.ts';
+import type {
+  AggregateFunction,
+  AST,
+  SimpleOperator,
+} from '../../../zero-protocol/src/ast.ts';
 import type {Row} from '../../../zero-protocol/src/data.ts';
 import type {Format} from '../../../zero-types/src/format.ts';
 import type {Schema} from '../../../zero-types/src/schema.ts';
-import {buildPipeline} from '../../../zql/src/builder/builder.ts';
+import {
+  buildPipeline,
+  groupViewInput,
+} from '../../../zql/src/builder/builder.ts';
 import {TestBuilderDelegate} from '../../../zql/src/builder/test-builder-delegate.ts';
 import {ArrayView} from '../../../zql/src/ivm/array-view.ts';
 import type {Change} from '../../../zql/src/ivm/change.ts';
@@ -44,7 +51,24 @@ export type Op =
   | {op: 'orderBy'; field: string; dir: 'asc' | 'desc'}
   | {op: 'limit'; n: number}
   | {op: 'start'; row: Row; inclusive?: boolean | undefined}
-  | {op: 'one'};
+  | {op: 'one'}
+  | {op: 'count'}
+  | {op: 'sum' | 'avg' | 'min' | 'max'; field: string; path?: JSONPath}
+  | {op: 'distinct'; columns: string[]}
+  | {
+      op: 'groupBy';
+      columns: string[];
+      fn: AggregateFunction;
+      field?: string | undefined;
+      path?: JSONPath | undefined;
+    };
+
+type JSONPath = (string | number)[];
+
+/** An aggregate's argument: a column, or `json(field, ...path)`. */
+function selector(field: string | undefined, path: JSONPath | undefined) {
+  return path === undefined ? field : ({json}: AnyEB) => json(field, ...path);
+}
 
 export type Expr =
   | {cmp: [field: string, op: SimpleOperator, value: JSONValue]}
@@ -128,6 +152,21 @@ function applyOp(q: AnyQuery, op: Op): AnyQuery {
         : query.start(op.row, {inclusive: op.inclusive});
     case 'one':
       return query.one();
+    case 'count':
+      return query.count();
+    case 'sum':
+    case 'avg':
+    case 'min':
+    case 'max':
+      return query[op.op](selector(op.field, op.path));
+    case 'distinct':
+      return query.distinct(...op.columns);
+    case 'groupBy': {
+      const grouped = query.groupBy(...op.columns);
+      return op.fn === 'count'
+        ? grouped.count()
+        : grouped[op.fn](selector(op.field, op.path));
+    }
   }
 }
 
@@ -307,8 +346,13 @@ export function runQuery(
   let view: ArrayView<never>;
   try {
     const input = buildPipeline(ast, delegate, 'q');
+    // Records the pipeline's own rows, as the server streams them; a view of
+    // a grouped query shows only their columns and value.
     recorder = new Recorder(input);
-    view = new ArrayView(recorder, format, true, () => {});
+    const viewInput = ast.groupBy
+      ? groupViewInput(recorder, ast, delegate)
+      : recorder;
+    view = new ArrayView(viewInput, format, true, () => {});
   } catch (e) {
     return {error: String(e instanceof Error ? e.message : e)};
   }
