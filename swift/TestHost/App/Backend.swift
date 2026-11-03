@@ -53,6 +53,14 @@ final class Backend {
     messageCount += 1
   }
 
+  private var removedIssues = 0
+
+  /// Another user deletes the first issue left.
+  func removeFirstIssue() {
+    server.delete("issues", ["id": .string(Self.issueID(removedIssues))])
+    removedIssues += 1
+  }
+
   /// The last message is edited to be much longer.
   func growLast() {
     server.put("comments", Self.message(messageCount - 1, words: 120))
