@@ -1,5 +1,25 @@
 # zero-swift
 
+## 0.6.0
+
+### Minor Changes
+
+- 680af92: The AST has the query features of sync protocols 54–57: `aggregate` on a query and on a relationship, `groupBy`, and JSON path references (`AST.ValuePosition.json`), with JS's wire checks, normalization, hashes and name mapping. `where` can compare a value inside a `json` column: `$0.json(\.metadata, "tags", 0) == "bug"` in the typed builder, `eb.cmp(eb.json("metadata", "tags", 0), "bug")` in the untyped one. As in JS, a value of another JSON type than the one compared with never equals it.
+
+  Breaking: `AST.ValuePosition` has a new case, `.json`; an exhaustive `switch` over it needs one too. Building a pipeline for an AST with an aggregate or a `groupBy` throws until the Swift client supports them.
+
+- c932969: Queries can compute aggregates, `distinct()` and `groupBy()` on the client, with the IVM operators of the JS client (`Aggregate`, `GroupBy`, `GroupProjection` and `LiftField`), kept up to date as rows change. The untyped builder has `count()`, `sum`, `avg`, `min` and `max` (of a column, or of a value at a JSON path: `sum(json: "metadata", "points")`), `distinct(...)`, and `groupBy(...)` followed by an aggregate, with the JS builder's checks. On a query the view holds the value; in `related(...)` the relationship does, for a junction relationship too. `min` or `max` of values JS can't compare, such as a json column without a path, fails the query with JS's error.
+
+  Breaking: `ViewValue` has a new case, `.value`, an aggregate's value; an exhaustive `switch` over it needs one too.
+
+- 8ff0456: The typed query builder has aggregates, `distinct()` and `groupBy()`. `zql.issue.count()` is a `Query<Issue, Int>`; `sum` and `avg` give a `Double?`, and `min` and `max` the column's type, optional; each also takes a JSON path (`sum(json: \.metadata, "points")`). `distinct(\.ownerId)` gives `DistinctRow`s and `groupBy(\.ownerId).count()` gives `GroupRow`s, read by key path (`row[\.ownerId]`, `row.value`). `run`, `liveQuery`, `@ZeroQuery` and `defineQuery` take these queries as they take queries of rows. In `related`, an aggregate goes in the row's new generated `aggregates` property: `issue.aggregates?.count(\.comments)`.
+
+  Breaking: `QueryResult` now refines the new `QueryValue` protocol, which `Query`, `LiveQuery`, `QueryDefinition`, `QueryRequest` and `ZeroQuery` take in its place, and `Query` no longer requires `Result.Row == Row`. `ZeroRow` refines `QueryElement` and `OptionalQueryElement`, and `ZeroValue` refines `OptionalQueryElement`. Regenerate row structs with `zero-swift codegen` to get `aggregates`; a table can no longer have a column or relationship property named `aggregates`, which codegen renames.
+
+### Patch Changes
+
+- 60b54c8: Aggregates, `distinct()` and `groupBy()` sync from zero-cache: a named query's view reads the rows the server computes, stored under `a/`, instead of dropping them from pokes. Until the server answers, a view computes nothing and shows the empty value (`0` for a count). A local mutation moves a synced relationship aggregate or grouped count at once, as the JS client's optimistic deltas do, and the server's rows replace them when it confirms. A mutator's `tx.run` reads the synced rows for a query the server has answered, and computes them otherwise. A pending mutation's moves of synced aggregates are stored with it, as JS persists them about a second after a change, for the aggregates registered then, so a relaunched client shows the moves the JS client would.
+
 ## 0.5.7
 
 ### Patch Changes
