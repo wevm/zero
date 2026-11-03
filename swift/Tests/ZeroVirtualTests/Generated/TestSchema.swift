@@ -17,6 +17,8 @@ struct TestIssue: ZeroTable, Codable, Hashable, Identifiable {
   @Indirect var oneComment: TestComment?
   var ownerComments: [TestComment]?
   var labels: [TestLabel]?
+  // The aggregates a query asked for in `related`; nil when it asked for none.
+  var aggregates: RelationshipAggregates<TestIssue>?
 
   init(
     id: String,
@@ -29,7 +31,8 @@ struct TestIssue: ZeroTable, Codable, Hashable, Identifiable {
     comments: [TestComment]? = nil,
     oneComment: TestComment? = nil,
     ownerComments: [TestComment]? = nil,
-    labels: [TestLabel]? = nil
+    labels: [TestLabel]? = nil,
+    aggregates: RelationshipAggregates<TestIssue>? = nil
   ) {
     self.id = id
     self.title = title
@@ -42,6 +45,7 @@ struct TestIssue: ZeroTable, Codable, Hashable, Identifiable {
     self.oneComment = oneComment
     self.ownerComments = ownerComments
     self.labels = labels
+    self.aggregates = aggregates
   }
 
   static let tableName = "issue"
@@ -75,6 +79,7 @@ struct TestIssue: ZeroTable, Codable, Hashable, Identifiable {
     oneComment = try entry.relationship("oneComment")
     ownerComments = try entry.relationship("ownerComments")
     labels = try entry.relationship("labels")
+    aggregates = RelationshipAggregates(entry: entry)
   }
 
   var columnValues: Row {
@@ -150,17 +155,21 @@ struct TestUser: ZeroTable, Codable, Hashable, Identifiable {
 
   // Relationships, filled when a query asks for them with `related`.
   var issues: [TestIssue]?
+  // The aggregates a query asked for in `related`; nil when it asked for none.
+  var aggregates: RelationshipAggregates<TestUser>?
 
   init(
     id: String,
     name: String,
     metadata: TestUserMetadata? = nil,
-    issues: [TestIssue]? = nil
+    issues: [TestIssue]? = nil,
+    aggregates: RelationshipAggregates<TestUser>? = nil
   ) {
     self.id = id
     self.name = name
     self.metadata = metadata
     self.issues = issues
+    self.aggregates = aggregates
   }
 
   static let tableName = "user"
@@ -180,6 +189,7 @@ struct TestUser: ZeroTable, Codable, Hashable, Identifiable {
     name = try entry.column("name", 1)
     metadata = try entry.column("metadata", 2)
     issues = try entry.relationship("issues")
+    aggregates = RelationshipAggregates(entry: entry)
   }
 
   var columnValues: Row {
@@ -244,6 +254,8 @@ struct TestComment: ZeroTable, Codable, Hashable, Identifiable {
   @Indirect var issue: TestIssue?
   var revisions: [TestRevision]?
   @Indirect var author: TestUser?
+  // The aggregates a query asked for in `related`; nil when it asked for none.
+  var aggregates: RelationshipAggregates<TestComment>?
 
   init(
     id: String,
@@ -253,7 +265,8 @@ struct TestComment: ZeroTable, Codable, Hashable, Identifiable {
     createdAt: Double,
     issue: TestIssue? = nil,
     revisions: [TestRevision]? = nil,
-    author: TestUser? = nil
+    author: TestUser? = nil,
+    aggregates: RelationshipAggregates<TestComment>? = nil
   ) {
     self.id = id
     self.authorId = authorId
@@ -263,6 +276,7 @@ struct TestComment: ZeroTable, Codable, Hashable, Identifiable {
     self.issue = issue
     self.revisions = revisions
     self.author = author
+    self.aggregates = aggregates
   }
 
   static let tableName = "comment"
@@ -290,6 +304,7 @@ struct TestComment: ZeroTable, Codable, Hashable, Identifiable {
     issue = try entry.relationship("issue")
     revisions = try entry.relationship("revisions")
     author = try entry.relationship("author")
+    aggregates = RelationshipAggregates(entry: entry)
   }
 
   var columnValues: Row {
@@ -362,6 +377,8 @@ struct TestRevision: ZeroTable, Codable, Hashable, Identifiable {
   // Relationships, filled when a query asks for them with `related`.
   @Indirect var comment: TestComment?
   @Indirect var author: TestUser?
+  // The aggregates a query asked for in `related`; nil when it asked for none.
+  var aggregates: RelationshipAggregates<TestRevision>?
 
   init(
     id: String,
@@ -369,7 +386,8 @@ struct TestRevision: ZeroTable, Codable, Hashable, Identifiable {
     commentId: String,
     text: String,
     comment: TestComment? = nil,
-    author: TestUser? = nil
+    author: TestUser? = nil,
+    aggregates: RelationshipAggregates<TestRevision>? = nil
   ) {
     self.id = id
     self.authorId = authorId
@@ -377,6 +395,7 @@ struct TestRevision: ZeroTable, Codable, Hashable, Identifiable {
     self.text = text
     self.comment = comment
     self.author = author
+    self.aggregates = aggregates
   }
 
   static let tableName = "revision"
@@ -400,6 +419,7 @@ struct TestRevision: ZeroTable, Codable, Hashable, Identifiable {
     text = try entry.column("text", 3)
     comment = try entry.relationship("comment")
     author = try entry.relationship("author")
+    aggregates = RelationshipAggregates(entry: entry)
   }
 
   var columnValues: Row {
@@ -464,15 +484,19 @@ struct TestLabel: ZeroTable, Codable, Hashable, Identifiable {
 
   // Relationships, filled when a query asks for them with `related`.
   var issues: [TestIssue]?
+  // The aggregates a query asked for in `related`; nil when it asked for none.
+  var aggregates: RelationshipAggregates<TestLabel>?
 
   init(
     id: String,
     name: String,
-    issues: [TestIssue]? = nil
+    issues: [TestIssue]? = nil,
+    aggregates: RelationshipAggregates<TestLabel>? = nil
   ) {
     self.id = id
     self.name = name
     self.issues = issues
+    self.aggregates = aggregates
   }
 
   static let tableName = "label"
@@ -490,6 +514,7 @@ struct TestLabel: ZeroTable, Codable, Hashable, Identifiable {
     id = try entry.column("id", 0)
     name = try entry.column("name", 1)
     issues = try entry.relationship("issues")
+    aggregates = RelationshipAggregates(entry: entry)
   }
 
   var columnValues: Row {

@@ -98,16 +98,20 @@ import Testing
     func getSource(_ tableName: String) -> (any Source)? { sources[tableName] }
   }
 
-  func materialize<R: QueryResult>(_ query: Query<R.Row, R>, _ data: [String: [Row]]) throws -> R {
+  func materialize<T: ZeroRow, R: QueryValue>(
+    _ query: Query<T, R>, _ data: [String: [Row]]
+  ) throws -> R {
     var sources: [String: MemorySource] = [:]
     for name in ZeroSchema.test.tableNames {
       let source = MemorySource(ZeroSchema.test.tables[name]!)
       for row in data[name] ?? [] { source.push(.add(row)) }
       sources[name] = source
     }
-    let view = ArrayView(
-      try buildPipeline(query.ast, Delegate(sources), queryID: "q"), format: query.format,
-      complete: true)
+    let delegate = Delegate(sources)
+    let pipeline = try buildPipeline(query.ast, delegate, queryID: "q")
+    let input =
+      query.ast.groupBy != nil ? try groupViewInput(pipeline, query.ast, delegate) : pipeline
+    let view = ArrayView(input, format: query.format, complete: true)
     return try R(view: view.data)
   }
 
@@ -199,5 +203,70 @@ import Testing
     #expect(settings.zeroValue == ["theme": "dark", "fontSize": 12, "tags": ["a"], "extra": nil])
     #expect((try? FxSettings(zeroValue: settings.zeroValue)) == settings)
     #expect(FxStatus.inProgress.rawValue == "in-progress")
+  }
+
+  @Test func buildsTheSameAggregatesAsTheUntypedBuilder() {
+    let users = AnyQuery(.test, "user")
+    var cases: [(AnyQuery, AnyQuery)] = []
+    cases.append((zql.issue.count().any, base.count()))
+    cases.append(
+      (
+        zql.issue.where(\.closed, false).sum(\.createdAt).any,
+        base.where("closed", false).sum("createdAt")
+      ))
+    cases.append((zql.issue.avg(\.createdAt).any, base.avg("createdAt")))
+    cases.append((zql.issue.min(\.title).any, base.min("title")))
+    cases.append((zql.issue.max(\.ownerId).any, base.max("ownerId")))
+    cases.append(
+      (zql.user.sum(json: \.metadata, "points").any, users.sum(json: "metadata", "points")))
+    cases.append((zql.issue.distinct(\.ownerId).any, base.distinct("ownerId")))
+    cases.append((zql.issue.distinct(\.ownerId).count().any, base.distinct("ownerId").count()))
+    cases.append(
+      (
+        zql.issue.groupBy(\.ownerId, \.closed).count().any,
+        base.groupBy("ownerId", "closed").count()
+      ))
+    cases.append(
+      (zql.issue.groupBy(\.ownerId).max(\.createdAt).any, base.groupBy("ownerId").max("createdAt")))
+    cases.append(
+      (zql.issue.related(\.comments) { $0.count() }.any, base.related("comments") { $0.count() }))
+    for (typed, untyped) in cases {
+      #expect(typed.ast == untyped.ast)
+      #expect(typed.format == untyped.format)
+      #expect(typed.invalid == nil)
+    }
+    // What JS's builder throws for makes the query invalid.
+    #expect(zql.issue.limit(1).groupBy(\.ownerId).count().any.invalid != nil)
+  }
+
+  @Test func decodesAggregates() throws {
+    #expect(try materialize(zql.issue.count(), data) == 2)
+    #expect(try materialize(zql.issue.where(\.id, "nope").count(), data) == 0)
+    #expect(try materialize(zql.issue.sum(\.createdAt), data) == 3)
+    #expect(try materialize(zql.issue.avg(\.createdAt), data) == 1.5)
+    #expect(try materialize(zql.issue.where(\.id, "nope").avg(\.createdAt), data) == nil)
+    let maxTitle: String? = try materialize(zql.issue.max(\.title), data)
+    #expect(maxTitle == "B")
+    let minOwner: String? = try materialize(zql.issue.min(\.ownerId), data)
+    #expect(minOwner == "u1")
+
+    let groups = try materialize(zql.issue.groupBy(\.ownerId).count(), data)
+    #expect(Set(groups.map { [$0[\.ownerId] ?? "-": $0.value] }) == [["u1": 1], ["-": 1]])
+    let latest = try materialize(zql.comment.groupBy(\.issueId).max(\.createdAt), data)
+    #expect(latest.map { $0[\.issueId] } == ["i1"])
+    #expect(latest.map(\.value) == [6])
+    let owners = try materialize(zql.issue.distinct(\.ownerId), data)
+    #expect(Set(owners.map { $0[\.ownerId] }) == ["u1", nil])
+
+    let issues = try materialize(
+      zql.issue.related(\.comments) { $0.count() }.related(\.labels).orderBy(\.id, .asc), data)
+    #expect(issues.map { $0.aggregates?.count(\.comments) } == [2, 0])
+    // The relationship's rows aren't there: the query asked for its count.
+    #expect(issues.map(\.comments) == [nil, nil])
+    #expect(issues[0].labels?.map(\.id) == ["l1"])
+    // A row whose query asked for no aggregate has none.
+    #expect(try materialize(zql.issue, data).allSatisfy { $0.aggregates == nil })
+    let decoded = try JSONDecoder().decode(Issue.self, from: JSONEncoder().encode(issues[0]))
+    #expect(decoded == issues[0])
   }
 }

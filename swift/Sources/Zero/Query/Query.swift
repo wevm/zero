@@ -1,7 +1,7 @@
 /// A row struct of a table, as `zero-swift codegen` generates it: the
 /// table's columns as stored properties, and an optional property per
 /// relationship that a query fills when it asks for it with `related`.
-public protocol ZeroRow: Sendable {
+public protocol ZeroRow: QueryElement, OptionalQueryElement {
   /// The client name of the row's table.
   static var tableName: String { get }
   /// The client column name of each column property.
@@ -73,9 +73,11 @@ extension ViewEntry {
     }
   }
 
-  /// A many relationship: nil when the query didn't ask for it.
+  /// A many relationship: nil when the query didn't ask for its rows,
+  /// also when it asked for an aggregate of them.
   public func relationship<R: ZeroRow>(_ name: String) throws(ZeroValueError) -> [R]? {
     guard let value = relationships[name] else { return nil }
+    if case .value = value { return nil }
     var out: [R] = []
     for e in value.entries { out.append(try R(entry: e)) }
     return out
@@ -87,39 +89,6 @@ extension ViewEntry {
     guard let entry = relationships[name]?.entries.first else { return nil }
     return try R(entry: entry)
   }
-}
-
-/// What a query materializes to: `[Row]`, or `Row?` after `one()`.
-public protocol QueryResult: Sendable {
-  associatedtype Row: ZeroRow
-  init(view: ViewValue) throws(ZeroValueError)
-  /// The result of rows already read, in the view's order.
-  init(rows: [Row])
-}
-
-extension Array: QueryResult where Element: ZeroRow {
-  public typealias Row = Element
-
-  @inlinable
-  public init(view: ViewValue) throws(ZeroValueError) {
-    let entries = view.entries
-    var out: [Element] = []
-    out.reserveCapacity(entries.count)
-    for e in entries { out.append(try Element(entry: e)) }
-    self = out
-  }
-
-  public init(rows: [Element]) { self = rows }
-}
-
-extension Optional: QueryResult where Wrapped: ZeroRow {
-  public typealias Row = Wrapped
-
-  public init(view: ViewValue) throws(ZeroValueError) {
-    self = try view.entries.first.map { (e) throws(ZeroValueError) in try Wrapped(entry: e) }
-  }
-
-  public init(rows: [Wrapped]) { self = rows.first }
 }
 
 /// A query over the rows of one table, typed by its generated row struct
@@ -135,7 +104,7 @@ extension Optional: QueryResult where Wrapped: ZeroRow {
 ///   .orderBy(\.modified, .desc)
 ///   .limit(50)
 /// ```
-public struct Query<Row: ZeroRow, Result: QueryResult>: Sendable where Result.Row == Row {
+public struct Query<Row: ZeroRow, Result: QueryValue>: Sendable {
   /// The untyped query this one builds.
   public let any: AnyQuery
 
@@ -198,10 +167,12 @@ public struct Query<Row: ZeroRow, Result: QueryResult>: Sendable where Result.Ro
     Self(any.whereExists(Row.relationship(relationship), flip: flip, scalar: scalar, untyped(sub)))
   }
 
-  /// Fills a many relationship of each row.
-  public func related<R: ZeroRow, S: QueryResult>(
+  /// Fills a many relationship of each row, or, when `sub` ends in an
+  /// aggregate, sets the row's aggregate of it: `related(\.comments) {
+  /// $0.count() }` gives `aggregates?.count(\.comments)`.
+  public func related<R: ZeroRow, S: QueryValue>(
     _ relationship: KeyPath<Row, [R]?>, _ sub: @escaping (Query<R, [R]>) -> Query<R, S>
-  ) -> Self where S.Row == R {
+  ) -> Self {
     Self(any.related(Row.relationship(relationship)) { sub(Query<R, [R]>($0)).any })
   }
 
@@ -209,10 +180,10 @@ public struct Query<Row: ZeroRow, Result: QueryResult>: Sendable where Result.Ro
     Self(any.related(Row.relationship(relationship)))
   }
 
-  /// Fills a one relationship of each row.
-  public func related<R: ZeroRow, S: QueryResult>(
+  /// Fills a one relationship of each row, or sets its aggregate.
+  public func related<R: ZeroRow, S: QueryValue>(
     _ relationship: KeyPath<Row, R?>, _ sub: @escaping (Query<R, [R]>) -> Query<R, S>
-  ) -> Self where S.Row == R {
+  ) -> Self {
     Self(any.related(Row.relationship(relationship)) { sub(Query<R, [R]>($0)).any })
   }
 

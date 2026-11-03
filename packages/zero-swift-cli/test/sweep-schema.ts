@@ -157,6 +157,26 @@ export const wrapperStorage = createSchema({
   ],
 });
 
+const aggregated = table('aggregated')
+  .columns({id: string(), aggregates: string(), otherID: string()})
+  .primaryKey('id');
+const other = table('other').columns({id: string()}).primaryKey('id');
+
+/** A column named as the property a row with relationships holds its
+ * aggregates in. */
+export const aggregatesColumn = createSchema({
+  tables: [aggregated, other],
+  relationships: [
+    relationships(aggregated, ({many}) => ({
+      others: many({
+        sourceField: ['otherID'],
+        destField: ['id'],
+        destSchema: other,
+      }),
+    })),
+  ],
+});
+
 /** Enumeration values that are members of every enumeration, or keywords. */
 export const memberEnum = createSchema({
   tables: [

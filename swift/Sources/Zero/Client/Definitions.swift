@@ -4,10 +4,10 @@
 /// builds the query locally for optimistic results, and the server builds
 /// its own from the name and arguments.
 public struct QueryDefinition<
-  Args: Encodable & Sendable, Context: Sendable, Row: ZeroRow, Result: QueryResult
+  Args: Encodable & Sendable, Context: Sendable, Row: ZeroRow, Result: QueryValue
 >:
   Sendable
-where Result.Row == Row {
+{
   public let name: String
   let body: @Sendable (Args, Context) -> Query<Row, Result>
 
@@ -51,8 +51,7 @@ extension NoArgsQueryDefinition: NamedQuery {
 }
 
 /// A named query without arguments.
-public struct NoArgsQueryDefinition<Context: Sendable, Row: ZeroRow, Result: QueryResult>: Sendable
-where Result.Row == Row {
+public struct NoArgsQueryDefinition<Context: Sendable, Row: ZeroRow, Result: QueryValue>: Sendable {
   public let name: String
   let body: @Sendable (Context) -> Query<Row, Result>
 
@@ -64,8 +63,7 @@ where Result.Row == Row {
 
 /// A named query applied to its arguments, ready to materialize, run, or
 /// preload.
-public struct QueryRequest<Row: ZeroRow, Result: QueryResult, Context: Sendable>: Sendable
-where Result.Row == Row {
+public struct QueryRequest<Row: ZeroRow, Result: QueryValue, Context: Sendable>: Sendable {
   public let name: String
   /// The arguments as sent: none, or one JSON value.
   public let args: [JSONValue]
@@ -84,7 +82,7 @@ where Result.Row == Row {
 }
 
 public func defineQuery<
-  Args: Encodable & Sendable, Context: Sendable, Row: ZeroRow, Result: QueryResult
+  Args: Encodable & Sendable, Context: Sendable, Row: ZeroRow, Result: QueryValue
 >(
   _ name: String, _ body: @escaping @Sendable (Args, Context) -> Query<Row, Result>
 ) -> QueryDefinition<Args, Context, Row, Result> {
@@ -92,7 +90,7 @@ public func defineQuery<
 }
 
 /// A query of an app without a context.
-public func defineQuery<Args: Encodable & Sendable, Row: ZeroRow, Result: QueryResult>(
+public func defineQuery<Args: Encodable & Sendable, Row: ZeroRow, Result: QueryValue>(
   _ name: String, _ body: @escaping @Sendable (Args) -> Query<Row, Result>
 ) -> QueryDefinition<Args, Void, Row, Result> {
   QueryDefinition(name: name) { args, _ in body(args) }
@@ -100,14 +98,14 @@ public func defineQuery<Args: Encodable & Sendable, Row: ZeroRow, Result: QueryR
 
 /// A query without arguments that reads the context:
 /// `defineQuery("issues.mine") { (_: NoArgs, ctx: Auth) in … }`.
-public func defineQuery<Context: Sendable, Row: ZeroRow, Result: QueryResult>(
+public func defineQuery<Context: Sendable, Row: ZeroRow, Result: QueryValue>(
   _ name: String, _ body: @escaping @Sendable (NoArgs, Context) -> Query<Row, Result>
 ) -> NoArgsQueryDefinition<Context, Row, Result> {
   NoArgsQueryDefinition(name: name) { body(NoArgs(), $0) }
 }
 
 /// A query without arguments of an app without a context.
-public func defineQuery<Row: ZeroRow, Result: QueryResult>(
+public func defineQuery<Row: ZeroRow, Result: QueryValue>(
   _ name: String, _ body: @escaping @Sendable () -> Query<Row, Result>
 ) -> NoArgsQueryDefinition<Void, Row, Result> {
   NoArgsQueryDefinition(name: name) { _ in body() }
