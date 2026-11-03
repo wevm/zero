@@ -51,6 +51,18 @@ public final class LoopbackServer: SocketFactory {
     put(table, rows.map(JSONObject.init), primaryKey: primaryKey)
   }
 
+  /// Removes the row of `table` whose primary key (its columns'
+  /// values, `primaryKey` naming them) is `id`, and sends that to connected
+  /// clients, as another user's delete would.
+  public func delete(_ table: String, _ id: [String: JSONValue], primaryKey: [String] = ["id"]) {
+    let key = RowKey(table: table, id: primaryKey.map { id[$0] ?? .null })
+    rows[key] = nil
+    order.removeAll { $0 == key }
+    let op: JSONValue = .object(
+      ["op": .string("del"), "tableName": .string(table), "id": .object(JSONObject(id))])
+    for socket in sockets where socket.connected { socket.poke(rows: [op]) }
+  }
+
   public func open(
     url: String, secProtocol: String?, events: any SocketEvents
   )

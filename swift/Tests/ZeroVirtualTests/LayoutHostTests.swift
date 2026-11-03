@@ -169,6 +169,62 @@ final class LayoutScrollView {
     #expect(view.rowTop(key) == top)
   }
 
+  @Test("rows removed from the top of a list resting at the top take their space with them")
+  func removalsAtTheTop() {
+    let h = Harness(rowCount: 300) { $0.anchoring = .manual }
+    let view = LayoutScrollView(h)
+    view.heights = ["r0": 50, "r1": 30]
+    view.settle()
+    #expect(view.scrollOffset == 0)
+    // Each in its own update, with no scroll between: the next row comes up
+    // to the top.
+    for (removed, next) in [("r0", "r1"), ("r1", "r2"), ("r2", "r3")] {
+      h.data.removeAll { $0.id == removed }
+      view.settle()
+      #expect(view.scrollOffset == 0)
+      #expect(h.core.snapshot.spaceBefore == 0, "after removing \(removed)")
+      #expect(view.rowTop(next) == 0, "after removing \(removed)")
+    }
+  }
+
+  @Test("rows removed above the viewport don't move it; near the top, what's left closes at rest")
+  func removalsAboveTheViewport() {
+    let h = Harness(rowCount: 300) { $0.anchoring = .manual }
+    let view = LayoutScrollView(h)
+    view.settle()
+    view.userScroll(2000)
+    view.settle()
+    let key = h.core.firstVisibleItem()!.key
+    let top = view.rowTop(key)
+    let index = h.core.firstVisibleItem()!.index
+    h.data.removeAll { ["r\(index - 3)", "r\(index - 2)"].contains($0.id) }
+    view.settle(holding: key)
+    h.scheduler.advance(by: 200)
+    view.settle(holding: key)
+    #expect(view.rowTop(key) == top)
+
+    // Scrolled less than the first row's height: the rest of its space
+    // stands above the next until the list rests, then goes, with no scroll.
+    for _ in 0..<40 where view.scrollOffset > 0 {
+      view.userScroll(view.scrollOffset - 300)
+      view.settle()
+    }
+    h.scheduler.advance(by: 200)
+    view.userScroll(10)
+    view.settle()
+    h.scheduler.advance(by: 200)
+    view.settle()
+    let first = h.core.snapshot.items[0].key
+    let second = h.core.snapshot.items[1].key
+    h.data.removeAll { $0.id == first }
+    view.settle()
+    h.scheduler.advance(by: 200)
+    view.settle()
+    #expect(view.scrollOffset == 0)
+    #expect(h.core.snapshot.spaceBefore == 0)
+    #expect(view.rowTop(second) == 0)
+  }
+
   @Test(
     "a header changing height above the viewport doesn't move the rows; at the top it pushes them")
   func headerChangesHeight() {

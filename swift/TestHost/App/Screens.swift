@@ -87,14 +87,16 @@ struct MessageRow: View {
 }
 
 /// A long list to page through, both ways, with a header that grows and a
-/// footer, and rows to select.
+/// footer, and rows to select and to delete from the top.
 struct IssuesScreen: View {
+  let backend: Backend
   @State private var list: IssueList
   @State private var selection: String?
   /// The header's lines of text.
   @State private var headerLines = 2
 
   init(backend: Backend) {
+    self.backend = backend
     _list = State(initialValue: backend.issueList())
   }
 
@@ -107,6 +109,8 @@ struct IssuesScreen: View {
         Button("Grow header") { growHeader() }.accessibilityIdentifier("grow-header")
         Button("End") { list.scrollToItem(Backend.issueID(1999), align: .end) }
           .accessibilityIdentifier("end")
+        Button("Remove first") { backend.removeFirstIssue() }
+          .accessibilityIdentifier("remove-first")
         Text(selection ?? "none").accessibilityIdentifier("selection")
       }
       .padding(8)

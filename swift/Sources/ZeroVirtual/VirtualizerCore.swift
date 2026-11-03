@@ -360,8 +360,9 @@ package final class VirtualizerCore<
 
   /// Keeps the space before the rows where it was through new rows: less
   /// the rows added above the first one, by estimate, or more the rows gone
-  /// from above it, as laid out. Their index, which paging renumbers, and
-  /// the anchor's kind don't move what's on screen.
+  /// from above it, as laid out, unless the list is at the top. Their
+  /// index, which paging renumbers, and the anchor's kind don't move what's
+  /// on screen.
   private func carrySpace(from old: RowsSnapshot<Row, StartRow>, _ oldSpace: Double) {
     guard isListContextCurrent, !old.rowsEmpty, !rows.rowsEmpty,
       let oldFirst = old.rowAt(old.firstRowIndex).map(options.rowKey),
@@ -379,7 +380,11 @@ package final class VirtualizerCore<
     } else if let added = position(of: oldFirst, in: rows) {
       space -= Double(added) * rowEstimate
     } else if let removed = position(of: newFirst, in: old) {
-      if let host, let from = frame(host, key: AnyHashable(oldFirst)),
+      if let host, host.scrollOffset <= 0 {
+        // At the top the rows gone were on screen: the rows below come up
+        // in their place, as rows added there are revealed. Space kept for
+        // them would stand above the first row until the next scroll.
+      } else if let host, let from = frame(host, key: AnyHashable(oldFirst)),
         let to = frame(host, key: AnyHashable(newFirst))
       {
         space += to.minY - from.minY

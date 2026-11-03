@@ -150,11 +150,22 @@ class VirtualListUITests: XCTestCase {
 
   /// The list's start at its top: the header, and the first issue right
   /// below it.
-  func issuesAtStart() -> Bool {
+  func issuesAtStart(first: String = "i0000") -> Bool {
     let header = app.descendants(matching: .any)["header"].firstMatch
-    return header.exists && row("i0000").exists
+    return header.exists && row(first).exists
       && abs(header.frame.minY - list.frame.minY) <= 1.5
-      && abs(row("i0000").frame.minY - header.frame.maxY) <= 1.5
+      && abs(row(first).frame.minY - header.frame.maxY) <= 1.5
+  }
+
+  /// Issues deleted from the top of a list at rest there, with no scroll:
+  /// each time the next one comes up right below the header.
+  func testIssuesRemovedFromTheTopTakeTheirSpace() {
+    launch("issues")
+    waitUntil("the header and the first issue are at the top") { issuesAtStart() }
+    for next in ["i0001", "i0002", "i0003"] {
+      app.buttons["remove-first"].tap()
+      waitUntil("\(next) is right below the header") { issuesAtStart(first: next) }
+    }
   }
 
   func testIssuesPageDownAndBackUp() {
