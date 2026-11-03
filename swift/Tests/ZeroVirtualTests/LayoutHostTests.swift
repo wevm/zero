@@ -470,6 +470,35 @@ final class LayoutScrollView {
     #expect(h.items.map(\.key) == h.data.map(\.id))
   }
 
+  @Test("stuck to the bottom, back down to a short page at the end, the list settles there")
+  func stuckToAShortEndPage() {
+    let h = Harness(rowCount: 300) {
+      $0.anchoring = .manual
+      $0.minPageSize = 40
+      $0.stickToBottom = true
+    }
+    let view = LayoutScrollView(h)
+    view.settle()
+    h.scheduler.advance(by: 3000)
+    view.settle()
+    // Up a page, then messages near the end go.
+    for _ in 0..<6 { view.userScroll(view.scrollOffset - 140) }
+    view.settle()
+    h.scheduler.advance(by: 3000)
+    view.settle()
+    h.data.removeSubrange(288..<298)
+    view.settle()
+    h.scheduler.advance(by: 3000)
+    view.settle()
+    // Back down, the window is the few rows left at the end. The page before
+    // its last row would leave that row out, and the space estimated for it
+    // moves the bottom the list follows: it pages from the end.
+    view.userScroll(.infinity)
+    view.settle()
+    #expect(h.items.last?.key == "r299")
+    #expect(view.bottomGap == 0)
+  }
+
   @Test("stuck to the bottom of a list opened at its last row, a scroll up moves the rows by it")
   func scrollUpFromTheBottom() {
     let h = Harness(rowCount: 400, rowHeight: 80) {

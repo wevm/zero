@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import ZeroVirtual
@@ -28,6 +29,21 @@ import Testing
         == (direction == .forward ? ["a", "b", "c", "d"] : ["d", "c", "b", "a"]))
     #expect(rows.rowAt(first - 1) == nil)
     #expect(rows.rowAt(first + 4) == nil)
+  }
+
+  @Test("a backward page from no start row is the list's end, and saves as one")
+  func backwardFromTheEnd() throws {
+    var results = complete
+    results.mainRows = ["d", "c", "b", "a", "sentinel"]
+    let anchor = VirtualAnchor<String>.backward(index: 10, startRow: nil)
+    let rows = assembleRows(
+      RowsQueryInputs(pageSize: 4, anchor: anchor, settled: false, probeID: nil), results)
+    #expect(rows.firstRowIndex == 6)
+    #expect((6..<10).map { rows.rowAt($0) } == ["a", "b", "c", "d"])
+    #expect(!rows.atStart)
+    #expect(rows.atEnd)
+    let saved = try JSONEncoder().encode(anchor)
+    #expect(try JSONDecoder().decode(VirtualAnchor<String>.self, from: saved) == anchor)
   }
 
   @Test("permalink pages reserve the center row and exclude both sentinels")

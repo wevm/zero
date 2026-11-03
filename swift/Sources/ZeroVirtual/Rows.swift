@@ -8,11 +8,12 @@ public enum VirtualDirection: String, Sendable, Codable, Hashable {
 ///
 /// - `forward`: the page after `startRow` (the list's start when nil), its
 ///   first row at `index`.
-/// - `backward`: the page before `startRow`, its last row at `index - 1`.
+/// - `backward`: the page before `startRow` (the list's end when nil), its
+///   last row at `index - 1`.
 /// - `permalink`: the row with `id` at `index`, half a page either side.
 public enum VirtualAnchor<StartRow: Equatable & Sendable>: Equatable, Sendable {
   case forward(index: Int, startRow: StartRow?)
-  case backward(index: Int, startRow: StartRow)
+  case backward(index: Int, startRow: StartRow?)
   case permalink(index: Int, id: String)
 
   public var index: Int {
@@ -48,7 +49,8 @@ extension VirtualAnchor: Codable where StartRow: Codable {
       self = .forward(
         index: index, startRow: try c.decodeIfPresent(StartRow.self, forKey: .startRow))
     case "backward":
-      self = .backward(index: index, startRow: try c.decode(StartRow.self, forKey: .startRow))
+      self = .backward(
+        index: index, startRow: try c.decodeIfPresent(StartRow.self, forKey: .startRow))
     case "permalink":
       self = .permalink(index: index, id: try c.decode(String.self, forKey: .id))
     case let kind:
@@ -66,7 +68,7 @@ extension VirtualAnchor: Codable where StartRow: Codable {
       try c.encodeIfPresent(startRow, forKey: .startRow)
     case .backward(_, let startRow):
       try c.encode("backward", forKey: .kind)
-      try c.encode(startRow, forKey: .startRow)
+      try c.encodeIfPresent(startRow, forKey: .startRow)
     case .permalink(_, let id):
       try c.encode("permalink", forKey: .kind)
       try c.encode(id, forKey: .id)
@@ -248,13 +250,12 @@ package func assembleRows<Row, StartRow>(
 
   case .forward, .backward:
     let forward: Bool
-    let fromStart: Bool
-    if case .forward(_, let start) = anchor {
-      forward = true
-      fromStart = start == nil
-    } else {
-      forward = false
-      fromStart = false
+    // Read from the list's start (forward) or end (backward).
+    let fromEdge: Bool
+    switch anchor {
+    case .forward(_, let start): (forward, fromEdge) = (true, start == nil)
+    case .backward(_, let start): (forward, fromEdge) = (false, start == nil)
+    case .permalink: preconditionFailure()
     }
     let page = r.mainRows ?? []
     let hasMore = page.count > inputs.pageSize
@@ -266,8 +267,8 @@ package func assembleRows<Row, StartRow>(
     return RowsSnapshot(
       anchor: anchor, pageSize: inputs.pageSize, rowAt: rowAt, rowsLength: length,
       complete: r.mainComplete, rowsEmpty: page.isEmpty,
-      atStart: forward ? fromStart || anchorIndex == 0 : r.mainComplete && !hasMore,
-      atEnd: forward && r.mainComplete && !hasMore,
+      atStart: forward ? fromEdge || anchorIndex == 0 : r.mainComplete && !hasMore,
+      atEnd: forward ? r.mainComplete && !hasMore : fromEdge,
       firstRowIndex: forward ? anchorIndex : anchorIndex - length,
       permalinkNotFound: permalinkNotFound, lookup: lookup)
   }

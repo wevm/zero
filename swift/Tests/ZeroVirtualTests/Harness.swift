@@ -162,7 +162,7 @@ final class Harness {
     switch anchor {
     case .permalink(_, let id): "permalink:\(id)"
     case .forward(_, let s): "forward:\(s?.id ?? "")"
-    case .backward(_, let s): "backward:\(s.id)"
+    case .backward(_, let s): "backward:\(s?.id ?? "")"
     }
   }
 

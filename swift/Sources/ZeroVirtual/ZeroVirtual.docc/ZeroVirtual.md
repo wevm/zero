@@ -22,8 +22,8 @@ let issues = ZeroVirtualizer(
 
 `listContext` is what the list shows, such as its filter and sort. A new
 value starts the list over. `pageQuery` returns `limit` rows after (or
-before) a start row in the list's order, and `rowQuery` the row an id names,
-if it's in the list.
+before) a start row in the list's order, or from the list's start (or end)
+with no start row, and `rowQuery` the row an id names, if it's in the list.
 
 Render it with ``VirtualList`` in SwiftUI, or ``VirtualListView`` in UIKit
 and AppKit:
