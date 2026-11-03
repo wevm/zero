@@ -195,6 +195,11 @@
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
       ToolbarItem {
+        IssueCount(filter: filter, list: issues)
+          .foregroundStyle(.secondary)
+          .monospacedDigit()
+      }
+      ToolbarItem {
         ConnectionBadge(connection: model.zero.connection)
       }
       ToolbarItem {

@@ -3290,6 +3290,559 @@
       "hash": "1b5sw4o1vkbsje"
     },
     {
+      "name": "issueListCount",
+      "args": [
+        {
+          "listContext": {
+            "open": true,
+            "assignee": null,
+            "creator": null,
+            "labels": null,
+            "textFilter": null,
+            "sortField": "modified",
+            "sortDirection": "desc"
+          }
+        }
+      ],
+      "context": {
+        "sub": "u-alice",
+        "role": "user"
+      },
+      "ast": {
+        "table": "issue",
+        "where": {
+          "type": "and",
+          "conditions": [
+            {
+              "type": "simple",
+              "op": "=",
+              "left": {
+                "type": "column",
+                "name": "open"
+              },
+              "right": {
+                "type": "literal",
+                "value": true
+              }
+            },
+            {
+              "type": "simple",
+              "op": "=",
+              "left": {
+                "type": "column",
+                "name": "visibility"
+              },
+              "right": {
+                "type": "literal",
+                "value": "public"
+              }
+            },
+            {
+              "type": "correlatedSubquery",
+              "related": {
+                "correlation": {
+                  "parentField": [
+                    "projectID"
+                  ],
+                  "childField": [
+                    "id"
+                  ]
+                },
+                "subquery": {
+                  "table": "project",
+                  "alias": "zsubq_project",
+                  "where": {
+                    "type": "simple",
+                    "op": "=",
+                    "left": {
+                      "type": "column",
+                      "name": "lowerCaseName"
+                    },
+                    "right": {
+                      "type": "literal",
+                      "value": "zero"
+                    }
+                  }
+                },
+                "system": "client"
+              },
+              "op": "EXISTS",
+              "scalar": true
+            }
+          ]
+        },
+        "aggregate": {
+          "fn": "count"
+        }
+      },
+      "hash": "1dr1ns00xbry3j"
+    },
+    {
+      "name": "issueListCount",
+      "args": [
+        {
+          "listContext": {
+            "open": false,
+            "projectName": "Zero",
+            "assignee": "crew",
+            "creator": "alice",
+            "labels": [
+              "bug",
+              "p1"
+            ],
+            "textFilter": "50%_off\\",
+            "sortField": "created",
+            "sortDirection": "asc"
+          }
+        }
+      ],
+      "context": {
+        "sub": "u-crew",
+        "role": "crew"
+      },
+      "ast": {
+        "table": "issue",
+        "where": {
+          "type": "and",
+          "conditions": [
+            {
+              "type": "simple",
+              "op": "=",
+              "left": {
+                "type": "column",
+                "name": "open"
+              },
+              "right": {
+                "type": "literal",
+                "value": false
+              }
+            },
+            {
+              "type": "correlatedSubquery",
+              "related": {
+                "correlation": {
+                  "parentField": [
+                    "assigneeID"
+                  ],
+                  "childField": [
+                    "id"
+                  ]
+                },
+                "subquery": {
+                  "table": "user",
+                  "alias": "zsubq_assignee",
+                  "where": {
+                    "type": "simple",
+                    "op": "=",
+                    "left": {
+                      "type": "column",
+                      "name": "login"
+                    },
+                    "right": {
+                      "type": "literal",
+                      "value": "crew"
+                    }
+                  }
+                },
+                "system": "client"
+              },
+              "op": "EXISTS",
+              "scalar": true
+            },
+            {
+              "type": "correlatedSubquery",
+              "related": {
+                "correlation": {
+                  "parentField": [
+                    "id"
+                  ],
+                  "childField": [
+                    "issueID"
+                  ]
+                },
+                "subquery": {
+                  "table": "issueLabel",
+                  "alias": "zsubq_issueLabels",
+                  "where": {
+                    "type": "correlatedSubquery",
+                    "related": {
+                      "correlation": {
+                        "parentField": [
+                          "labelID"
+                        ],
+                        "childField": [
+                          "id"
+                        ]
+                      },
+                      "subquery": {
+                        "table": "label",
+                        "alias": "zsubq_label",
+                        "where": {
+                          "type": "and",
+                          "conditions": [
+                            {
+                              "type": "simple",
+                              "op": "=",
+                              "left": {
+                                "type": "column",
+                                "name": "name"
+                              },
+                              "right": {
+                                "type": "literal",
+                                "value": "bug"
+                              }
+                            },
+                            {
+                              "type": "correlatedSubquery",
+                              "related": {
+                                "correlation": {
+                                  "parentField": [
+                                    "projectID"
+                                  ],
+                                  "childField": [
+                                    "id"
+                                  ]
+                                },
+                                "subquery": {
+                                  "table": "project",
+                                  "alias": "zsubq_project",
+                                  "where": {
+                                    "type": "simple",
+                                    "op": "=",
+                                    "left": {
+                                      "type": "column",
+                                      "name": "lowerCaseName"
+                                    },
+                                    "right": {
+                                      "type": "literal",
+                                      "value": "zero"
+                                    }
+                                  }
+                                },
+                                "system": "client"
+                              },
+                              "op": "EXISTS",
+                              "scalar": true
+                            }
+                          ]
+                        }
+                      },
+                      "system": "client"
+                    },
+                    "op": "EXISTS",
+                    "scalar": true
+                  }
+                },
+                "system": "client"
+              },
+              "op": "EXISTS"
+            },
+            {
+              "type": "correlatedSubquery",
+              "related": {
+                "correlation": {
+                  "parentField": [
+                    "id"
+                  ],
+                  "childField": [
+                    "issueID"
+                  ]
+                },
+                "subquery": {
+                  "table": "issueLabel",
+                  "alias": "zsubq_issueLabels",
+                  "where": {
+                    "type": "correlatedSubquery",
+                    "related": {
+                      "correlation": {
+                        "parentField": [
+                          "labelID"
+                        ],
+                        "childField": [
+                          "id"
+                        ]
+                      },
+                      "subquery": {
+                        "table": "label",
+                        "alias": "zsubq_label",
+                        "where": {
+                          "type": "and",
+                          "conditions": [
+                            {
+                              "type": "simple",
+                              "op": "=",
+                              "left": {
+                                "type": "column",
+                                "name": "name"
+                              },
+                              "right": {
+                                "type": "literal",
+                                "value": "p1"
+                              }
+                            },
+                            {
+                              "type": "correlatedSubquery",
+                              "related": {
+                                "correlation": {
+                                  "parentField": [
+                                    "projectID"
+                                  ],
+                                  "childField": [
+                                    "id"
+                                  ]
+                                },
+                                "subquery": {
+                                  "table": "project",
+                                  "alias": "zsubq_project",
+                                  "where": {
+                                    "type": "simple",
+                                    "op": "=",
+                                    "left": {
+                                      "type": "column",
+                                      "name": "lowerCaseName"
+                                    },
+                                    "right": {
+                                      "type": "literal",
+                                      "value": "zero"
+                                    }
+                                  }
+                                },
+                                "system": "client"
+                              },
+                              "op": "EXISTS",
+                              "scalar": true
+                            }
+                          ]
+                        }
+                      },
+                      "system": "client"
+                    },
+                    "op": "EXISTS",
+                    "scalar": true
+                  }
+                },
+                "system": "client"
+              },
+              "op": "EXISTS"
+            },
+            {
+              "type": "or",
+              "conditions": [
+                {
+                  "type": "simple",
+                  "op": "ILIKE",
+                  "left": {
+                    "type": "column",
+                    "name": "description"
+                  },
+                  "right": {
+                    "type": "literal",
+                    "value": "%50\\%\\_off\\%"
+                  }
+                },
+                {
+                  "type": "simple",
+                  "op": "ILIKE",
+                  "left": {
+                    "type": "column",
+                    "name": "title"
+                  },
+                  "right": {
+                    "type": "literal",
+                    "value": "%50\\%\\_off\\%"
+                  }
+                },
+                {
+                  "type": "correlatedSubquery",
+                  "related": {
+                    "correlation": {
+                      "parentField": [
+                        "id"
+                      ],
+                      "childField": [
+                        "issueID"
+                      ]
+                    },
+                    "subquery": {
+                      "table": "comment",
+                      "alias": "zsubq_comments",
+                      "where": {
+                        "type": "simple",
+                        "op": "ILIKE",
+                        "left": {
+                          "type": "column",
+                          "name": "body"
+                        },
+                        "right": {
+                          "type": "literal",
+                          "value": "%50\\%\\_off\\%"
+                        }
+                      }
+                    },
+                    "system": "client"
+                  },
+                  "op": "EXISTS"
+                }
+              ]
+            },
+            {
+              "type": "correlatedSubquery",
+              "related": {
+                "correlation": {
+                  "parentField": [
+                    "creatorID"
+                  ],
+                  "childField": [
+                    "id"
+                  ]
+                },
+                "subquery": {
+                  "table": "user",
+                  "alias": "zsubq_creator",
+                  "where": {
+                    "type": "simple",
+                    "op": "=",
+                    "left": {
+                      "type": "column",
+                      "name": "login"
+                    },
+                    "right": {
+                      "type": "literal",
+                      "value": "alice"
+                    }
+                  }
+                },
+                "system": "client"
+              },
+              "op": "EXISTS",
+              "scalar": true
+            },
+            {
+              "type": "correlatedSubquery",
+              "related": {
+                "correlation": {
+                  "parentField": [
+                    "projectID"
+                  ],
+                  "childField": [
+                    "id"
+                  ]
+                },
+                "subquery": {
+                  "table": "project",
+                  "alias": "zsubq_project",
+                  "where": {
+                    "type": "simple",
+                    "op": "=",
+                    "left": {
+                      "type": "column",
+                      "name": "lowerCaseName"
+                    },
+                    "right": {
+                      "type": "literal",
+                      "value": "zero"
+                    }
+                  }
+                },
+                "system": "client"
+              },
+              "op": "EXISTS",
+              "scalar": true
+            }
+          ]
+        },
+        "aggregate": {
+          "fn": "count"
+        }
+      },
+      "hash": "0ta5n0m0bdljqv"
+    },
+    {
+      "name": "issueListCount",
+      "args": [
+        {
+          "listContext": {
+            "open": true,
+            "assignee": null,
+            "creator": null,
+            "labels": null,
+            "textFilter": null,
+            "sortField": "modified",
+            "sortDirection": "desc"
+          }
+        }
+      ],
+      "context": null,
+      "ast": {
+        "table": "issue",
+        "where": {
+          "type": "and",
+          "conditions": [
+            {
+              "type": "simple",
+              "op": "=",
+              "left": {
+                "type": "column",
+                "name": "open"
+              },
+              "right": {
+                "type": "literal",
+                "value": true
+              }
+            },
+            {
+              "type": "simple",
+              "op": "=",
+              "left": {
+                "type": "column",
+                "name": "visibility"
+              },
+              "right": {
+                "type": "literal",
+                "value": "public"
+              }
+            },
+            {
+              "type": "correlatedSubquery",
+              "related": {
+                "correlation": {
+                  "parentField": [
+                    "projectID"
+                  ],
+                  "childField": [
+                    "id"
+                  ]
+                },
+                "subquery": {
+                  "table": "project",
+                  "alias": "zsubq_project",
+                  "where": {
+                    "type": "simple",
+                    "op": "=",
+                    "left": {
+                      "type": "column",
+                      "name": "lowerCaseName"
+                    },
+                    "right": {
+                      "type": "literal",
+                      "value": "zero"
+                    }
+                  }
+                },
+                "system": "client"
+              },
+              "op": "EXISTS",
+              "scalar": true
+            }
+          ]
+        },
+        "aggregate": {
+          "fn": "count"
+        }
+      },
+      "hash": "1dr1ns00xbry3j"
+    },
+    {
       "name": "listIssueByID",
       "args": [
         {

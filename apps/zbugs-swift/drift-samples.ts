@@ -195,6 +195,9 @@ const querySamples: QuerySample[] = [
     name: 'issueListV2',
     args: {listContext, limit: 0, start: rowSort, dir: 'forward'},
   },
+  {name: 'issueListCount', args: {listContext}, context: alice},
+  {name: 'issueListCount', args: {listContext: fullListContext}, context: crew},
+  {name: 'issueListCount', args: {listContext}},
   {
     name: 'listIssueByID',
     args: {listContext, idField: 'shortID', idValue: 12},
