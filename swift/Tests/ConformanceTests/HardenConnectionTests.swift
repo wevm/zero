@@ -10,14 +10,14 @@ import Testing
 @Suite(.enabled(if: Vectors.available))
 @MainActor
 struct HardenConnectionTests {
-  @Test func scenariosOnMemory() throws {
-    try ClientConformanceTests.run(storage: .memory, vectors: "client-harden-connection")
+  @Test func scenariosOnMemory() async throws {
+    try await ClientConformanceTests.run(storage: .memory, vectors: "client-harden-connection")
   }
 
-  @Test func scenariosOnSQLite() throws {
+  @Test func scenariosOnSQLite() async throws {
     let directory = NSTemporaryDirectory() + "zero-harden-connection-" + UUID().uuidString
     defer { try? FileManager.default.removeItem(atPath: directory) }
-    try ClientConformanceTests.run(
+    try await ClientConformanceTests.run(
       storage: .sqlite(directory: directory), vectors: "client-harden-connection")
   }
 }
