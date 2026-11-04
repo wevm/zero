@@ -85,9 +85,25 @@ class VirtualListUITests: XCTestCase {
 
   /// The top row on screen holds still once the list is at rest.
   func assertHoldsStill(file: StaticString = #filePath, line: UInt = #line) {
-    guard let top = visibleRows().first else {
-      return XCTFail("no rows on screen", file: file, line: line)
+    // A runner slow to deliver a swipe can still be flinging after
+    // `rest()`: the first sample waits until the rows on screen are where
+    // they were a moment before, or the fling would read as a row moving.
+    var rows = visibleRows()
+    let end = Date().addingTimeInterval(10)
+    while true {
+      rest(0.1)
+      let now = visibleRows()
+      let still =
+        !now.isEmpty && now.map(\.id) == rows.map(\.id)
+        && zip(now, rows).allSatisfy { abs($0.frame.minY - $1.frame.minY) < 0.5 }
+      rows = now
+      if still { break }
+      guard Date() < end else {
+        let why = rows.isEmpty ? "no rows on screen" : "the list never came to rest"
+        return XCTFail(why, file: file, line: line)
+      }
     }
+    let top = rows[0]
     rest(2.5)
     let now = row(top.id).frame
     XCTAssertEqual(
