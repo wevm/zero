@@ -298,6 +298,12 @@ package final class VirtualizerCore<
   // own end clamps it, or the user scrolls. Not a target: paging, which
   // loads those rows, carries on.
   private var realign: PendingScroll?
+  // A compensation that came up short, clamped at the end of the rows
+  // loaded so far, as when rows added above push rows on screen out of the
+  // page: the reference row and where it goes, from the viewport's top. It
+  // scrolls on as rows load past it, until it's there, the list's own end
+  // clamps it, or the user scrolls.
+  private var heldShort: (key: AnyHashable, top: Double)?
   // The row a loaded permalink window was opened at, or jumped to, was
   // deleted: the page to load in its place, from the rows on screen, which
   // stay drawn until it's in.
@@ -621,7 +627,10 @@ package final class VirtualizerCore<
   // A probe is a query input; other targets aren't.
   private func setTarget(_ new: Target?) {
     if target?.isProbe == true || new?.isProbe == true { version += 1 }
-    if new != nil { realign = nil }
+    if new != nil {
+      realign = nil
+      heldShort = nil
+    }
     target = new
     placed = false
   }
@@ -666,6 +675,7 @@ package final class VirtualizerCore<
     updatePageSize()
     land()
     lineUpAgain()
+    scrollOnToHeldRow()
     recoverFromMissingPermalink()
 
     liftAnchorSuppression()
@@ -866,7 +876,26 @@ package final class VirtualizerCore<
   private func compensate(_ delta: Double) {
     guard let host else { return }
     anchorOffset += delta
-    setScrollOffset(host.scrollOffset + delta)
+    let wanted = host.scrollOffset + delta
+    setScrollOffset(wanted)
+    if let key = anchorKey, host.scrollOffset < wanted - 0.5 {
+      heldShort = (key, anchorOffset - wanted)
+    }
+  }
+
+  private func scrollOnToHeldRow() {
+    guard let held = heldShort, let host else { return }
+    guard manual, isListContextCurrent, target == nil, let f = frame(host, key: held.key) else {
+      heldShort = nil
+      return
+    }
+    // As far as the content lets it: a scroll it clamps to where it is
+    // isn't one.
+    let end = max(0, host.contentHeight - host.viewportHeight)
+    let to = max(0, min(f.minY - held.top, end))
+    if abs(to - host.scrollOffset) > 0.5 { setScrollOffset(to) }
+    let left = f.minY - held.top - host.scrollOffset
+    if abs(left) <= 0.5 || rows.atEnd { heldShort = nil }
   }
 
   /// Keeps the anchor row in place; true when the space before the rows
@@ -978,7 +1007,10 @@ package final class VirtualizerCore<
     let programmatic = programmaticScroll
     programmaticScroll = false
     if !programmatic, case .offset = target { target = nil }
-    if !programmatic { realign = nil }
+    if !programmatic {
+      realign = nil
+      heldShort = nil
+    }
     // Our own scrolls keep it as it was: compensation, or the re-pin.
     if !programmatic { measureStuck() }
     if manual && !programmatic { refreshAnchor() }
