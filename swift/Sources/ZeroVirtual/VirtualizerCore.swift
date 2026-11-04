@@ -1275,6 +1275,11 @@ package final class VirtualizerCore<
         setAnchor(.top)
       case .forward:
         setAnchor(.forward(index: index + offset, startRow: row.map(options.toStartRow)))
+      case .backward where rows.atEnd && index == rows.firstRowIndex + rows.rowsLength - 1:
+        // The page before the list's last row would drop it, and the space
+        // estimated in its place moves the bottom: page from the end
+        // instead. (Zero-virtual's backward anchor always has a start row.)
+        setAnchor(.backward(index: index + 1, startRow: nil))
       case .backward:
         guard let row else { preconditionFailure("a backward page starts at a loaded row") }
         setAnchor(.backward(index: index + offset, startRow: options.toStartRow(row)))
