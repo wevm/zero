@@ -910,17 +910,19 @@ package final class VirtualizerCore<
   /// out shorter, or carried over as the first page arrived) comes out at
   /// once, with a scroll by as much in the same pass, so no frame shows a
   /// gap above the first row, even mid-fling. What the offset can't take,
-  /// near the top, waits for the list to rest.
+  /// near the top, is a gap on screen, as after the scroll thumb is dragged
+  /// up into the space: it goes too, and the rows below it come up to the
+  /// top.
   private func dropSpaceAtStart() -> Bool {
-    guard manual, rows.atStart, spaceAdjust > 0, isListContextCurrent, !landing, let host,
+    guard manual, rows.atStart, spaceAdjust >= 0.5, isListContextCurrent, !landing, let host,
       host.scrollsWithLayout
     else { return false }
-    let removed = min(spaceAdjust, max(0, host.scrollOffset))
-    guard removed >= 0.5 else { return false }
-    spaceAdjust -= removed
+    let removed = spaceAdjust
+    let scrolled = min(removed, max(0, host.scrollOffset))
+    spaceAdjust = 0
     anchorOffset -= removed
     version += 1
-    setScrollOffset(host.scrollOffset - removed)
+    setScrollOffset(host.scrollOffset - scrolled)
     return true
   }
 

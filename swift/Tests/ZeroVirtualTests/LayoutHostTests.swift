@@ -59,9 +59,11 @@ final class LayoutScrollView {
 
   var scrollOffset: Double { offset }
 
-  /// The query's rows as they are now, then one layout pass.
-  func pass() {
-    h.core.setRows(h.answer(h.core.queryInputs))
+  /// The query's rows as they are now, then one layout pass. Without
+  /// `answering`, the pass comes before the query answers, as a Zero query
+  /// can take a frame or more.
+  func pass(answering: Bool = true) {
+    if answering { h.core.setRows(h.answer(h.core.queryInputs)) }
     host.invalidate()
     let r = host.layout(offset: offset, viewport: viewportHeight)
     if r.offset != offset { scrolls += 1 }
@@ -103,10 +105,10 @@ final class LayoutScrollView {
   }
 
   /// The user scrolls to `y`, within the content, and the view lays out.
-  func userScroll(_ y: Double) {
+  func userScroll(_ y: Double, answering: Bool = true) {
     clock += 1.0 / 60
     offset = max(0, min(y, host.contentHeight - viewportHeight))
-    pass()
+    pass(answering: answering)
   }
 
   /// Where the row was drawn on the last pass, from the viewport's top.
@@ -684,6 +686,51 @@ final class LayoutScrollView {
     // estimate does, below the viewport: the list doesn't page back to r0.
     #expect(blank == 0, "windows: \(windows)")
     #expect(!windows.dropFirst().contains { $0.hasPrefix("r0…") }, "windows: \(windows)")
+  }
+
+  @Test(
+    "a thumb drag to the top past rows shorter than estimated shows no gap above the first row")
+  func thumbToTheTop() {
+    // zbugs' issue list: rows of one or two lines, against a 56-point estimate.
+    let h = Harness(rowCount: 133, rowHeight: 56) {
+      $0.anchoring = .manual
+      $0.minPageSize = 50
+    }
+    let view = LayoutScrollView(h, viewportHeight: 756)
+    for (i, r) in h.data.enumerated() { view.heights[r.id] = [36.0, 50, 44, 62, 40, 50][i % 6] }
+    view.settle()
+    while h.core.lastVisibleItem()?.key != "r132" {
+      view.userScroll(view.scrollOffset + 250)
+      view.frameDrawn()
+    }
+    view.settle()
+    h.scheduler.advance(by: 3000)
+    view.settle()
+    // A position each frame, the pages for them loading a frame behind and
+    // complete a frame later.
+    let end = view.host.contentHeight - view.viewportHeight
+    var gaps: [Double] = []
+    func frame(_ pass: () -> Void) {
+      pass()
+      view.frameDrawn()
+      h.scheduler.advance(by: 16)
+      if let top = view.rowTop("r0"), top < view.viewportHeight, top + view.scrollOffset > 0.5 {
+        gaps.append(top)
+      }
+    }
+    for at in [0.5, 0.2, 0] {
+      frame { view.userScroll(end * at, answering: false) }
+      h.offline = true
+      frame { view.pass() }
+      frame { view.pass() }
+      h.offline = false
+    }
+    for _ in 0..<12 { frame { view.pass() } }
+    // Space carried from rows above measured shorter can't come out of the
+    // offset at the top. Left there until the list rests, it stood above r0.
+    #expect(gaps.isEmpty, "r0 drawn below the top by \(gaps)")
+    #expect(view.scrollOffset == 0)
+    #expect(view.rowTop("r0") == 0)
   }
 
   @Test("only the rows near the viewport are measured")
