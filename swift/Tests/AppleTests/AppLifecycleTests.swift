@@ -97,11 +97,19 @@
       #endif
     }
 
+    /// Whether `condition` holds within `timeout` of the process running. A loaded runner can stop the iOS Simulator's processes for many seconds (CI has had a 10 ms poll come back 21 s late); a poll that comes back more than a second late counts as one second, so the stop doesn't use up the time the client and the server get.
     func within(_ timeout: Duration, _ condition: () -> Bool) async throws -> Bool {
-      let deadline = ContinuousClock.now + timeout
+      var waited = Duration.zero
+      var last = ContinuousClock.now
       while !condition() {
-        if ContinuousClock.now >= deadline { return false }
+        if waited >= timeout { return false }
         try await Task.sleep(for: .milliseconds(10))
+        let now = ContinuousClock.now
+        if now - last > .seconds(1) {
+          print("[lifecycle] the process was stopped for \(now - last)")
+        }
+        waited += min(now - last, .seconds(1))
+        last = now
       }
       return true
     }
@@ -109,16 +117,12 @@
     func eventually(
       _ what: String, timeout: Duration = .seconds(10), _ condition: () -> Bool
     ) async throws {
-      let deadline = ContinuousClock.now + timeout
-      while !condition() {
-        guard ContinuousClock.now < deadline else {
-          Issue.record("Timed out waiting for \(what)")
-          for entry in log.entries.suffix(25) {
-            print("[lifecycle]   \(entry.level) \(entry.message.prefix(200))")
-          }
-          throw CancellationError()
+      guard try await within(timeout, condition) else {
+        Issue.record("Timed out waiting for \(what)")
+        for entry in log.entries.suffix(25) {
+          print("[lifecycle]   \(entry.level) \(entry.message.prefix(200))")
         }
-        try await Task.sleep(for: .milliseconds(10))
+        throw CancellationError()
       }
     }
 
