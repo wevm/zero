@@ -65,6 +65,37 @@
     }
 
     let log = RecordingLogSink()
+    let stops = Stops()
+    let connectTimeouts = ConnectTimeouts()
+
+    /// Whether the process was stopped during the test: a timer on a queue of its own came back more than a second late, as `within`'s polls do.
+    final class Stops: @unchecked Sendable {
+      private let queue = DispatchQueue(label: "AppLifecycleTests.Stops")
+      private let timer: any DispatchSourceTimer
+      private var last = ContinuousClock.now
+      private var stopped = false
+
+      init() {
+        timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now(), repeating: .milliseconds(100))
+        timer.setEventHandler { [weak self] in
+          guard let self else { return }
+          let now = ContinuousClock.now
+          if now - last > .seconds(1) { stopped = true }
+          last = now
+        }
+        timer.resume()
+      }
+
+      deinit { timer.cancel() }
+
+      var happened: Bool { queue.sync { stopped } }
+    }
+
+    /// The client's connect attempts that timed out.
+    @MainActor final class ConnectTimeouts {
+      var count = 0
+    }
 
     func makeZero(_ server: Server) throws -> Zero<Void> {
       var options = ZeroOptions(
@@ -72,7 +103,26 @@
         storage: .memory)
       options.logLevel = .debug
       options.logSink = log
-      return try Zero(schema: .notes, mutators: [Notes.put], options: options)
+      let zero = try Zero(schema: .notes, mutators: [Notes.put], options: options)
+      zero.engine.connectionManager.subscribe { [connectTimeouts] state in
+        if case .connecting(_, _, .client(.connectTimeout, _)?) = state {
+          connectTimeouts.count += 1
+        }
+      }
+      return zero
+    }
+
+    /// Whether the client's attempt to connect timed out because the process was stopped. A stop longer than the connect timeout (10 s) while the client is connecting ends the attempt when the process continues, before the server's acknowledgement is read, and the client connects again after its backoff, as zero-client does. Without a stop, a timeout is a failure the tests catch.
+    func timedOutWhileStopped(_ zero: Zero<Void>) -> Bool {
+      guard
+        case .connecting(_, _, .client(.connectTimeout, _)?) = zero.engine.connectionManager.state
+      else { return false }
+      return stops.happened
+    }
+
+    /// The connections a test expects the server to see, `n`, and, if the process was stopped, up to one more for each attempt that timed out (`timedOutWhileStopped`), which may have reached the server before it ended.
+    func connections(_ n: Int) -> ClosedRange<Int> {
+      n...n + (stops.happened ? connectTimeouts.count : 0)
     }
 
     /// The app goes to the background, or the Mac to sleep.
@@ -137,11 +187,11 @@
       try await eventually("the socket closed") { server.open == 0 }
       show()
       try await eventually("reconnected") { zero.connection.state == .connected }
-      #expect(server.connected == 2)
+      #expect(connections(2).contains(server.connected))
       #expect(server.open == 1)
     }
 
-    /// Hidden while the socket is open but not yet acknowledged: the client ends up disconnected with no socket open, and connects when shown.
+    /// Hidden while the socket is open but not yet acknowledged: the client ends up disconnected with no socket open, and connects when shown. If the attempt timed out first (`timedOutWhileStopped`), the client closed the socket and, hidden, waits to be shown, still connecting, as zero-client does.
     @Test func hiddenWhileConnecting() async throws {
       let server = try await Server()
       defer { server.stop() }
@@ -152,7 +202,9 @@
       hide()
       try await Task.sleep(for: .milliseconds(100))
       server.acknowledgeAll()
-      try await eventually("disconnected") { zero.connection.state.status == .disconnected }
+      try await eventually("disconnected") {
+        zero.connection.state.status == .disconnected || timedOutWhileStopped(zero)
+      }
       let closed = try await within(.seconds(10)) { server.open == 0 }
       print(
         "[lifecycle] hidden while connecting: server connected \(server.connected), closed \(server.closed), \(zero.connection.state)"
@@ -210,7 +262,7 @@
       }
       zero.close()
       try await Task.sleep(for: .milliseconds(500))
-      #expect(server.connected == 1)
+      #expect(connections(1).contains(server.connected))
       #expect(zero.connection.state.status == .closed)
     }
 
