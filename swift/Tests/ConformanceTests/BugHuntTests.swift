@@ -9,7 +9,7 @@ import ZeroTesting
 /// groupBy cases over the values and client histories (restarts, pending
 /// mutations) a port most likely gets wrong. Each checked-in case is its own
 /// test.
-@Suite(.enabled(if: Vectors.available))
+@Suite(.serialized, .enabled(if: Vectors.available))
 @MainActor
 struct BugHuntTests {
   /// The random client scenarios, all of them: reports the first mismatches.

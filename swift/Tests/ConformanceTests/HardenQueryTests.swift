@@ -11,14 +11,14 @@ import Testing
 @Suite(.enabled(if: Vectors.available))
 @MainActor
 struct HardenQueryTests {
-  @Test func scenariosOnMemory() throws {
-    try ClientConformanceTests.run(storage: .memory, vectors: "harden-queries")
+  @Test func scenariosOnMemory() async throws {
+    try await ClientConformanceTests.run(storage: .memory, vectors: "harden-queries")
   }
 
-  @Test func scenariosOnSQLite() throws {
+  @Test func scenariosOnSQLite() async throws {
     let directory = NSTemporaryDirectory() + "zero-harden-scenarios-" + UUID().uuidString
     defer { try? FileManager.default.removeItem(atPath: directory) }
-    try ClientConformanceTests.run(
+    try await ClientConformanceTests.run(
       storage: .sqlite(directory: directory), vectors: "harden-queries")
   }
 }

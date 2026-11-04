@@ -8,7 +8,7 @@ import ZeroTesting
 /// (`packages/zero-conformance/src/client/scenarios/harden-mutations.ts`,
 /// vectors in `client-harden-mutations.json`) with the client scenario
 /// runner, one test per scenario.
-@Suite(.enabled(if: Vectors.available))
+@Suite(.serialized, .enabled(if: Vectors.available))
 @MainActor
 struct HardenMutationConformanceTests {
   nonisolated static let names: [String] =

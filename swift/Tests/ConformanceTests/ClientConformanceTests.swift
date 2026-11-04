@@ -10,17 +10,20 @@ import ZeroTesting
 @Suite(.enabled(if: Vectors.available))
 @MainActor
 struct ClientConformanceTests {
-  @Test func scenariosOnMemory() throws {
-    try Self.run(storage: .memory)
+  @Test func scenariosOnMemory() async throws {
+    try await Self.run(storage: .memory)
   }
 
-  @Test func scenariosOnSQLite() throws {
+  @Test func scenariosOnSQLite() async throws {
     let directory = NSTemporaryDirectory() + "zero-client-scenarios-" + UUID().uuidString
     defer { try? FileManager.default.removeItem(atPath: directory) }
-    try Self.run(storage: .sqlite(directory: directory))
+    try await Self.run(storage: .sqlite(directory: directory))
   }
 
-  static func run(storage: ZeroStorage, vectors: String = "client") throws {
+  /// Runs the scenarios one main-actor job each: the tests of the other
+  /// suites in the process share the main actor, and a UI test waiting on it
+  /// would otherwise wait for every scenario.
+  static func run(storage: ZeroStorage, vectors: String = "client") async throws {
     let file = try Vectors.file(vectors)
     let startTime = file["shared"]?["startTime"]?.numberValue ?? 0
     let only = ProcessInfo.processInfo.environment["ZERO_CLIENT_SCENARIO"]
@@ -38,6 +41,7 @@ struct ClientConformanceTests {
       } else {
         passed += 1
       }
+      await Task.yield()
     }
     print("[\(vectors) scenarios on \(storage)] \(passed) passed, \(failed) failed")
   }
