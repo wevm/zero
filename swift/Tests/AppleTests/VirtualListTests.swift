@@ -331,10 +331,13 @@
         key(down: true, letter: true)
         try await t.run(5) { state().sets.count == 15 }
         #expect(state().key == id(14))
+        // The keys run without a layout pass between them: a row they
+        // scrolled into view gets its view in the pass that places the
+        // highlight, unless the frames before made it off screen.
+        try await t.run(5) { highlighted(id(14)) }
         #expect(state().shown[id(15)] == false)
         #expect(state().shown[id(5)] == false)
         #expect(state().shown[id(14)] == true)
-        try await t.run(5) { highlighted(id(14)) }
         try expectHighlight(on: id(14))
       }
 

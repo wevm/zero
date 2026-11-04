@@ -445,13 +445,15 @@ package final class VirtualizerCore<
   /// A permalink window that was loaded and on screen, whose row is now
   /// reported missing: its row was deleted, not a deep link to a row that
   /// never was. The page from the first row on screen that's left, to load
-  /// in its place; nil when it's a cold miss, which goes to the top.
+  /// in its place; nil when it's a cold miss, which goes to the top. The
+  /// window's own pages needn't have completed: drawn from the rows the
+  /// client had, its row was there all the same.
   private func anchorPastDeletedTarget(
     _ old: RowsSnapshot<Row, StartRow>, _ new: RowsSnapshot<Row, StartRow>
   ) -> Anchor? {
     guard isListContextCurrent, case .permalink(let targetIndex, let id) = paging.anchor,
       new.permalinkNotFound, new.lookup?.id == id, old.anchor == paging.anchor,
-      !old.rowsEmpty, old.complete, let host,
+      !old.rowsEmpty, let host,
       let target = old.rowAt(targetIndex).map({ AnyHashable(options.rowKey($0)) })
     else { return nil }
     let top = host.scrollOffset
