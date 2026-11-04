@@ -107,7 +107,8 @@
       // Read here, so the list renders each snapshot.
       _ = list.snapshot
       return RowsScrollViewRepresentable(
-        source: { [list] in RowsSource(list.snapshot) },
+        // Not observed in the scroll view's layout (see `VirtualListView`).
+        source: { [list] in RowsSource(list.core.snapshot) },
         row: { [row] in AnyView(row($0 as! VirtualItem<Row, Key>, $1)) }, header: header,
         footer: footer,
         selection: selectable

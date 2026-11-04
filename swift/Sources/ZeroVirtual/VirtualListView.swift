@@ -130,7 +130,11 @@
       #endif
       rows.frame = bounds
       addSubview(rows)
-      model.source = { [list] in RowsSource(list.snapshot) }
+      // The core's, which isn't observed: the list gets each snapshot from
+      // `onSnapshot`. A read of `snapshot` in a layout pass would have UIKit
+      // and AppKit, which follow what layout reads, lay the list out again
+      // whenever it changes, from outside the pass too.
+      model.source = { [list] in RowsSource(list.core.snapshot) }
       model.connect(rows)
     }
 

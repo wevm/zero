@@ -246,6 +246,38 @@
       #expect(list.lastVisibleItem()?.key == VirtualListTests.id(300))
       withExtendedLifetime((zero, window)) {}
     }
+
+    // Showing a snapshot doesn't observe the virtualizer, which hands the
+    // view each one. UIKit and AppKit follow what a view's layout reads: a
+    // read of `snapshot` in the pass that shows one would have them lay
+    // the list out again for every snapshot after, from outside the pass
+    // too, as rows that change often publish them (UIKit's "Observation
+    // tracking feedback loop detected").
+    @Test func showingASnapshotDoesNotObserveTheVirtualizer() async throws {
+      let t = VirtualListTests()
+      let (zero, list) = try t.makeList()
+      let view = noteList(list)
+      let window = show(view)
+      try await t.run(30) { list.snapshot.complete && !list.snapshot.items.isEmpty }
+      final class Flag: @unchecked Sendable { var raised = false }
+      let observed = Flag()
+      withObservationTracking {
+        // A snapshot published, and laid out.
+        list.listContext = "again"
+        #if canImport(UIKit)
+          view.layoutIfNeeded()
+        #else
+          view.layoutSubtreeIfNeeded()
+        #endif
+      } onChange: {
+        observed.raised = true
+      }
+      // And the next.
+      list.listContext = ""
+      #expect(!observed.raised)
+      withExtendedLifetime((zero, window)) {}
+    }
+
     /// Offset, viewport and content height as the platform scroll view has
     /// them.
     func geometry(
