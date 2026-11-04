@@ -114,6 +114,9 @@ final class Harness {
   /// Every answer is incomplete, as Zero answers from the client's store
   /// with no server.
   var offline = false
+  /// The page queries are incomplete, as before the server confirms them,
+  /// while the single-row lookup, answered already, is complete.
+  var pagesPending = false
   private var permalinkBeforePending = false
 
   init(
@@ -182,9 +185,9 @@ final class Harness {
           mainRows: single.map {
             beforePending ? [] : page($0, .backward, inputs.pageSize / 2 + 1)
           },
-          mainComplete: !beforePending && !offline,
+          mainComplete: !beforePending && !offline && !pagesPending,
           afterRows: single.map { page($0, .forward, inputs.pageSize / 2) },
-          afterComplete: !offline))
+          afterComplete: !offline && !pagesPending))
     }
     let probe = inputs.probeID.flatMap { id in data.first { $0.id == id } }
     let key = Self.pageKey(inputs.anchor)
@@ -196,7 +199,7 @@ final class Harness {
       case .permalink: (nil, .forward)
       }
     var main = page(start, direction, limit)
-    var complete = !offline
+    var complete = !offline && !pagesPending
     if var p = partial, key != p.from, (p.key ?? key) == key {
       if p.key == nil {
         p.key = key

@@ -452,6 +452,30 @@ final class LayoutScrollView {
     #expect(view.rowTop("r160") == top - 20 + 9 * 20)
   }
 
+  // The jump drew its row from the rows the client had, before the server
+  // answered the window's page queries: the window, not complete yet, was
+  // taken for a cold miss, and the list went to the top.
+  @Test(
+    "deleting the row a jump landed on before its window's pages complete keeps the rows around it")
+  func jumpRowDeletedBeforeItsPagesComplete() {
+    let h = Harness(rowCount: 300) { $0.anchoring = .manual }
+    let view = LayoutScrollView(h)
+    view.settle()
+    h.pagesPending = true
+    h.core.scrollToItem("r150", align: .start)
+    for _ in 0..<5 { view.pass() }
+    #expect(h.core.firstVisibleItem()?.key == "r150")
+    let top = view.rowTop("r151")!
+    h.data.removeAll { $0.id == "r150" }
+    view.pass()
+    h.pagesPending = false
+    view.settle()
+    h.scheduler.advance(by: 3000)
+    view.settle()
+    #expect(h.core.firstVisibleItem()?.key == "r151")
+    #expect(view.rowTop("r151") == top - 20)
+  }
+
   @Test("deleting the row a list shorter than a page opened at, the list settles on all its rows")
   func shortPermalinkRowDeleted() {
     let h = Harness(rowCount: 15, rowHeight: 30) {
