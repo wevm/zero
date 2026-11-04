@@ -376,11 +376,24 @@ final class FrameProbe {
     let sample = w[3].sample
     let moved = w[2].dy + w[3].dy
     if abs(m - expected) > max(300, 0.15 * abs(expected)) {
+      // The six frames, each as how far the rows moved on screen, over how
+      // long, how late it was sampled, and how far the top row moved in the
+      // content: rows the list moved move there; a scroll view's momentum
+      // that ran unevenly, or was sampled unevenly, moves only the offset.
+      let ref = sample.ids.first(where: Self.isRow)
+      let frames = w.map { e in
+        let shift = ref.flatMap { id in
+          e.sample.content[id].flatMap { c in w[0].sample.content[id].map { c - $0 } }
+        }
+        return
+          "\(fmt(e.dy))/\(fmt(e.dt * 1000))ms/lat \(fmt(e.sample.latency * 1000))/content \(shift.map(fmt) ?? "-")"
+      }
       // Once per jump: the next check starts after it.
       smooth.removeAll()
       flag(
         sample,
-        "speed \(fmt(m)) between \(fmt(p)) and \(fmt(n)) (moved \(fmt(moved)))")
+        "speed \(fmt(m)) between \(fmt(p)) and \(fmt(n)) (moved \(fmt(moved)); frames \(frames.joined(separator: ", ")))"
+      )
     }
   }
 
