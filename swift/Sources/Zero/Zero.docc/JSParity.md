@@ -177,6 +177,7 @@ is written or sent.
   notification that ran it, it runs once the current notification and the
   rest of its task are done, so every listener ends on the latest rows and
   every view sees each change. Its `client` outcome settles then.
+- **Connection logs.** The connection's life is logged with zero-client's messages and levels, such as "Connecting...", "Got socket open event", "Connected", "ping failed in … ms - disconnecting", and "disconnecting". Their details follow the message as `key=value` pairs rather than as an object. Three debug messages are Swift's own: "A WebSocket send hasn't finished after 1 second", "A WebSocket send finished after … ms" (when it took over a second), and "Sending the WebSocket close". A browser's `send` buffers and returns at once, but a `Transport`'s socket writes one frame at a time, so a send that doesn't finish holds up the frames and the close after it.
 - **A token for a logged-out client.** `connect(auth:)` doesn't throw. Where JS's `connect({auth})` rejects because the client has no `userID`, Swift logs the error and ignores the call: the token isn't sent and the connection stays as it was.
 - **Queries that can't be built.** A query JS rejects when it is
   materialized, such as a flipped `whereExists` over a subquery with a

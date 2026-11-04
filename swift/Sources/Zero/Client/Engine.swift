@@ -553,11 +553,13 @@ final class Engine {
 
   private func ping(_ token: Int, _ end: @escaping () -> Void) {
     let token = nextLoopToken()
+    let t0 = scheduler.monotonicNow
     // Before the send, as JS sets `#onPong` first: a transport may deliver
     // the pong from inside `send`.
     onPong = { [weak self] in
       self?.loop.microtask {
         guard let self, self.loopToken == token else { return }
+        self.log.debug("ping succeeded in \(JSNumber.format(self.scheduler.monotonicNow - t0)) ms")
         end()
         self.iterate()
       }
@@ -565,6 +567,8 @@ final class Engine {
     send(.ping)
     _ = scheduler.schedule(after: options.pingTimeoutMs) { [weak self] in
       guard let self, self.loopToken == token else { return }
+      self.log.info(
+        "ping failed in \(JSNumber.format(self.scheduler.monotonicNow - t0)) ms - disconnecting")
       let error = ConnectionError.client(.pingTimeout, message: "Server ping request failed")
       self.disconnect(error)
       end()
@@ -686,6 +690,8 @@ final class Engine {
     var timeout: (any ScheduledTimer)?
     var finished = false
     var onConnected: (() -> Void)?
+    /// When the socket was opened, for the open and `connected` logs.
+    var start = 0.0
   }
 
   private func addConnectEvent(_ attempt: ConnectAttempt, _ event: String) {
@@ -699,6 +705,7 @@ final class Engine {
       guard let self, let attempt else { return }
       let events = JSONValue.array(
         attempt.events.map { [.string(isoDateString($0.0)), .string($0.1)] })
+      self.log.debug("Connection attempt timed out")
       let seconds = JSNumber.format(connectTimeoutMs / 1000)
       let message =
         (ack
@@ -732,7 +739,9 @@ final class Engine {
       connectionManager.is(.disconnected) || connectionManager.is(.connecting),
       "connectAttempt() called from invalid state")
     let wsid = randomID()
+    log.info("Connecting...")
     connectionManager.connecting()
+    attempt.start = scheduler.monotonicNow
     addConnectEvent(attempt, "reading the cookie")
     let connectCookie = store.cookie
     addConnectEvent(attempt, "reading the client group ID")
@@ -777,10 +786,12 @@ final class Engine {
     } else {
       deleted = nil
     }
+    log.info("Connecting to \(url.string)")
     addConnectEvent(attempt, "creating the WebSocket")
     let handle = SocketHandle(engine: self)
     handle.connection = socketFactory.open(
       url: url.string, secProtocol: secProtocol, events: handle)
+    (handle.connection as? TransportConnection)?.log = log
 
     if attempt.aborted {
       handle.close(code: nil)
@@ -797,6 +808,7 @@ final class Engine {
     self.deletedClients = deleted
     socket = handle
     addConnectEvent(attempt, "waiting for the server acknowledgement")
+    log.debug("Waiting for connection to be acknowledged")
     armConnectTimeout(attempt, ack: true)
     attempt.onConnected = { [weak self, weak attempt] in
       guard let self, let attempt else { return }
@@ -843,7 +855,12 @@ final class Engine {
       attempt.timeout?.cancel()
       loop.microtask { [weak self] in self?.finishAttempt(attempt, reason) }
     }
-    if connectionManager.is(.closed) { return }
+    log.info(
+      "disconnecting: reason=\(reason.kindName) connectionState=\(connectionManager.state.status)")
+    if connectionManager.is(.closed) {
+      log.debug("disconnect() called while closed")
+      return
+    }
     socket?.close(code: closeCode)
     socket = nil
     lastMutationIDsSent.removeAll()
@@ -864,6 +881,13 @@ final class Engine {
   fileprivate func socketDidReceive(_ handle: SocketHandle, _ message: SocketMessage) {
     guard handle === socket else { return }
     loop.dispatch { onMessage(message) }
+  }
+
+  fileprivate func socketDidOpen(_ handle: SocketHandle) {
+    guard handle === socket, let attempt = currentAttempt else { return }
+    log.info(
+      "Got socket open event: timeToOpenMs=\(JSNumber.format(scheduler.monotonicNow - attempt.start))"
+    )
   }
 
   fileprivate func socketDidClose(
@@ -981,6 +1005,8 @@ final class Engine {
 
   private func handleConnected(_ body: ConnectedBody) {
     guard let attempt = currentAttempt else { return }
+    log.info(
+      "Connected: timeToConnectMs=\(JSNumber.format(scheduler.monotonicNow - attempt.start))")
     addConnectEvent(attempt, "processing the server acknowledgement")
     lastMutationIDsSent.removeAll()
     let patch = queryManager.queriesPatch(store: store, lastPatch: initConnectionQueries)
@@ -1147,7 +1173,11 @@ final class Engine {
   var closed: Bool { repClosed }
 
   func close() {
-    if repClosed { return }
+    if repClosed {
+      log.debug("close() called on already closed instance")
+      return
+    }
+    log.debug("Closing Zero instance")
     if !connectionManager.is(.disconnected) {
       disconnect(.client(.clientClosed, message: "Zero instance closed by user"), closeCode: 1000)
     }
@@ -1833,7 +1863,10 @@ final class SocketHandle: SocketEvents {
     connection.close(code: code)
   }
 
-  func socketDidOpen() {}
+  func socketDidOpen() {
+    guard !closed else { return }
+    engine?.socketDidOpen(self)
+  }
 
   func socketDidReceive(_ message: SocketMessage) {
     guard !closed else { return }
