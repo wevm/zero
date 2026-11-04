@@ -154,6 +154,29 @@ final class LayoutScrollView {
     view.settle(holding: key)
   }
 
+  @Test("rows added above, near the end of a list one page holds, don't move what's on screen")
+  func insertsAbovePushRowsOutOfThePage() {
+    // A page of 60 rows: the list is all in it, until rows added above
+    // push the last ones on screen out of it, and the content ends short
+    // of where the rows on screen hold still.
+    let h = Harness(rowCount: 60) {
+      $0.anchoring = .manual
+      $0.minPageSize = 40
+    }
+    let view = LayoutScrollView(h)
+    view.settle()
+    #expect(h.core.snapshot.items.count == 60)
+    view.userScroll(view.host.contentHeight - view.viewportHeight - 10)
+    view.settle()
+    let key = h.core.firstVisibleItem()!.key
+    let top = view.rowTop(key)
+    h.data.insert(contentsOf: ["x1", "x2", "x3"].map { TestRow(id: $0) }, at: 10)
+    view.settle()
+    h.scheduler.advance(by: 200)
+    view.settle()
+    #expect(view.rowTop(key) == top)
+  }
+
   @Test("at the start, rows shorter than estimated above take their space with them, not at rest")
   func shrinkageAtTheStart() {
     let h = Harness(rowCount: 300) { $0.anchoring = .manual }
