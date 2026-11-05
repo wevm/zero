@@ -66,45 +66,131 @@
       }
     }
 
+    /// When the client's sends ran and finished and the server got the
+    /// frames, timed off the main actor, which the client's writer runs on.
+    struct FrameTimes: Sendable {
+      let start = ContinuousClock.now
+      var started = 0
+      var sent = 0
+      var failures: [String] = []
+      var lastSent: Duration = .zero
+      var slowestSend: Duration = .zero
+      var received = 0
+      var lastReceived: Duration = .zero
+      var mainActorWait: Duration = .zero
+      var mainActorWaitAt: Duration = .zero
+
+      var report: String {
+        func ms(_ d: Duration) -> Int { Int(d / .milliseconds(1)) }
+        return """
+          The server got \(received) of 200 frames, the last at \(ms(lastReceived)) ms. \
+          The client started \(started) sends and finished \(sent), the last at \
+          \(ms(lastSent)) ms and the slowest in \(ms(slowestSend)) ms; failed: \(failures). \
+          The main actor's longest wait was \(ms(mainActorWait)) ms, at \(ms(mainActorWaitAt)) ms.
+          """
+      }
+    }
+
+    struct TimedTransport: Transport {
+      let base: any Transport
+      let times: Locked<FrameTimes>
+
+      func connect(url: String, secProtocol: String?) async throws -> any Socket {
+        TimedSocket(base: try await base.connect(url: url, secProtocol: secProtocol), times: times)
+      }
+    }
+
+    final class TimedSocket: Socket {
+      let base: any Socket
+      let times: Locked<FrameTimes>
+
+      init(base: any Socket, times: Locked<FrameTimes>) {
+        self.base = base
+        self.times = times
+      }
+
+      func send(_ message: SocketMessage) async throws {
+        let began = ContinuousClock.now
+        times.withLock { $0.started += 1 }
+        do {
+          try await base.send(message)
+        } catch {
+          times.withLock { $0.failures.append("\(error)") }
+          throw error
+        }
+        let now = ContinuousClock.now
+        times.withLock { t in
+          t.sent += 1
+          t.lastSent = now - t.start
+          t.slowestSend = max(t.slowestSend, now - began)
+        }
+      }
+
+      func receive() async throws -> SocketMessage? { try await base.receive() }
+
+      func close(code: Int, reason: String) async { await base.close(code: code, reason: reason) }
+    }
+
     @Test @MainActor func keepsTheOrderOfFramesSentBeforeAndAfterTheOpen() async throws {
       let server = try WebSocketServer()
       let port = try await server.start()
       defer { server.stop() }
-      var events = server.events.makeAsyncIterator()
 
+      let times = Locked(FrameTimes())
       let recorder = Recorder()
-      let factory = TransportSocketFactory(URLSessionTransport())
+      let factory = TransportSocketFactory(
+        TimedTransport(base: URLSessionTransport(), times: times))
       let connection = factory.open(
         url: "ws://127.0.0.1:\(port)/", secProtocol: nil, events: recorder)
-      // The writer logs a send still waiting after a second, so a stall
-      // shows whether the client's send or the server's receive stopped.
-      let sink = RecordingLogSink()
-      (connection as? TransportConnection)?.log = Log(level: .debug, sink: sink)
       for i in 0..<200 { connection.send("\(i)") }
-      guard case .connected(let peer, _)? = await events.next() else {
+
+      // Off the main actor, so that a busy main actor doesn't delay when the
+      // frames are counted.
+      let events = server.events
+      let reading = Task.detached { () -> (peer: WebSocketServer.Peer, texts: [String])? in
+        var events = events.makeAsyncIterator()
+        guard case .connected(let peer, _)? = await events.next() else { return nil }
+        var texts: [String] = []
+        while texts.count < 200, case .message(_, .text(let text))? = await events.next() {
+          texts.append(text)
+          let now = ContinuousClock.now
+          times.withLock { t in
+            t.received += 1
+            t.lastReceived = now - t.start
+          }
+        }
+        return (peer, texts)
+      }
+      let probe = Task.detached {
+        while !Task.isCancelled {
+          let asked = ContinuousClock.now
+          await MainActor.run {}
+          let waited = ContinuousClock.now - asked
+          times.withLock { t in
+            if waited > t.mainActorWait {
+              t.mainActorWait = waited
+              t.mainActorWaitAt = asked - t.start
+            }
+          }
+          try? await Task.sleep(for: .milliseconds(50))
+        }
+      }
+      let watchdog = Task {
+        try await Task.sleep(for: .seconds(30))
+        Issue.record("After 30 s: \(times.withLock { $0.report })")
+      }
+      defer {
+        probe.cancel()
+        watchdog.cancel()
+      }
+      guard let read = await reading.value else {
         Issue.record("not connected")
         return
       }
-      let texts = Locked<[String]>([])
-      let watchdog = Task {
-        try await Task.sleep(for: .seconds(30))
-        let received = texts.withLock { $0 }
-        Issue.record(
-          """
-          The server got \(received.count) of 200 frames in 30 s, the last \
-          \(received.last ?? "none"); the client logged \(sink.entries.map(\.message))
-          """)
-      }
-      defer { watchdog.cancel() }
-      while texts.withLock({ $0.count }) < 200,
-        case .message(_, .text(let text))? = await events.next()
-      {
-        texts.withLock { $0.append(text) }
-      }
-      #expect(texts.withLock { $0 } == (0..<200).map(String.init))
+      #expect(read.texts == (0..<200).map(String.init))
       #expect(recorder.opened)
 
-      peer.close(code: 4003, reason: "done")
+      read.peer.close(code: 4003, reason: "done")
       while recorder.closed == nil { try await Task.sleep(for: .milliseconds(10)) }
       #expect(recorder.closed == SocketClosed(code: 4003, reason: "done", wasClean: true))
     }
