@@ -195,6 +195,32 @@
       #expect(recorder.closed == SocketClosed(code: 4003, reason: "done", wasClean: true))
     }
 
+    @Test @MainActor func sendsWhileTheMainActorIsBusy() async throws {
+      let server = try WebSocketServer()
+      let port = try await server.start()
+      defer { server.stop() }
+      let events = server.events
+      let received = Locked(0)
+      let reading = Task.detached {
+        for await event in events {
+          guard case .message = event else { continue }
+          received.withLock { $0 += 1 }
+        }
+      }
+      defer { reading.cancel() }
+
+      let recorder = Recorder()
+      let connection = TransportSocketFactory(URLSessionTransport()).open(
+        url: "ws://127.0.0.1:\(port)/", secProtocol: nil, events: recorder)
+      defer { connection.close(code: nil) }
+      while !recorder.opened { try await Task.sleep(for: .milliseconds(10)) }
+
+      for i in 0..<200 { connection.send("\(i)") }
+      // The main actor stays busy; the frames still go out.
+      usleep(1_000_000)
+      #expect(received.withLock { $0 } == 200)
+    }
+
     @Test @MainActor func connectsAClientThroughTheDefaultFactory() async throws {
       let server = try WebSocketServer()
       let port = try await server.start()
