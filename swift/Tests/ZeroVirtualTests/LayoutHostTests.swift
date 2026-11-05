@@ -177,6 +177,33 @@ final class LayoutScrollView {
     #expect(view.rowTop(key) == top)
   }
 
+  @Test("rows added above, at the end of a list past its first page, don't move what's on screen")
+  func insertsAbovePushTallRowsOutOfThePage() {
+    // Parked at the end, rows added above push the last rows, on screen and
+    // taller than estimated, out of the page: the space after the rows
+    // keeps their height, not their estimate, or the content shrinks under
+    // the offset and the view clamps it.
+    let h = Harness(rowCount: 300) {
+      $0.anchoring = .manual
+      $0.minPageSize = 40
+    }
+    let view = LayoutScrollView(h)
+    for i in 290..<300 { view.heights["r\(i)"] = 60 }
+    view.settle()
+    // To the end, a page at a time.
+    for _ in 0..<20 {
+      view.userScroll(.infinity)
+      view.settle()
+    }
+    let key = h.core.firstVisibleItem()!.key
+    let top = view.rowTop(key)
+    h.data.insert(contentsOf: (0..<25).map { TestRow(id: "x\($0)") }, at: 280)
+    view.settle(holding: key)
+    h.scheduler.advance(by: 200)
+    view.settle(holding: key)
+    #expect(view.rowTop(key) == top)
+  }
+
   @Test("at the start, rows shorter than estimated above take their space with them, not at rest")
   func shrinkageAtTheStart() {
     let h = Harness(rowCount: 300) { $0.anchoring = .manual }
