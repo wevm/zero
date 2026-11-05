@@ -63,6 +63,8 @@ final class TransportConnection: SocketConnection {
   private var connecting: Task<Void, Never>?
   /// The socket can deliver part of a frame cut off by the connection's end (`DeliversPartialFrames`).
   private(set) var deliversPartialFrames = false
+  /// The engine's log. At `.debug`, the writer logs a send still waiting after a second, which holds up the frames and the close after it, and when it sends the close. A browser's `send` buffers and returns, so zero-client has no such wait to log.
+  var log: Log?
 
   init(transport: any Transport, url: String, secProtocol: String?, events: any SocketEvents) {
     self.events = events
@@ -84,12 +86,30 @@ final class TransportConnection: SocketConnection {
       }
       // One writer keeps the frames in order; each send in a task of its
       // own could overtake the one before.
+      let log = self.log.flatMap { $0.level <= .debug ? $0 : nil }
       Task {
         for await frame in frames {
           switch frame {
           case .text(let text):
+            let start = ContinuousClock.now
+            let slow = log.map { log in
+              Task {
+                try? await Task.sleep(for: .seconds(1))
+                if !Task.isCancelled {
+                  log.debug("A WebSocket send hasn't finished after 1 second")
+                }
+              }
+            }
             try? await socket.send(.text(text))
+            slow?.cancel()
+            let took = ContinuousClock.now - start
+            if took > .seconds(1) {
+              log?.debug(
+                "A WebSocket send finished after \(JSNumber.format(SystemScheduler.milliseconds(took).rounded())) ms"
+              )
+            }
           case .close(let code):
+            log?.debug("Sending the WebSocket close: code=\(code)")
             await socket.close(code: code, reason: "")
             return
           }

@@ -17,11 +17,13 @@ import ZeroTesting
   let log = RecordingLogSink()
 
   func makeZero(
-    _ sockets: any SocketFactory, maxHeaderLength: Int? = nil, auth: String? = nil
+    _ sockets: any SocketFactory, maxHeaderLength: Int? = nil, auth: String? = nil,
+    logLevel: LogLevel = .warn
   ) throws -> Zero<Void> {
     var options = ZeroOptions(
       cacheURL: "http://zero.test", userID: "u", storageKey: randomID(), storage: .memory)
     options.logSink = log
+    options.logLevel = logLevel
     options.auth = auth
     options.onClientStateNotFound = {}
     options.onUpdateNeeded = { _ in }
@@ -44,6 +46,38 @@ import ZeroTesting
   }
 
   // MARK: - Log levels (075b4215e, 79adc09fb, 42316d521)
+
+  /// A connection's life, as zero-client logs it: each message, at its level, in order.
+  @Test func logsTheConnectionsLifeAsZeroClientDoes() throws {
+    let sockets = MockSocketFactory()
+    let zero = try makeZero(sockets, logLevel: .debug)
+    scheduler.runDueTimers()
+    let socket = try #require(sockets.sockets.last)
+    socket.open()
+    socket.receive(text: #"["connected",{"wsid":"w"}]"#)
+    scheduler.runDueTimers()
+    // No traffic: a ping, which the server doesn't answer.
+    scheduler.advance(by: 5_000)
+    scheduler.advance(by: 5_000)
+    zero.close()
+    zero.close()
+    let expected: [(LogLevel, String)] = [
+      (.info, "Connecting..."), (.info, "Connecting to ws://zero.test/"),
+      (.debug, "Waiting for connection to be acknowledged"),
+      (.info, "Got socket open event: timeToOpenMs="), (.info, "Connected: timeToConnectMs="),
+      (.info, "ping failed in 5000 ms - disconnecting"),
+      (.info, "disconnecting: reason=PingTimeout connectionState=connected"),
+      (.debug, "Closing Zero instance"), (.info, "disconnecting: reason=ClientClosed"),
+      (.debug, "close() called on already closed instance"),
+    ]
+    var rest = log.entries[...]
+    for (level, prefix) in expected {
+      let i = try #require(
+        rest.firstIndex { $0.message.hasPrefix(prefix) }, "no \"\(prefix)\" after the last")
+      #expect(rest[i].level == level, "\(prefix)")
+      rest = rest[(i + 1)...]
+    }
+  }
 
   /// 075b4215e: a ClientNotFound while connecting is logged at warn, both
   /// the error message and the connect failure, and nothing is logged as an
