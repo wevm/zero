@@ -190,6 +190,14 @@
       return SocketClosed(code: 1006, reason: error.localizedDescription, wasClean: false)
     }
 
+    func ping() async throws {
+      try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, any Error>) in
+        task.sendPing { error in
+          if let error { c.resume(throwing: error) } else { c.resume() }
+        }
+      }
+    }
+
     func close(code: Int, reason: String) async {
       task.cancel(
         with: URLSessionWebSocketTask.CloseCode(rawValue: code) ?? .normalClosure,

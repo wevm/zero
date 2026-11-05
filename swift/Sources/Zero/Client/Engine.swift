@@ -1089,29 +1089,43 @@ final class Engine {
     }
   }
 
-  /// How long a message that doesn't make sense waits for the connection to end, on a socket that can deliver part of a frame.
-  static let partialFrameGraceMs: Double = 1000
+  /// How long a message that doesn't make sense waits for the ping that tells whether it was cut off, on a socket that can deliver part of a frame. Only a server that never answers a ping waits it out.
+  static let partialFrameGraceMs: Double = 10_000
 
   /// A message that didn't make sense, from a socket that can deliver part of a frame, waiting to learn whether the connection ended right after it.
   private var badMessage:
     (handle: SocketHandle, error: ConnectionError, log: () -> Void, timer: any ScheduledTimer)?
 
-  /// Disconnects with `error` for a message that doesn't make sense. URLSession returns the part of a frame it has when the connection ends partway through it, where a browser drops the part and reports an abrupt close (1006), after which JS reconnects. So on such a socket the error waits up to `partialFrameGraceMs`: when the connection ends without a close frame by then, the message was cut off and the client reconnects; otherwise the error stands. Messages that make sense are never held.
+  /// Disconnects with `error` for a message that doesn't make sense. URLSession returns the part of a frame it has when the connection ends partway through it, where a browser drops the part and reports an abrupt close (1006), after which JS reconnects. So on such a socket the error waits for a ping: when it fails, or the connection ends without a close frame first, the message was cut off and the client reconnects; when the pong comes, or after `partialFrameGraceMs` without either, the error stands. URLSession can report the connection's end seconds after the part, on a busy device, so no shorter wait tells the two apart. Messages that make sense are never held.
   private func failOnMessage(_ error: ConnectionError, log logError: @escaping () -> Void = {}) {
-    guard let handle = socket,
-      (handle.connection as? TransportConnection)?.deliversPartialFrames == true
+    guard let handle = socket, let connection = handle.connection as? TransportConnection,
+      connection.deliversPartialFrames
     else {
       logError()
       return disconnect(error)
     }
     guard badMessage == nil else { return }
     let timer = scheduler.schedule(after: Self.partialFrameGraceMs) { [weak self] in
-      guard let self, let bad = self.badMessage, bad.handle === self.socket else { return }
-      self.badMessage = nil
-      bad.log()
-      self.disconnect(bad.error)
+      self?.resolveBadMessage(handle, cutOff: false)
     }
     badMessage = (handle, error, logError, timer)
+    connection.ping { [weak self] answered in
+      self?.loop.dispatch { self?.resolveBadMessage(handle, cutOff: !answered) }
+    }
+  }
+
+  /// The held message on `handle` was cut off, and the client reconnects, or it was whole, and its error stands.
+  private func resolveBadMessage(_ handle: SocketHandle, cutOff: Bool) {
+    guard let bad = badMessage, bad.handle === handle, handle === socket else { return }
+    badMessage = nil
+    bad.timer.cancel()
+    if cutOff {
+      log.info("Dropped a message cut off by the connection's end")
+      disconnect(.client(.abruptClose, message: "WebSocket connection closed abruptly"))
+    } else {
+      bad.log()
+      disconnect(bad.error)
+    }
   }
 
   // MARK: - Auth
