@@ -278,6 +278,13 @@ package final class VirtualizerCore<
   // which would stop a fling. Space short of the estimate is given back with
   // a scroll once the list rests.
   private var spaceAdjust = 0.0
+  // How far the space after the rows is off its estimate: rows that leave
+  // the window's end, as rows added above push them out of the page, keep
+  // the space they were laid out in until the window reaches them again.
+  // Their estimate in its place could be shorter, which shrinks the content
+  // under a list parked at its end: the view clamps the offset, and what's
+  // on screen jumps.
+  private var spaceAfterAdjust = 0.0
   // The list opened away from its start (a permalink, a restore) and hasn't
   // been there since: its indexes count from where it opened.
   private var openedAway: Bool
@@ -376,10 +383,39 @@ package final class VirtualizerCore<
       return
     }
     pendingReanchor = nil
-    let oldSpace = manual && host != nil ? snapshot.spaceBefore : nil
+    let oldSpace = manual && host != nil ? (snapshot.spaceBefore, snapshot.spaceAfter) : nil
     rows = new
     version += 1
-    if let oldSpace { carrySpace(from: old, oldSpace) }
+    if let oldSpace {
+      carrySpace(from: old, oldSpace.0)
+      carrySpaceAfter(from: old, oldSpace.1)
+    }
+  }
+
+  /// Keeps the space after the rows where it was through rows leaving the
+  /// window's end: the rows gone, as laid out, stand in it. Any other
+  /// change to the window's end goes back to the estimate.
+  private func carrySpaceAfter(from old: RowsSnapshot<Row, StartRow>, _ oldSpace: Double) {
+    let oldEnd = old.firstRowIndex + old.rowsLength
+    let newEnd = rows.firstRowIndex + rows.rowsLength
+    guard isListContextCurrent, !rows.atEnd, !old.rowsEmpty, !rows.rowsEmpty,
+      let oldLast = old.rowAt(oldEnd - 1).map(options.rowKey),
+      let newLast = rows.rowAt(newEnd - 1).map(options.rowKey)
+    else {
+      spaceAfterAdjust = 0
+      return
+    }
+    if oldLast == newLast { return }
+    guard
+      (0..<old.rowsLength).contains(where: {
+        old.rowAt(old.firstRowIndex + $0).map(options.rowKey) == newLast
+      }), let host, let from = frame(host, key: AnyHashable(newLast)),
+      let to = frame(host, key: AnyHashable(oldLast)), to.maxY > from.maxY
+    else {
+      spaceAfterAdjust = 0
+      return
+    }
+    spaceAfterAdjust = oldSpace + to.maxY - from.maxY - estimatedSpaceAfter
   }
 
   /// Keeps the space before the rows where it was through new rows: less
@@ -754,10 +790,16 @@ package final class VirtualizerCore<
     return max(paging.estimatedTotal, end)
   }
 
+  // The space after the rows, as their count estimates it.
+  private var estimatedSpaceAfter: Double {
+    if rows.atEnd { return 0 }
+    return Double(max(0, effectiveEstimatedTotal - rows.firstRowIndex - rows.rowsLength))
+      * rowEstimate
+  }
+
   private func buildSnapshot() -> VirtualSnapshot<Row, Key> {
     let total = effectiveEstimatedTotal
     let end = rows.firstRowIndex + rows.rowsLength
-    let after = rows.atEnd ? 0 : max(0, total - end)
     var items: [VirtualItem<Row, Key>] = []
     items.reserveCapacity(rows.rowsLength)
     for index in rows.firstRowIndex..<end {
@@ -769,7 +811,7 @@ package final class VirtualizerCore<
     // At the start, space left over from above stands before the first row
     // until the list rests.
     s.spaceBefore = max(0, estimatedSpaceBefore + spaceAdjust)
-    s.spaceAfter = Double(after) * rowEstimate
+    s.spaceAfter = rows.atEnd ? 0 : max(0, estimatedSpaceAfter + spaceAfterAdjust)
     s.complete = rows.complete
     s.rowsEmpty = rows.rowsEmpty
     s.permalinkNotFound = rows.permalinkNotFound
