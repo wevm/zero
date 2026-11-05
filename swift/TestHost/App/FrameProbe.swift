@@ -20,7 +20,9 @@ import SwiftUI
 /// - Driven by the probe itself (`drive`), the scroll is known exactly: the
 ///   rows must move by it, to the half point.
 /// - Flung by a finger (iOS), the momentum is smooth: two frames whose
-///   speed departs from their neighboring pairs' are a jump in it.
+///   speed departs from their neighboring pairs' are a jump in it, unless
+///   the rows held their place in the content: then only UIKit's momentum
+///   ran unevenly.
 /// - At rest, nothing moves.
 /// - A jump (Latest, or a key moving the selection) shows the rows as they
 ///   were, then as they end up, and nothing in between.
@@ -381,15 +383,26 @@ final class FrameProbe {
       // content: rows the list moved move there; a scroll view's momentum
       // that ran unevenly, or was sampled unevenly, moves only the offset.
       let ref = sample.ids.first(where: Self.isRow)
-      let frames = w.map { e in
-        let shift = ref.flatMap { id in
+      let shifts = w.map { e in
+        ref.flatMap { id in
           e.sample.content[id].flatMap { c in w[0].sample.content[id].map { c - $0 } }
         }
-        return
-          "\(fmt(e.dy))/\(fmt(e.dt * 1000))ms/lat \(fmt(e.sample.latency * 1000))/content \(shift.map(fmt) ?? "-")"
+      }
+      let frames = zip(w, shifts).map { e, shift in
+        "\(fmt(e.dy))/\(fmt(e.dt * 1000))ms/lat \(fmt(e.sample.latency * 1000))/content \(shift.map(fmt) ?? "-")"
       }
       // Once per jump: the next check starts after it.
       smooth.removeAll()
+      // The top row held its place in the content through all six frames:
+      // the list moved no rows, and only the offset ran unevenly, as when
+      // UIKit takes two momentum steps in one frame after a frame sampled
+      // late. Not the list's.
+      if shifts.allSatisfy({ $0.map { abs($0) <= 0.5 } ?? false }) {
+        log(
+          "UNEVEN momentum, rows held in the content: speed \(fmt(m)) between \(fmt(p)) and \(fmt(n)) (frames \(frames.joined(separator: ", ")))"
+        )
+        return
+      }
       flag(
         sample,
         "speed \(fmt(m)) between \(fmt(p)) and \(fmt(n)) (moved \(fmt(moved)); frames \(frames.joined(separator: ", ")))"
