@@ -325,7 +325,22 @@ import ZeroTesting
     func receive() async throws -> SocketMessage? { try await messages.next() }
     func close(code: Int, reason: String) async { feed.finish() }
   }
-  final class PartialFrameSocket: ScriptSocket, DeliversPartialFrames, @unchecked Sendable {}
+  final class PartialFrameSocket: ScriptSocket, DeliversPartialFrames, @unchecked Sendable {
+    private let pings = Mutex<[CheckedContinuation<Void, any Error>]>([])
+    func ping() async throws {
+      try await withCheckedThrowingContinuation { c in pings.withLock { $0.append(c) } }
+    }
+    /// Answers the pings waiting: with a pong, or with `error`, as when the connection has ended.
+    func answerPings(_ error: (any Error)? = nil) {
+      let waiting = pings.withLock { p in
+        defer { p = [] }
+        return p
+      }
+      for c in waiting {
+        if let error { c.resume(throwing: error) } else { c.resume() }
+      }
+    }
+  }
 
   final class ScriptTransport: Transport, Sendable {
     let partialFrames: Bool
@@ -375,10 +390,32 @@ import ZeroTesting
     let transport = ScriptTransport(partialFrames: true)
     let (zero, states) = try await connectAndSendCutMessage(transport)
     #expect(zero.connection.state.status == .connected, "the error waits for the connection")
-    transport.last?.feed.finish(
-      throwing: SocketClosed(code: 1006, reason: "reset", wasClean: false))
+    let first = try #require(transport.last as? PartialFrameSocket)
+    first.feed.finish(throwing: SocketClosed(code: 1006, reason: "reset", wasClean: false))
     await settle { transport.count == 2 }
     scheduler.advance(by: 5000)
+    await settle { transport.count == 2 }
+    try #require(transport.count == 2)
+    transport.last?.feed.yield(.text(#"["connected",{"wsid":"w2"}]"#))
+    await settle { zero.connection.state.status == .connected }
+    #expect(zero.connection.state.status == .connected)
+    #expect(!states.all.contains(.error))
+    // The ping failing after the close changes nothing.
+    first.answerPings(SocketClosed(code: 1006, reason: "reset", wasClean: false))
+    await settle { false }
+    #expect(zero.connection.state.status == .connected)
+    zero.close()
+  }
+
+  /// URLSession can report the connection's end seconds after the part of the frame, on a busy device: the ping that fails tells the client the message was cut off, however late the close comes.
+  @Test func aCutMessageReconnectsWhenItsPingFailsBeforeTheCloseComes() async throws {
+    let transport = ScriptTransport(partialFrames: true)
+    let (zero, states) = try await connectAndSendCutMessage(transport)
+    let socket = try #require(transport.last as? PartialFrameSocket)
+    scheduler.advance(by: 5000)
+    await settle { false }
+    #expect(zero.connection.state.status == .connected, "no close yet, and the ping not answered")
+    socket.answerPings(SocketClosed(code: 1006, reason: "Socket is not connected", wasClean: false))
     await settle { transport.count == 2 }
     try #require(transport.count == 2)
     transport.last?.feed.yield(.text(#"["connected",{"wsid":"w2"}]"#))
@@ -388,15 +425,30 @@ import ZeroTesting
     zero.close()
   }
 
-  /// A message that doesn't make sense on a socket that stays open is the server's error, as in JS, once the grace period is over.
-  @Test func aBadMessageOnASocketThatStaysOpenIsAnError() async throws {
+  /// A message that doesn't make sense on a socket that answers a ping is the server's error, as in JS.
+  @Test func aBadMessageOnASocketThatAnswersAPingIsAnError() async throws {
     let transport = ScriptTransport(partialFrames: true)
     let (zero, _) = try await connectAndSendCutMessage(transport)
     #expect(zero.connection.state.status == .connected)
-    scheduler.advance(by: Engine.partialFrameGraceMs)
+    try #require(transport.last as? PartialFrameSocket).answerPings()
     await settle { zero.connection.state.status == .error }
     #expect(zero.connection.state.status == .error)
     #expect(transport.count == 1)
+    zero.close()
+  }
+
+  /// A server that never answers the ping, on a socket that stays open: the error stands once the grace period is over.
+  @Test func aBadMessageOnASocketThatStaysOpenIsAnError() async throws {
+    let transport = ScriptTransport(partialFrames: true)
+    let (zero, _) = try await connectAndSendCutMessage(transport)
+    scheduler.advance(by: Engine.partialFrameGraceMs - 1)
+    await settle { false }
+    #expect(zero.connection.state.status == .connected)
+    scheduler.advance(by: 1)
+    await settle { zero.connection.state.status == .error }
+    #expect(zero.connection.state.status == .error)
+    #expect(transport.count == 1)
+    (transport.last as? PartialFrameSocket)?.answerPings()
     zero.close()
   }
 
@@ -407,6 +459,8 @@ import ZeroTesting
     transport.last?.feed.finish()
     await settle { zero.connection.state.status == .error }
     #expect(zero.connection.state.status == .error)
+    (transport.last as? PartialFrameSocket)?.answerPings(
+      SocketClosed(code: 1000, reason: "", wasClean: true))
     zero.close()
   }
 

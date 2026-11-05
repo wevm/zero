@@ -26,7 +26,10 @@ public protocol SocketEvents: AnyObject {
 }
 
 /// A socket that, when the connection ends partway through a frame, can return the part it has as a whole message, as `URLSessionWebSocketTask` does. A browser `WebSocket` never does.
-package protocol DeliversPartialFrames {}
+package protocol DeliversPartialFrames: Socket {
+  /// Sends a ping and waits for its pong: throws when the connection has ended, as it has when the last message was a cut-off frame.
+  func ping() async throws
+}
 
 /// Runs an async `Transport` as a `SocketFactory`.
 @MainActor
@@ -61,8 +64,9 @@ final class TransportConnection: SocketConnection {
   /// `WebSocket` does: the transport aborts it, or closes the socket if it
   /// opens anyway.
   private var connecting: Task<Void, Never>?
-  /// The socket can deliver part of a frame cut off by the connection's end (`DeliversPartialFrames`).
-  private(set) var deliversPartialFrames = false
+  /// The socket, when it can deliver part of a frame cut off by the connection's end (`DeliversPartialFrames`).
+  private var partialFrames: (any DeliversPartialFrames)?
+  var deliversPartialFrames: Bool { partialFrames != nil }
   /// The engine's log. At `.debug`, the writer logs a send still waiting after a second, which holds up the frames and the close after it, and when it sends the close. A browser's `send` buffers and returns, so zero-client has no such wait to log.
   var log: Log?
 
@@ -79,7 +83,7 @@ final class TransportConnection: SocketConnection {
         return
       }
       self?.connecting = nil
-      self?.deliversPartialFrames = socket is any DeliversPartialFrames
+      self?.partialFrames = socket as? any DeliversPartialFrames
       guard let self, !self.closed else {
         await socket.close(code: 1000, reason: "")
         return
@@ -131,6 +135,21 @@ final class TransportConnection: SocketConnection {
   func send(_ text: String) {
     guard !closed else { return }
     outgoing.yield(.text(text))
+  }
+
+  /// Pings a socket that delivers partial frames: `done` hears whether the connection answered.
+  func ping(_ done: @escaping @MainActor (Bool) -> Void) {
+    guard let socket = partialFrames else { return done(false) }
+    Task { @MainActor in
+      let answered: Bool
+      do {
+        try await socket.ping()
+        answered = true
+      } catch {
+        answered = false
+      }
+      done(answered)
+    }
   }
 
   func close(code: Int?) {
