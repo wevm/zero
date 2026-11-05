@@ -76,16 +76,32 @@
       let factory = TransportSocketFactory(URLSessionTransport())
       let connection = factory.open(
         url: "ws://127.0.0.1:\(port)/", secProtocol: nil, events: recorder)
+      // The writer logs a send still waiting after a second, so a stall
+      // shows whether the client's send or the server's receive stopped.
+      let sink = RecordingLogSink()
+      (connection as? TransportConnection)?.log = Log(level: .debug, sink: sink)
       for i in 0..<200 { connection.send("\(i)") }
       guard case .connected(let peer, _)? = await events.next() else {
         Issue.record("not connected")
         return
       }
-      var texts: [String] = []
-      while texts.count < 200, case .message(_, .text(let text))? = await events.next() {
-        texts.append(text)
+      let texts = Locked<[String]>([])
+      let watchdog = Task {
+        try await Task.sleep(for: .seconds(30))
+        let received = texts.withLock { $0 }
+        Issue.record(
+          """
+          The server got \(received.count) of 200 frames in 30 s, the last \
+          \(received.last ?? "none"); the client logged \(sink.entries.map(\.message))
+          """)
       }
-      #expect(texts == (0..<200).map(String.init))
+      defer { watchdog.cancel() }
+      while texts.withLock({ $0.count }) < 200,
+        case .message(_, .text(let text))? = await events.next()
+      {
+        texts.withLock { $0.append(text) }
+      }
+      #expect(texts.withLock { $0 } == (0..<200).map(String.init))
       #expect(recorder.opened)
 
       peer.close(code: 4003, reason: "done")
