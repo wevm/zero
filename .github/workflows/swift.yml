@@ -95,8 +95,12 @@ jobs:
         run: swift format lint --strict --recursive Sources Tests Package.swift
       - name: Build
         run: swift build --build-tests
+      # Not E2ETests: the end-to-end job runs them, apart from the
+      # conformance suites, whose long synchronous loops hold every thread
+      # of the cooperative pool for tens of seconds on a 4-core runner and
+      # starve their timing-sensitive network tests.
       - name: Test
-        run: swift test --skip-build
+        run: swift test --skip-build --skip E2ETests
       # On its own: it holds the main actor long enough to starve the
       # timing-sensitive suites if it ran beside them.
       - name: ZeroVirtual fuzz
