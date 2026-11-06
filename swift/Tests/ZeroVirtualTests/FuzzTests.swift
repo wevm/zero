@@ -7,9 +7,11 @@ import Testing
 /// scrolls, jumps, inserts, deletes, resizes, reflows, and viewport changes.
 /// After each step settles, the list must hold its invariants (see `check`).
 ///
-/// Every PR runs `ZERO_FUZZ_SEEDS` seeds (50 by default) from
-/// `ZERO_FUZZ_FIRST_SEED` (0); the nightly workflow runs thousands of new
-/// ones. A failure names its seed. To replay one with a trace of the passes
+/// The random seeds run only when `ZERO_FUZZ_SEEDS` or `ZERO_FUZZ_SEED` is
+/// set: they hold the main actor for a minute on a CI runner, which would
+/// starve the timing-sensitive suites beside them. CI runs 200 seeds from
+/// `ZERO_FUZZ_FIRST_SEED` (0) in a step of their own, and the nightly
+/// workflow thousands of new ones. A failure names its seed. To replay one with a trace of the passes
 /// from a step on:
 ///
 ///     ZERO_FUZZ_SEED=<seed> ZERO_FUZZ_TRACE=<step> swift test --filter FuzzTests
@@ -22,7 +24,13 @@ import Testing
     if let failure = Fuzzer.failure(seed: seed) { Issue.record("seed \(seed): \(failure)") }
   }
 
-  @Test("random seeds") func randomSeeds() async {
+  @Test(
+    "random seeds",
+    .enabled(
+      if: ["ZERO_FUZZ_SEEDS", "ZERO_FUZZ_SEED"].contains {
+        ProcessInfo.processInfo.environment[$0] != nil
+      }))
+  func randomSeeds() async {
     let env = ProcessInfo.processInfo.environment
     if let only = env["ZERO_FUZZ_SEED"].flatMap(UInt64.init) {
       let trace = env["ZERO_FUZZ_TRACE"].flatMap(Int.init)
@@ -32,7 +40,7 @@ import Testing
       return
     }
     let first = env["ZERO_FUZZ_FIRST_SEED"].flatMap(UInt64.init) ?? 0
-    let count = env["ZERO_FUZZ_SEEDS"].flatMap(UInt64.init) ?? 50
+    let count = env["ZERO_FUZZ_SEEDS"].flatMap(UInt64.init) ?? 200
     var failed = 0
     for seed in first..<first + count {
       // The other suites' main-actor work runs between seeds, rather than
