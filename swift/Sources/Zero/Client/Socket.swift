@@ -89,9 +89,11 @@ final class TransportConnection: SocketConnection {
         return
       }
       // One writer keeps the frames in order; each send in a task of its
-      // own could overtake the one before.
+      // own could overtake the one before. It runs off the main actor: on
+      // it, every frame would wait for the main actor to come back from its
+      // send, so a busy main thread would hold up the frames.
       let log = self.log.flatMap { $0.level <= .debug ? $0 : nil }
-      Task {
+      Task.detached {
         for await frame in frames {
           switch frame {
           case .text(let text):

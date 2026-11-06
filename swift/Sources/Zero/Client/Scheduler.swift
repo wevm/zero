@@ -76,7 +76,7 @@ public final class SystemScheduler: Scheduler {
     return timer
   }
 
-  static func milliseconds(_ d: Duration) -> Double {
+  nonisolated static func milliseconds(_ d: Duration) -> Double {
     let (s, attoseconds) = d.components
     return Double(s) * 1000 + Double(attoseconds) / 1e15
   }
