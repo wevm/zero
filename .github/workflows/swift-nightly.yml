@@ -1,0 +1,110 @@
+name: Swift Nightly
+
+# Long fuzz runs of the Swift client, on seeds the PR checks don't reach. Each
+# run takes new seeds from its run number, and a failure names the seed to
+# replay: JS's answers to new random queries, pushes and client scenarios,
+# compared with Swift's; and the ZeroVirtual fuzz.
+
+on:
+  schedule:
+    # 3 AM US Eastern.
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+    inputs:
+      seeds:
+        description: How many seeds to run
+        default: '10000'
+      first-seed:
+        description: The seed (the run number when empty); ZeroVirtual's first seed
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  # JS's answers on new seeds, 5 to 10 times the PR checks' cases. The seeds
+  # are printed, so a mismatch replays with the same environment variables.
+  differential-vectors:
+    name: Differential vectors (JS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.11.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - run: pnpm install --frozen-lockfile
+      - name: Generate
+        working-directory: packages/zero-conformance
+        env:
+          SEED: ${{ inputs.first-seed || format('{0}', github.run_number) }}
+        run: |
+          base=$((1000000 + SEED))
+          export IVM_FUZZ_SEED=$base IVM_FUZZ_CASES=6000
+          export SWEEP_IVM_SEED=$base SWEEP_IVM_CASES=15000
+          export HARDEN_IVM_SEED=$((base * 10)) HARDEN_IVM_SEEDS=5
+          export AGG_FUZZ_SEED=$base AGG_FUZZ_CASES=750
+          env | grep -E '_(SEED|SEEDS|CASES)=' | sort
+          pnpm exec vitest run src/ivm/ivm.test.ts src/ivm/ivm-features.test.ts \
+            src/ivm/sweep-ivm.test.ts src/ivm/harden-ivm.test.ts src/client/bughunt.test.ts
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: differential-vectors
+          path: packages/zero-conformance/generated/
+          if-no-files-found: error
+          retention-days: 7
+
+  differential-swift:
+    name: Differential vectors (Swift)
+    needs: differential-vectors
+    runs-on: ubuntu-latest
+    container: swift:6.2.4-bookworm
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: swift
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: differential-vectors
+          path: packages/zero-conformance/generated/
+      - name: Install system libraries
+        run: apt-get update && apt-get install -y --no-install-recommends libsqlite3-dev
+      - name: Build
+        run: swift build --build-tests
+      - name: Compare with JS
+        run: swift test --skip-build --filter 'HardenIVMTests|SweepIVMTests|IVMConformanceTests|BugHuntTests'
+
+  virtual-fuzz:
+    name: ZeroVirtual fuzz
+    runs-on: ubuntu-latest
+    container: swift:6.2.4-bookworm
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: swift
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Install system libraries
+        run: apt-get update && apt-get install -y --no-install-recommends libsqlite3-dev
+      - name: Build
+        run: swift build --build-tests
+      # Past the PR checks' seeds (0 to 199), a new range for each run.
+      - name: Fuzz
+        env:
+          ZERO_FUZZ_SEEDS: ${{ inputs.seeds || '10000' }}
+          ZERO_FUZZ_FIRST_SEED: ${{ inputs.first-seed || format('{0}0000', github.run_number) }}
+        run: |
+          echo "Seeds $ZERO_FUZZ_FIRST_SEED to $((ZERO_FUZZ_FIRST_SEED + ZERO_FUZZ_SEEDS - 1))"
+          swift test --skip-build --filter FuzzTests

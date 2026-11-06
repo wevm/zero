@@ -42,6 +42,9 @@ jobs:
       - run: swift --version
       - name: Build and test (macOS)
         run: swift test
+      # On its own: see swift.yml.
+      - name: ZeroVirtual fuzz
+        run: ZERO_FUZZ_SEEDS=200 swift test --skip-build --filter FuzzTests
       - name: Docs
         run: scripts/docs.sh
 

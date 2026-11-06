@@ -97,6 +97,10 @@ jobs:
         run: swift build --build-tests
       - name: Test
         run: swift test --skip-build
+      # On its own: it holds the main actor long enough to starve the
+      # timing-sensitive suites if it ran beside them.
+      - name: ZeroVirtual fuzz
+        run: ZERO_FUZZ_SEEDS=200 swift test --skip-build --filter FuzzTests
       # Broken symbol links and undocumented parameters fail. ZeroUI is
       # Apple-only; swift-macos.yml checks it.
       - name: Docs
