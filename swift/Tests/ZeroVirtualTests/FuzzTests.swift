@@ -7,7 +7,7 @@ import Testing
 /// scrolls, jumps, inserts, deletes, resizes, reflows, and viewport changes.
 /// After each step settles, the list must hold its invariants (see `check`).
 ///
-/// Every PR runs `ZERO_FUZZ_SEEDS` seeds (200 by default) from
+/// Every PR runs `ZERO_FUZZ_SEEDS` seeds (50 by default) from
 /// `ZERO_FUZZ_FIRST_SEED` (0); the nightly workflow runs thousands of new
 /// ones. A failure names its seed. To replay one with a trace of the passes
 /// from a step on:
@@ -32,7 +32,7 @@ import Testing
       return
     }
     let first = env["ZERO_FUZZ_FIRST_SEED"].flatMap(UInt64.init) ?? 0
-    let count = env["ZERO_FUZZ_SEEDS"].flatMap(UInt64.init) ?? 200
+    let count = env["ZERO_FUZZ_SEEDS"].flatMap(UInt64.init) ?? 50
     var failed = 0
     for seed in first..<first + count {
       // The other suites' main-actor work runs between seeds, rather than

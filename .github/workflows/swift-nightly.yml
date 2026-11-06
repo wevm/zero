@@ -100,7 +100,7 @@ jobs:
         run: apt-get update && apt-get install -y --no-install-recommends libsqlite3-dev
       - name: Build
         run: swift build --build-tests
-      # Past the PR checks' seeds (0 to 199), a new range for each run.
+      # Past the PR checks' seeds (0 to 49), a new range for each run.
       - name: Fuzz
         env:
           ZERO_FUZZ_SEEDS: ${{ inputs.seeds || '10000' }}
