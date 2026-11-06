@@ -40,8 +40,9 @@ jobs:
         with:
           persist-credentials: false
       - run: swift --version
+      # Not E2ETests, which the end-to-end job runs: see swift.yml.
       - name: Build and test (macOS)
-        run: swift test
+        run: swift test --skip E2ETests
       # On its own: see swift.yml.
       - name: ZeroVirtual fuzz
         run: ZERO_FUZZ_SEEDS=200 swift test --skip-build --filter FuzzTests

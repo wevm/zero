@@ -266,6 +266,7 @@ Vector storage and fuzzing:
 - Seeded random query and push fuzz cases are generated in CI from fixed seeds (not checked in) and run against Swift.
 - `swift-nightly.yml` generates the seeded corpora again each night on new seeds, from the run number, at 5 to 10 times the PR checks' cases, and runs the Swift suites on them. A mismatch names its case and the seeds the job printed; replaying it is setting the same environment variables. A live differential harness (JS drives a Swift CLI over stdio and shrinks failures) is deferred to v1.x.
 - ZeroVirtual has no JS oracle for scrolling, so `FuzzTests` checks invariants instead: after each random step settles, a row is on screen, the loaded rows are a run of the list, and rows on screen hold still through changes above them. PRs run 200 seeds, in a CI step of their own; `swift-nightly.yml` runs 10,000 new ones each night.
+- `ChaosFuzzTests` takes two clients through 40 random steps against zero-cache behind a `ChaosProxy`: mutations, cuts, outages, stalls, cuts partway through a message, Postgres writes behind their back, and relaunches. Then the network heals and the oracle is convergence: Postgres holds each mutation once, each client's last mutation ID counts its mutations, and both clients see what Postgres holds. The E2E jobs run 2 seeds; the nightly runs 150 new ones.
 
 ### JS bugs found, not yet reported upstream
 

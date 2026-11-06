@@ -133,8 +133,11 @@ struct WalkingSkeletonTests {
     for (table, rows) in rows.sorted(by: { $0.key < $1.key }) {
       for row in rows { print("[e2e] \(table) \(JSONSerializer.stringify(.object(row)))") }
     }
-    // The fixture's open issues, their comments, and their owners.
-    #expect(Set(issues.map { $0["id"]! }) == ["i1", "i3", "i4"])
+    // The fixture's open issues, their comments, and their owners. Suites
+    // running beside this one write open issues of their own, under
+    // `Chaos.prefix`.
+    let fixtureIssues = issues.filter { $0["id"]?.stringValue?.hasPrefix("chaos-") != true }
+    #expect(Set(fixtureIssues.map { $0["id"]! }) == ["i1", "i3", "i4"])
     #expect(Set(comments.map { $0["id"]! }) == ["c1", "c2", "c3"])
     #expect(Set(users.map { $0["id"]! }) == ["u1"])
     #expect(issues.first { $0["id"] == "i3" }?["title"] == "Emoji 😀 in titles")
