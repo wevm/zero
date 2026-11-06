@@ -70,6 +70,26 @@ function createWebSocketHandoffHandler<P>(
   ) => {
     let sent = false;
 
+    // Nothing listens for errors on an upgraded or handed-off socket until
+    // `ws` takes it, so a client reset while the handoff waits (e.g. for a
+    // worker) would be an uncaught exception that takes down the process.
+    const onSocketError = (error: Error) => {
+      lc.debug?.('socket error before websocket handoff', error);
+      socket.destroy();
+    };
+    socket.on('error', onSocketError);
+
+    function upgrade(onConnection: (ws: WebSocket) => void) {
+      // `ws` listens for socket errors itself from here.
+      socket.off('error', onSocketError);
+      wss.handleUpgrade(
+        message as IncomingMessage,
+        socket,
+        Buffer.from(head),
+        onConnection,
+      );
+    }
+
     function send({payload, sender}: HandoffSpec<P>) {
       assert(!sent, 'Handoff callback already invoked');
       sent = true;
@@ -92,30 +112,20 @@ function createWebSocketHandoffHandler<P>(
       // Returning an error on the HTTP handshake looks like a hanging connection
       // (at least from Chrome) and doesn't report any meaningful error in the browser.
       // Instead, finish the upgrade to a websocket and then close it with an error.
-      wss.handleUpgrade(
-        message as IncomingMessage,
-        socket,
-        Buffer.from(head),
-        ws => {
-          ws.on('error', error => {
-            lc.warn?.('error while rejecting websocket handoff', error);
-            ws.terminate();
-          });
-          closeWithError(lc, ws, error, PROTOCOL_ERROR);
-        },
-      );
+      upgrade(ws => {
+        ws.on('error', error => {
+          lc.warn?.('error while rejecting websocket handoff', error);
+          ws.terminate();
+        });
+        closeWithError(lc, ws, error, PROTOCOL_ERROR);
+      });
     }
 
     function accept(onConnection: (ws: WebSocket) => void, headers?: string[]) {
       if (headers?.length) {
         extraHeaders.set(message as IncomingMessage, headers);
       }
-      wss.handleUpgrade(
-        message as IncomingMessage,
-        socket,
-        Buffer.from(head),
-        onConnection,
-      );
+      upgrade(onConnection);
     }
 
     try {
