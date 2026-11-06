@@ -22,7 +22,7 @@ import Testing
     if let failure = Fuzzer.failure(seed: seed) { Issue.record("seed \(seed): \(failure)") }
   }
 
-  @Test("random seeds") func randomSeeds() {
+  @Test("random seeds") func randomSeeds() async {
     let env = ProcessInfo.processInfo.environment
     if let only = env["ZERO_FUZZ_SEED"].flatMap(UInt64.init) {
       let trace = env["ZERO_FUZZ_TRACE"].flatMap(Int.init)
@@ -35,6 +35,9 @@ import Testing
     let count = env["ZERO_FUZZ_SEEDS"].flatMap(UInt64.init) ?? 200
     var failed = 0
     for seed in first..<first + count {
+      // The other suites' main-actor work runs between seeds, rather than
+      // waiting out the whole run.
+      await Task.yield()
       guard let failure = Fuzzer.failure(seed: seed) else { continue }
       failed += 1
       Issue.record("seed \(seed): \(failure)")
