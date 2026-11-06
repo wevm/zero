@@ -264,7 +264,7 @@ Vector storage and fuzzing:
 
 - Curated vectors are checked in. CI regenerates them from JS and fails if they are stale.
 - Seeded random query and push fuzz cases are generated in CI from fixed seeds (not checked in) and run against Swift.
-- A live differential harness (JS drives a Swift CLI over stdio with random seeds and shrinks failures) is deferred to v1.x.
+- `swift-nightly.yml` generates the seeded corpora again each night on new seeds, from the run number, at 5 to 10 times the PR checks' cases, and runs the Swift suites on them. A mismatch names its case and the seeds the job printed; replaying it is setting the same environment variables. A live differential harness (JS drives a Swift CLI over stdio and shrinks failures) is deferred to v1.x.
 - ZeroVirtual has no JS oracle for scrolling, so `FuzzTests` checks invariants instead: after each random step settles, a row is on screen, the loaded rows are a run of the list, and rows on screen hold still through changes above them. PRs run 200 seeds; `swift-nightly.yml` runs 10,000 new ones each night.
 
 ### JS bugs found, not yet reported upstream
