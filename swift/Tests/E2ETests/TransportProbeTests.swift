@@ -227,12 +227,22 @@ struct TransportProbeTests {
   func clientReconnectsAfterTheServerGoesAwayMidFrame(_ kind: TransportKind) async throws {
     for binary in [false, true] {
       let connections = Box(0)
+      // What the server saw, in ms from the start, so that a reconnect that never opens shows whether the server answered its handshake.
+      let start = ContinuousClock.now
+      let seen = Box<[String]>([])
+      let saw: @Sendable (String) -> Void = { event in
+        let ms = (ContinuousClock.now - start) / .milliseconds(1)
+        seen.withLock { $0.append("\(event) at \(Int(ms)) ms") }
+      }
       let server = try await ScriptedServer { c in
         let n = connections.withLock {
           $0 += 1
           return $0
         }
-        await c.write(c.accept() + ScriptedServer.text(#"["connected",{"wsid":"w\#(n)"}]"#))
+        saw("connection \(n) upgrade request")
+        let upgrade = c.accept()
+        await c.write(upgrade + ScriptedServer.text(#"["connected",{"wsid":"w\#(n)"}]"#))
+        saw("connection \(n) answered")
         if n == 1 {
           try? await Task.sleep(for: .milliseconds(300))
           let row =
@@ -265,6 +275,7 @@ struct TransportProbeTests {
         "[probe] \(kind) client, server gone mid-\(binary ? "binary" : "text") frame: reconnected \(reconnected), states \(states), \(zero.connection.state)"
       )
       if !reconnected {
+        print("[probe]   server: \(seen.withLock { $0 })")
         for line in logs.all.suffix(8) { print("[probe]   \(line.prefix(300))") }
       }
       #expect(reconnected, "binary \(binary): \(zero.connection.state)")
