@@ -15,11 +15,7 @@ test('a client reset while a handoff is pending does not crash the process', asy
   let handoffStarted!: () => void;
   const started = new Promise<void>(r => (handoffStarted = r));
   // The handoff waits, as the runner's does for its worker.
-  installWebSocketHandoff(
-    createSilentLogContext(),
-    () => handoffStarted(),
-    s,
-  );
+  installWebSocketHandoff(createSilentLogContext(), () => handoffStarted(), s);
   await new Promise<void>(r => s.listen(0, '127.0.0.1', r));
   const {port} = s.address() as AddressInfo;
 
