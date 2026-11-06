@@ -1,0 +1,46 @@
+name: Swift Nightly
+
+# Long fuzz runs of the Swift client, on seeds the PR checks don't reach. Each
+# run takes a new range of seeds, and a failure names the seed to replay.
+
+on:
+  schedule:
+    # 3 AM US Eastern.
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+    inputs:
+      seeds:
+        description: How many seeds to run
+        default: '10000'
+      first-seed:
+        description: The first seed; empty for a new range
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  virtual-fuzz:
+    name: ZeroVirtual fuzz
+    runs-on: ubuntu-latest
+    container: swift:6.2.4-bookworm
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: swift
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Install system libraries
+        run: apt-get update && apt-get install -y --no-install-recommends libsqlite3-dev
+      - name: Build
+        run: swift build --build-tests
+      # Past the PR checks' seeds (0 to 199), a new range for each run.
+      - name: Fuzz
+        env:
+          ZERO_FUZZ_SEEDS: ${{ inputs.seeds || '10000' }}
+          ZERO_FUZZ_FIRST_SEED: ${{ inputs.first-seed || format('{0}0000', github.run_number) }}
+        run: |
+          echo "Seeds $ZERO_FUZZ_FIRST_SEED to $((ZERO_FUZZ_FIRST_SEED + ZERO_FUZZ_SEEDS - 1))"
+          swift test --skip-build --filter FuzzTests
