@@ -51,7 +51,9 @@ jobs:
           export HARDEN_IVM_SEED=$((base * 10)) HARDEN_IVM_SEEDS=5
           export AGG_FUZZ_SEED=$base AGG_FUZZ_CASES=750
           env | grep -E '_(SEED|SEEDS|CASES)=' | sort
-          pnpm exec vitest run src/ivm/ivm.test.ts src/ivm/ivm-features.test.ts \
+          # Five to ten times the cases outlast vitest's 10 s default; the
+          # job's timeout bounds them.
+          pnpm exec vitest run --test-timeout=600000 src/ivm/ivm.test.ts src/ivm/ivm-features.test.ts \
             src/ivm/sweep-ivm.test.ts src/ivm/harden-ivm.test.ts src/client/bughunt.test.ts
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
