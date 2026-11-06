@@ -18,6 +18,8 @@ targets:
       testTargets: [ZBugsUITests]
     sources:
       - path: ZBugsApp.swift
+      # The app icon (Icon Composer): the Zero logo from zero.rocicorp.dev.
+      - path: AppIcon.icon
       - path: Info.plist
         buildPhase: none
     dependencies:
@@ -32,6 +34,7 @@ targets:
         SWIFT_VERSION: '6.0'
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_FILE: Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_CFBundleDisplayName: Zero Bugs
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
