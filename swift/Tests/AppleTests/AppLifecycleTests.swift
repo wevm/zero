@@ -30,15 +30,23 @@
       private var peers: [WebSocketServer.Peer] = []
       private var task: Task<Void, Never>?
 
-      init() async throws {
-        server = try WebSocketServer()
+      /// Its events go to `log`, with the client's, so a test that times out shows what the server saw.
+      init(_ log: RecordingLogSink) async throws {
+        server = try WebSocketServer(trace: {
+          log.log(level: .debug, message: "server: \($0)", context: [:])
+        })
         port = try await server.start()
-        task = Task { @MainActor [server] in
+        task = Task { @MainActor [server, log] in
           for await event in server.events {
             switch event {
             case .connected(let peer, _):
               self.connected += 1
               self.peers.append(peer)
+              log.log(
+                level: .debug,
+                message:
+                  "server: \(peer.connection.endpoint) open, acknowledging: \(self.acknowledge)",
+                context: [:])
               if self.acknowledge { peer.send(.text(#"["connected",{"wsid":"w"}]"#)) }
             case .message(let peer, .text(let text)):
               self.messages.append(text)
@@ -177,7 +185,7 @@
     }
 
     @Test func hiddenDisconnectsAndShownReconnects() async throws {
-      let server = try await Server()
+      let server = try await Server(log)
       defer { server.stop() }
       let zero = try makeZero(server)
       defer { zero.close() }
@@ -193,7 +201,7 @@
 
     /// Hidden while the socket is open but not yet acknowledged: the client ends up disconnected with no socket open, and connects when shown. If the attempt timed out first (`timedOutWhileStopped`), the client closed the socket and, hidden, waits to be shown, still connecting, as zero-client does.
     @Test func hiddenWhileConnecting() async throws {
-      let server = try await Server()
+      let server = try await Server(log)
       defer { server.stop() }
       server.acknowledge = false
       let zero = try makeZero(server)
@@ -218,7 +226,7 @@
 
     /// Many transitions in a row, without waiting between them: the client ends up in the state of the last one, with at most one socket open.
     @Test func rapidTransitionsSettleOnTheLast() async throws {
-      let server = try await Server()
+      let server = try await Server(log)
       defer { server.stop() }
       let zero = try makeZero(server)
       defer { zero.close() }
@@ -250,7 +258,7 @@
 
     /// Transitions after `close()` do nothing: no socket is opened and the client stays closed.
     @Test func transitionsAfterCloseDoNothing() async throws {
-      let server = try await Server()
+      let server = try await Server(log)
       defer { server.stop() }
       let zero = try makeZero(server)
       try await eventually("connected") { zero.connection.state == .connected }
@@ -268,7 +276,7 @@
 
     /// A `Zero` released without `close()`: its observers go with it, and later transitions don't reach it.
     @Test func releasedZeroStopsObserving() async throws {
-      let server = try await Server()
+      let server = try await Server(log)
       defer { server.stop() }
       weak var weakZero: Zero<Void>?
       do {
@@ -288,7 +296,7 @@
     #if canImport(UIKit)
       /// In the background, the client waits for the server to confirm the pending mutations before it disconnects, up to 10 seconds; back in the foreground before that, it stays connected.
       @Test func backgroundWaitsForPendingMutationsUntilTheForeground() async throws {
-        let server = try await Server()
+        let server = try await Server(log)
         defer { server.stop() }
         let zero = try makeZero(server)
         defer { zero.close() }
@@ -305,7 +313,7 @@
 
       /// The server never confirms: the client disconnects after the 10 seconds.
       @Test func backgroundGivesUpWaitingAfterTenSeconds() async throws {
-        let server = try await Server()
+        let server = try await Server(log)
         defer { server.stop() }
         let zero = try makeZero(server)
         defer { zero.close() }
