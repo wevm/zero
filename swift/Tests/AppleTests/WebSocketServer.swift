@@ -64,8 +64,11 @@
     let events: AsyncStream<Event>
     private let continuation: AsyncStream<Event>.Continuation
     private let protocols = Locked<[String]>([])
+    /// Reports the listener's and the connections' state changes, for a test to show when it fails.
+    private let trace: (@Sendable (String) -> Void)?
 
-    init() throws {
+    init(trace: (@Sendable (String) -> Void)? = nil) throws {
+      self.trace = trace
       (events, continuation) = AsyncStream<Event>.makeStream()
       let parameters = NWParameters.tcp
       let options = NWProtocolWebSocket.Options()
@@ -86,15 +89,18 @@
       let continuation = self.continuation
       let protocols = self.protocols
       let queue = self.queue
+      let trace = self.trace
       listener.newConnectionHandler = { connection in
         let peer = Peer(connection)
+        trace?("accepted \(connection.endpoint)")
         connection.stateUpdateHandler = { state in
+          trace?("\(connection.endpoint) \(state)")
           if case .ready = state {
             continuation.yield(.connected(peer, protocols: protocols.withLock { $0 }))
           }
         }
         connection.start(queue: queue)
-        Self.receive(peer, continuation)
+        Self.receive(peer, continuation, trace)
       }
       return try await withCheckedThrowingContinuation {
         (c: CheckedContinuation<UInt16, any Error>) in
@@ -106,6 +112,7 @@
           }
         }
         listener.stateUpdateHandler = { [listener] state in
+          trace?("listener \(state)")
           switch state {
           case .ready: if first() { c.resume(returning: listener.port?.rawValue ?? 0) }
           case .failed(let error): if first() { c.resume(throwing: error) }
@@ -121,9 +128,13 @@
       continuation.finish()
     }
 
-    private static func receive(_ peer: Peer, _ events: AsyncStream<Event>.Continuation) {
+    private static func receive(
+      _ peer: Peer, _ events: AsyncStream<Event>.Continuation,
+      _ trace: (@Sendable (String) -> Void)?
+    ) {
       peer.connection.receiveMessage { data, context, _, error in
-        if error != nil {
+        if let error {
+          trace?("\(peer.connection.endpoint) receive failed: \(error)")
           events.yield(.closed(peer, code: 1006))
           return
         }
@@ -142,12 +153,13 @@
           case .applicationCode(let c)?, .privateCode(let c)?: code = Int(c)
           default: break
           }
+          trace?("\(peer.connection.endpoint) close frame \(code)")
           events.yield(.closed(peer, code: code))
           return
         default:
           break
         }
-        receive(peer, events)
+        receive(peer, events, trace)
       }
     }
   }
