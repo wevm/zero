@@ -2,6 +2,7 @@ import type {JSONValue} from '../../../shared/src/json.ts';
 import type {
   AggregateFunction,
   AST,
+  Condition,
   SimpleOperator,
 } from '../../../zero-protocol/src/ast.ts';
 import type {Row} from '../../../zero-protocol/src/data.ts';
@@ -323,6 +324,45 @@ function plain(data: unknown): JSONValue {
 }
 
 /**
+ * `ast` with each ordering naming a column once, at its first mention: the
+ * same order, as a later mention only compares values the first found equal.
+ * JS runs this instead of `ast`, whose answer it can get wrong: a fetch
+ * constrained on another column, through an ordering that names a column
+ * again in the other direction, starts past every match
+ * (`MemorySource.#fetch`'s scan start keeps the last bound per column; see
+ * `swift/DESIGN.md`). Swift runs `ast` and must give this answer.
+ */
+export function withColumnsOrderedOnce(ast: AST): AST {
+  const condition = (c: Condition): Condition =>
+    c.type === 'and' || c.type === 'or'
+      ? {...c, conditions: c.conditions.map(condition)}
+      : c.type === 'correlatedSubquery'
+        ? {
+            ...c,
+            related: {
+              ...c.related,
+              subquery: withColumnsOrderedOnce(c.related.subquery),
+            },
+          }
+        : c;
+  return {
+    ...ast,
+    ...(ast.orderBy && {
+      orderBy: ast.orderBy.filter(
+        ([col], i) => ast.orderBy!.findIndex(([c]) => c === col) === i,
+      ),
+    }),
+    ...(ast.where && {where: condition(ast.where)}),
+    ...(ast.related && {
+      related: ast.related.map(r => ({
+        ...r,
+        subquery: withColumnsOrderedOnce(r.subquery),
+      })),
+    }),
+  };
+}
+
+/**
  * Materializes `ast` over sources loaded with `data`, applies `pushes` one
  * by one, and records the view after each.
  */
@@ -342,6 +382,7 @@ export function runQuery(
     sources[name] = source;
   }
   const delegate = new TestBuilderDelegate(sources);
+  ast = withColumnsOrderedOnce(ast);
   let recorder: Recorder;
   let view: ArrayView<never>;
   try {

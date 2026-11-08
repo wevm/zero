@@ -198,6 +198,13 @@ is written or sent.
   return prevented full hydration") and the change fails as above. Swift
   keeps working and shows the rows JS shows once its `Take` reads the rest
   of such a fetch, as the comment by that assertion proposes.
+- **Ordering by a column twice.** When a query or subquery orders by one
+  column twice in opposite directions, such as
+  `.orderBy("text", .desc).orderBy("text", .asc)`, JS can't find its rows
+  when it looks them up for one parent row while applying a change. Its
+  views go wrong (a flipped `whereExists` keeps a parent row whose matches
+  were removed), or the change fails as above. Swift orders by the first
+  direction, as both do, and finds the rows.
 - **Nulls in columns that can't be null.** When the server sends null for
   a column the schema says isn't optional, a `String`, `Double`, `Int`, or
   `Bool` property reads as `""`, `0`, or `false`. JS hands the null
