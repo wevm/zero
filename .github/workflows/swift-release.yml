@@ -206,5 +206,15 @@ jobs:
         with:
           name: zero-swift-npm
           path: dist/npm
+      # npm makes a new version visible to `npm view` a minute or so after the
+      # publish returns, so a run that plans right after the previous run's
+      # publish can still choose to publish. The registry's refusal settles it.
       - name: Publish
-        run: npm publish "dist/npm/zero-swift-$VERSION.tgz" --provenance --access public
+        run: |
+          set -uo pipefail
+          npm publish "dist/npm/zero-swift-$VERSION.tgz" --provenance --access public 2>&1 | tee publish.log && exit 0
+          if grep -q 'cannot publish over the previously published versions' publish.log; then
+            echo "::notice::zero-swift@$VERSION is already on npm."
+            exit 0
+          fi
+          exit 1
