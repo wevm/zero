@@ -4,7 +4,9 @@
  * seed data, zbugs' API server (apps/zbugs/api), and zero-cache, all from
  * this repository's sources. With `ZBUGS_KEEP=1` it keeps the database, the
  * replica, and its signing keys from the last run instead, so an app keeps
- * its local data and its token across restarts.
+ * its local data and its token across restarts, and it outlives zero-cache:
+ * when zero-cache exits, as when Postgres is unreachable after this machine
+ * sleeps, it restarts zero-cache once Postgres answers again.
  *
  *   node apps/zbugs-swift/server/server.ts
  *
@@ -25,9 +27,10 @@
  *   ZBUGS_API_PORT   API server port (default 5173)
  *   ZBUGS_DIR        working directory for the replica (default a temp dir)
  *   ZBUGS_KEEP       1 to keep the last run's database, and the replica and
- *                    keys in ZBUGS_DIR, which it needs
+ *                    keys in ZBUGS_DIR, which it needs, and to restart
+ *                    zero-cache when it exits
  */
-import {execFileSync, spawn} from 'node:child_process';
+import {execFile, execFileSync, spawn} from 'node:child_process';
 import {
   existsSync,
   mkdtempSync,
@@ -40,6 +43,7 @@ import {registerHooks} from 'node:module';
 import {networkInterfaces, tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
+import {promisify} from 'node:util';
 import {createJwkPair} from '../../../packages/zero-cache/src/auth/jwt.ts';
 
 const env = process.env;
@@ -191,34 +195,66 @@ const {fastify} = (await import('../../zbugs/api/index.ts')) as {
 };
 await fastify.listen({port: apiPort, host});
 
-const zeroCache = spawn(
-  process.execPath,
-  [here('../../../packages/zero-cache/src/server/runner/main.ts')],
-  {
-    stdio: ['ignore', 'inherit', 'inherit'],
-    env: {
-      ...env,
-      ['NODE_ENV']: 'development',
-      ['ZERO_UPSTREAM_DB']: upstreamURL,
-      ['ZERO_REPLICA_FILE']: join(workDir, 'replica.db'),
-      ['ZERO_PORT']: String(port),
-      ['ZERO_QUERY_URL']: apiURLs('query'),
-      ['ZERO_MUTATE_URL']: apiURLs('mutate'),
-      ['ZERO_NUM_SYNC_WORKERS']: '1',
-      ['ZERO_LOG_LEVEL']: env['ZERO_LOG_LEVEL'] ?? 'info',
+function startZeroCache() {
+  const child = spawn(
+    process.execPath,
+    [here('../../../packages/zero-cache/src/server/runner/main.ts')],
+    {
+      stdio: ['ignore', 'inherit', 'inherit'],
+      env: {
+        ...env,
+        ['NODE_ENV']: 'development',
+        ['ZERO_UPSTREAM_DB']: upstreamURL,
+        ['ZERO_REPLICA_FILE']: join(workDir, 'replica.db'),
+        ['ZERO_PORT']: String(port),
+        ['ZERO_QUERY_URL']: apiURLs('query'),
+        ['ZERO_MUTATE_URL']: apiURLs('mutate'),
+        ['ZERO_NUM_SYNC_WORKERS']: '1',
+        ['ZERO_LOG_LEVEL']: env['ZERO_LOG_LEVEL'] ?? 'info',
+      },
     },
-  },
-);
+  );
+  child.on('exit', code => void restartZeroCache(code));
+  return child;
+}
 
-function stop(code: number) {
+/**
+ * zero-cache exits when it loses Postgres, as when this machine sleeps and
+ * Docker's VM wakes after it, and leaves restarting it to a supervisor. A
+ * kept backend is long-lived, so it restarts zero-cache once Postgres
+ * answers again; otherwise, as in the tests, it stops.
+ */
+async function restartZeroCache(code: number | null) {
+  process.stderr.write(`zero-cache exited with ${code}\n`);
+  if (!keep || !ready) {
+    stop(1);
+  }
+  do {
+    await new Promise(resolve => setTimeout(resolve, 5000));
+  } while (!(await postgresAnswers()));
+  process.stderr.write('restarting zero-cache\n');
+  zeroCache = startZeroCache();
+}
+
+async function postgresAnswers() {
+  try {
+    await promisify(execFile)('psql', [upstreamURL, '-tAc', 'SELECT 1'], {
+      env: {...env, ['PGCONNECT_TIMEOUT']: '5'},
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+let ready = false;
+let zeroCache = startZeroCache();
+
+function stop(code: number): never {
   zeroCache.kill('SIGTERM');
   void fastify.close();
   process.exit(code);
 }
-zeroCache.on('exit', code => {
-  process.stderr.write(`zero-cache exited with ${code}\n`);
-  stop(1);
-});
 process.on('SIGINT', () => stop(0));
 process.on('SIGTERM', () => stop(0));
 
@@ -249,6 +285,7 @@ const token = execFileSync(
   },
 ).trim();
 process.stdout.write(`token ${token}\n`);
+ready = true;
 process.stdout.write(
   `ready ws://${localHost}:${port} http://${localHost}:${apiPort}\n`,
 );

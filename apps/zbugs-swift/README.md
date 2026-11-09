@@ -39,7 +39,9 @@ ZBUGS_KEEP=1 ZBUGS_DIR=~/.zbugs-swift ZBUGS_PG=... \
 ```
 
 It seeds the database only when it doesn't exist; drop it, or run once
-without `ZBUGS_KEEP`, to start over.
+without `ZBUGS_KEEP`, to start over. A kept backend also restarts zero-cache
+when zero-cache exits, once Postgres answers again: zero-cache exits when it
+loses Postgres, as when the Mac sleeps with Postgres in Docker.
 
 Then generate the Xcode project and run the `ZBugsApp` scheme on a Mac or an
 iOS simulator:
