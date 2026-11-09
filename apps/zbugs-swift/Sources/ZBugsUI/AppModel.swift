@@ -77,6 +77,29 @@
       restart()
     }
 
+    /// Whether a server is set to this device itself, where the app can't
+    /// reach the backend: see `isThisDevice`.
+    public var serversAreThisDevice: Bool {
+      Self.isThisDevice(cacheURL) || Self.isThisDevice(apiURL)
+    }
+
+    /// Whether `url` is this iPhone or iPad itself: on one, 127.0.0.1 and
+    /// localhost are the device, not the Mac the backend runs on, as they
+    /// are from that Mac and from the simulator.
+    public nonisolated static func isThisDevice(_ url: String) -> Bool {
+      #if os(iOS) && !targetEnvironment(simulator)
+        guard var host = URLComponents(string: url)?.host?.lowercased() else { return false }
+        host = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        return host == "localhost" || host.hasPrefix("127.") || host == "::1"
+          || host == "0.0.0.0"
+      #else
+        false
+      #endif
+    }
+
+    public nonisolated static let thisDeviceWarning =
+      "127.0.0.1 and localhost are this device, not your Mac. Enter the Mac's address on the network, such as http://192.168.1.20:4848."
+
     /// Why the last mutation failed, for an alert; nil once seen.
     public var mutationError: String?
 

@@ -83,6 +83,12 @@
             .navigationSplitViewColumnWidth(min: 280, ideal: 340)
           #endif
           .toolbar { toolbar }
+          // Otherwise the list only says it's connecting, as it never will.
+          .safeAreaInset(edge: .bottom) {
+            if model.serversAreThisDevice && model.zero.connection.state != .connected {
+              ServersWarning { sheet = .servers }
+            }
+          }
       } detail: {
         if let selection {
           IssueDetail(id: selection, zero: model.zero)
@@ -291,6 +297,25 @@
         try? await Task.sleep(for: .milliseconds(500))
         if !Task.isCancelled { action() }
       }
+    }
+  }
+
+  /// Servers set to this device, with a way to change them.
+  private struct ServersWarning: View {
+    let change: () -> Void
+
+    var body: some View {
+      VStack(alignment: .leading, spacing: 8) {
+        SwiftUI.Label(AppModel.thisDeviceWarning, systemImage: "exclamationmark.triangle.fill")
+          .symbolRenderingMode(.multicolor)
+        Button("Servers…", action: change)
+          .buttonStyle(.borderedProminent)
+      }
+      .font(.callout)
+      .padding()
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(.regularMaterial, in: .rect(cornerRadius: 16))
+      .padding()
     }
   }
 
