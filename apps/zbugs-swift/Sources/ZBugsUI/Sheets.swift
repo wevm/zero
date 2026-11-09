@@ -141,8 +141,15 @@
     var body: some View {
       NavigationStack {
         Form {
-          TextField("zero-cache", text: $cacheURL)
-          TextField("zbugs API", text: $apiURL)
+          Section {
+            TextField("zero-cache", text: $cacheURL)
+            TextField("zbugs API", text: $apiURL)
+          } footer: {
+            if AppModel.isThisDevice(cacheURL) || AppModel.isThisDevice(apiURL) {
+              Text(AppModel.thisDeviceWarning)
+                .foregroundStyle(.orange)
+            }
+          }
         }
         .formStyle(.grouped)
         .autocorrectionDisabled()
