@@ -187,11 +187,15 @@ package final class MemorySource: Source {
     let startAt = req.start?.row
 
     // Start a constrained scan at the first row with the constraint's
-    // values, whatever the direction of the following sort parts.
+    // values, whatever the direction of the following sort parts. A column
+    // the sort names twice keeps its first bound: the comparator decides on
+    // that part, and a later part for the column only sees equal values. (JS
+    // takes the last, so a sort like `text desc, text asc` starts past every
+    // match.)
     let probe: ((Row) -> Int)?
     if let fetchOrPkConstraint {
       var scanStart: [String: Bound] = [:]
-      for part in indexSort {
+      for part in indexSort where scanStart[part.field] == nil {
         if fetchOrPkConstraint.has(part.field) {
           scanStart[part.field] = .value(fetchOrPkConstraint[part.field])
         } else if req.reverse {

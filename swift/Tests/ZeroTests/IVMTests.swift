@@ -77,6 +77,29 @@ import Testing
     #expect(notified > 0)
   }
 
+  /// A subquery ordered by one column twice, in opposite directions, still finds the rows a constrained fetch asks for: the flipped EXISTS looks up a removed issue's comments to learn whether to drop it. JS's `MemorySource` doesn't (`JSParity.md`).
+  @Test func subqueryOrderedByAColumnTwice() throws {
+    let issues = MemorySource(Self.schema.tables["issue"]!)
+    let comments = MemorySource(Self.schema.tables["comment"]!)
+    issues.push(.add(["id": "i1", "title": "a"]))
+    issues.push(.add(["id": "i2", "title": "b"]))
+    comments.push(.add(["id": "c1", "issueID": "i1", "body": "x"]))
+    comments.push(.add(["id": "c2", "issueID": "i2", "body": "y"]))
+
+    let query = AnyQuery(Self.schema, "issue")
+      .whereExists("comments", flip: true) { $0.orderBy("body", .desc).orderBy("body", .asc) }
+    let view = ArrayView(
+      try buildPipeline(
+        query.ast, Delegate(["issue": issues, "comment": comments]), queryID: "q"),
+      format: query.format, complete: true)
+    func ids() -> [String] { view.data.entries.map { $0.row["id"]!.stringValue! } }
+    #expect(ids() == ["i1", "i2"])
+
+    issues.push(.remove(["id": "i1", "title": "a"]))
+    view.flush()
+    #expect(ids() == ["i2"])
+  }
+
   /// Rows in a table's layout and rows in their own read the same.
   @Test func rowsReadTheSameInAnyLayout() throws {
     let comments = MemorySource(Self.schema.tables["comment"]!)

@@ -47,6 +47,7 @@ import {
   type Program,
   type Push,
   type RecordedChange,
+  withColumnsOrderedOnce,
 } from './harness.ts';
 
 const schema: Schema = testSchema;
@@ -684,7 +685,11 @@ function runBatches(
   let view: ArrayView<never>;
   let notified = 0;
   try {
-    const input = buildPipeline(ast, new TestBuilderDelegate(sources), 'q');
+    const input = buildPipeline(
+      withColumnsOrderedOnce(ast),
+      new TestBuilderDelegate(sources),
+      'q',
+    );
     recorder = new Recorder(input);
     view = new ArrayView(recorder, format, true, () => {});
     view.addListener(() => notified++);
