@@ -4,5 +4,5 @@
     "types": ["node"],
     "paths": {"@rocicorp/zero": ["../zero/src/zero.ts"]}
   },
-  "include": ["src", "test"]
+  "include": ["src"]
 }

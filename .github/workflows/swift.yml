@@ -49,7 +49,7 @@ jobs:
 
   # Separate from the vectors job, which Swift (Linux) waits on.
   cli:
-    name: zerogen and zero-swift CLI
+    name: zero-swift CLI
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -66,13 +66,13 @@ jobs:
       # The Swift tests compile the Swift that zero-swift generates, and check
       # the Swift ports of apps against the drift vectors it records.
       - name: Check generated Swift and drift vectors are current
-        run: pnpm --filter zerogen --filter zero-swift run test
+        run: pnpm --filter zero-swift run test
       - name: Check types
         run: pnpm --filter zero-conformance --filter zerogen --filter zero-swift run check-types
-      # Installs the real tarballs outside the workspace, including the exact
-      # zerogen dependency of the compatibility wrapper.
-      - name: Smoke test packed CLIs
-        run: pnpm --filter zerogen smoke
+      # The published CLI is a bundle with zerogen inlined. This installs the
+      # packed package outside the workspace and runs it.
+      - name: Smoke test the packed CLI
+        run: pnpm --filter zero-swift smoke
 
   linux:
     name: Swift (Linux)

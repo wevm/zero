@@ -1,7 +1,8 @@
 /**
- * Shared commands for zerogen and the zero-swift compatibility entry point.
- * zerogen reads shared schema settings plus per-target options; zero-swift
- * retains its flat config and command results. Drift recording is shared.
+ * The commands of a native client's CLI, `codegen` and `drift record`, which
+ * zero-swift bundles. Loading the schema, writing or checking the output, and
+ * the drift recorder are shared; the generated code and its options are the
+ * target's (targets/swift.ts).
  *
  * `--check` exits with an error when the output is out of date instead of
  * writing it. The CLI is built on incur, so `--help`, `--json`, `--llms` and
@@ -25,11 +26,7 @@ type SchemaConfig = {
   readonly export?: string | undefined;
 };
 
-export type LegacyConfig = SchemaConfig & SwiftConfig;
-
-export type Config = SchemaConfig & {
-  readonly targets?: {readonly swift?: SwiftConfig | undefined} | undefined;
-};
+export type Config = SchemaConfig & SwiftConfig;
 
 /** A mistake in how the CLI was run, reported as an error, not a crash. */
 export class UsageError extends Error {
@@ -46,16 +43,12 @@ function mustExist(path: string, code: string, message: string) {
   }
 }
 
-export async function codegenFile(
-  config: LegacyConfig,
-  cwd: string,
-  configFile = 'zero-swift.json',
-) {
+export async function codegenFile(config: Config, cwd: string) {
   const schemaPath = resolve(cwd, config.schema ?? 'schema.ts');
   mustExist(
     schemaPath,
     'SCHEMA_NOT_FOUND',
-    `Schema ${relative(cwd, schemaPath)} doesn't exist. Pass --schema-file, or set "schema" in ${configFile}.`,
+    `Schema ${relative(cwd, schemaPath)} doesn't exist. Pass --schema-file, or set "schema" in zero-swift.json.`,
   );
   const exportName = config.export ?? 'schema';
   const module = (await import(pathToFileURL(schemaPath).href)) as Record<
@@ -66,7 +59,7 @@ export async function codegenFile(
   if (!schema || typeof schema !== 'object' || !('tables' in schema)) {
     throw new UsageError(
       'SCHEMA_NOT_EXPORTED',
-      `${relative(cwd, schemaPath)} does not export a schema as "${exportName}". Pass --export, or set "export" in ${configFile}.`,
+      `${relative(cwd, schemaPath)} does not export a schema as "${exportName}". Pass --export, or set "export" in zero-swift.json.`,
     );
   }
   const customTypes = readCustomTypes(schemaPath, exportName);
@@ -160,36 +153,20 @@ const check = z
   .optional()
   .describe('Fail when the output is out of date instead of writing it');
 
+/** The `zero-swift` CLI: `codegen` from zero-swift.json, and `drift record`. */
 export function createSwiftCli(version: string) {
-  return createCli('zero-swift', version, true);
-}
-
-export function createCli(name: string, version: string, legacy = false) {
-  const configFile = legacy ? 'zero-swift.json' : 'zerogen.json';
-  const cli = Cli.create(name, {
+  const cli = Cli.create('zero-swift', {
     version,
-    description: legacy
-      ? "Generates what the Zero Swift client needs from a Zero app's TypeScript schema, queries, and mutators."
-      : 'Generates native Zero client bindings from a TypeScript schema.',
+    description:
+      "Generates what the Zero Swift client needs from a Zero app's TypeScript schema, queries, and mutators.",
   }).command('codegen', {
-    description: legacy
-      ? "Generate the Swift row types, schema, and query builder from the app's TypeScript schema. Options override zero-swift.json, which is read when present. See swift/Sources/Zero/Zero.docc/GettingStarted.md in github.com/wevm/zero."
-      : 'Generate all configured targets, or select one with --target. Only Swift is implemented.',
+    description:
+      "Generate the Swift row types, schema, and query builder from the app's TypeScript schema. Options override zero-swift.json, which is read when present. See swift/Sources/Zero/Zero.docc/GettingStarted.md in github.com/wevm/zero.",
     options: z.object({
-      ...(legacy
-        ? {}
-        : {
-            target: z
-              .enum(['swift', 'rust'])
-              .optional()
-              .describe(
-                'Target to generate (default all configured targets; Rust is not implemented yet)',
-              ),
-          }),
       'config': z
         .string()
         .optional()
-        .describe(`Config file (default ${configFile}, when present)`),
+        .describe('Config file (default zero-swift.json, when present)'),
       'schema-file': z
         .string()
         .optional()
@@ -210,30 +187,29 @@ export function createCli(name: string, version: string, legacy = false) {
     // incur 0.7.1 prints a boolean example option as `--check true`, so the
     // hint shows a bare `--check` instead.
     examples: [
-      {description: `Generate from ${configFile}`},
+      {description: 'Generate from zero-swift.json'},
       {
         options: {
-          ...(legacy ? {} : {target: 'swift' as const}),
           'schema-file': 'shared/schema.ts',
           'out': 'Sources/App/Schema.swift',
         },
         description: 'Generate without a config file',
       },
     ],
-    hint: `In CI, ${name} codegen --check fails when the output is stale.`,
+    hint: 'In CI, zero-swift codegen --check fails when the output is stale.',
     run: c =>
       reporting(c.error, async () => {
         const cwd = process.cwd();
         const {
           'config': configOption,
           'schema-file': schemaFile,
-          target,
           out,
-          check,
         } = c.options;
         const configPath =
           configOption ??
-          (existsSync(resolve(cwd, configFile)) ? configFile : undefined);
+          (existsSync(resolve(cwd, 'zero-swift.json'))
+            ? 'zero-swift.json'
+            : undefined);
         if (configPath) {
           mustExist(
             resolve(cwd, configPath),
@@ -244,56 +220,28 @@ export function createCli(name: string, version: string, legacy = false) {
         const fileConfig = configPath
           ? (JSON.parse(
               readFileSync(resolve(cwd, configPath), 'utf8'),
-            ) as LegacyConfig & Config)
+            ) as Config)
           : {};
-        const targets = legacy
-          ? ['swift']
-          : target
-            ? [target]
-            : Object.keys(fileConfig.targets ?? {});
-        if (targets.length === 0) {
-          throw new UsageError(
-            'NO_TARGETS',
-            'Configure targets in zerogen.json, or pass --target swift.',
-          );
-        }
-        for (const target of targets) {
-          if (target !== 'swift') {
-            throw new UsageError(
-              'UNSUPPORTED_TARGET',
-              `Target "${target}" is not implemented. Only Swift is available.`,
-            );
-          }
-        }
-        const config: LegacyConfig = {
-          ...(legacy ? fileConfig : fileConfig.targets?.swift),
-          ...(fileConfig.schema !== undefined
-            ? {schema: fileConfig.schema}
-            : {}),
-          ...(fileConfig.export !== undefined
-            ? {export: fileConfig.export}
-            : {}),
+        const config: Config = {
+          ...fileConfig,
           ...swiftOverrides(c.options),
           ...(c.options.export !== undefined ? {export: c.options.export} : {}),
           ...(schemaFile ? {schema: schemaFile} : {}),
           ...(out ? {output: out} : {}),
         };
-        const swift = await codegenFile(config, cwd, configFile);
-        const result = writeOutput(
+        return writeOutput(
           resolve(cwd, config.output ?? 'Schema.swift'),
-          swift,
-          check ?? false,
+          await codegenFile(config, cwd),
+          c.options.check ?? false,
           cwd,
         );
-        return legacy ? result : {targets: {swift: result}};
       }),
   });
 
   cli.command(
     Cli.create('drift', {
-      description: legacy
-        ? 'Record what the TS queries and mutators do, for the Swift drift test (Drift.failures in ZeroTesting).'
-        : 'Record language-independent query and mutation drift vectors.',
+      description:
+        'Record what the TS queries and mutators do, for the Swift drift test (Drift.failures in ZeroTesting).',
     }).command('record', {
       description:
         "Run the app's TS queries and mutators on the samples a module exports, and write what they did.",
