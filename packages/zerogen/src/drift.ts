@@ -1,8 +1,7 @@
 /**
- * `zero-swift drift record`: runs an app's TS queries and mutators on
- * samples and records what they did. The Swift drift test
- * (`Drift.failures` in ZeroTesting) checks the app's Swift port against the
- * record, so a change to either side that the other lacks fails a test.
+ * `zerogen drift record` (also exposed by zero-swift): runs an app's TS
+ * queries and mutators on samples and records language-neutral vectors.
+ * Native drift tests replay the record against the app's native port.
  *
  * The samples module exports `schema`, the `queries` and `mutators`
  * registries, and `querySamples` and `mutatorSamples`.
