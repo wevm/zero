@@ -1,0 +1,15 @@
+[package]
+name = "zero-client"
+version = "0.0.0"
+description = "A native Rust client for Zero."
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+indexmap.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,75 @@
+name: Rust
+
+# CI for the Rust client in rust/ and the conformance vectors it replays
+# (packages/zero-conformance). Runs on every change because the vectors can
+# go stale from any JS change.
+
+on:
+  push:
+    # rust-client is the development branch until the client lands on main.
+    branches: [main, rust-client]
+  # Any base, so a PR stacked on another one gets checked too.
+  pull_request:
+
+concurrency:
+  group: '${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}'
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  vectors:
+    name: Conformance Vectors
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.11.0
+      # The vectors are JS's answers, so they come from the repo's pinned Node.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - run: pnpm install --frozen-lockfile
+      # Fails when the checked-in vectors no longer match the JS behavior. Also
+      # writes the seeded fuzz corpora (generated/), which aren't checked in.
+      - name: Check vectors are current
+        run: pnpm --filter zero-conformance run test
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: generated-vectors
+          path: packages/zero-conformance/generated/
+          if-no-files-found: error
+
+  linux:
+    name: Rust (Linux)
+    needs: vectors
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: generated-vectors
+          path: packages/zero-conformance/generated/
+      # rustup is preinstalled; rust-toolchain.toml picks the version.
+      - name: Install the toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Lint
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Test
+        run: cargo test --workspace --locked
+      # The report: every vector file, how many cases match JS, match under a
+      # documented exception, or fail, and which files aren't replayed yet.
+      - name: Conformance
+        run: cargo run --locked --release -p zero-conformance -- --require-generated --summary "$GITHUB_STEP_SUMMARY"

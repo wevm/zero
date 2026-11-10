@@ -1,0 +1,15 @@
+[package]
+name = "zero-conformance"
+version = "0.0.0"
+description = "Replays the JS client's conformance vectors (packages/zero-conformance) against zero-client."
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+zero-client.workspace = true
+
+[lints]
+workspace = true
