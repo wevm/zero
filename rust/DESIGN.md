@@ -70,7 +70,7 @@ merges a Version Packages PR that carries a `zero-rust` version.
   TLS is a feature of its own: rustls pulls in a crypto provider (`ring`,
   or `aws-lc-rs`, whose `aws-lc-sys` needs cmake and a C toolchain), so an
   app on `ws://` or behind its own TLS pulls in none of it. The quick-start
-  path (`cargo add zero-client --features tokio-transport,tls`) goes in the
+  path (`cargo add zero-client --features tokio-transport,tls,sqlite`) goes in the
   README with M4.
 - The tests already speak to a real `zero-cache` through
   `tokio-tungstenite`, as a dev-dependency only (M1.5).
@@ -120,10 +120,16 @@ IndexedDB-shaped machinery.
   minutes after launch and then every 12 hours, databases no client used
   for two days are deleted, only ours, renamed away first.
 - The client scenario vectors run on both backends.
-- Open: whether the default build is memory-only. A default `sqlite`
-  feature would put `rusqlite` in the default dependency tree, which the
-  no-third-party-dependencies rule above doesn't allow, so the CI check
-  would need an exception.
+- The default build is memory-only (tmm's decision), so it keeps the
+  no-third-party-dependencies rule; SQLite is opt-in. Swift differs: its
+  default is SQLite. **A default build persists nothing across restarts**:
+  the README and the crate docs say so, and the quick start enables
+  `sqlite` with `tokio-transport` and `tls`, so following it gives data
+  that survives a restart.
+- The storage options match Swift's `ZeroStorage` by name: `Memory`,
+  `Sqlite` (with an optional directory, behind the `sqlite` feature), and
+  `Custom`, for a backend the app brings, which Swift planned but never
+  built.
 
 ## Conformance
 

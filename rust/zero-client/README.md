@@ -13,6 +13,18 @@ engine is in progress; the client engine comes next.
 It has no dependencies: its default build uses only the standard library.
 A WebSocket transport and SQLite storage will come as opt-in features.
 
+**A default build persists nothing across restarts.** Its storage is
+memory only, so a restarted app starts with no synced rows and no pending
+mutations. For data that survives restarts, enable the `sqlite` feature;
+the quick start (coming with the client engine) does:
+
+```sh
+cargo add zero-client --features tokio-transport,tls,sqlite
+```
+
+The storage options are named as in the Swift client: memory (the
+default), SQLite, and a custom store of your own.
+
 - [Design and milestones](https://github.com/wevm/zero/blob/main/rust/DESIGN.md)
 - [Parity with JS](https://github.com/wevm/zero/blob/main/rust/PARITY.md): what
   is ported, and the documented differences

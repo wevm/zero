@@ -4,6 +4,15 @@
 //! checked against the JS implementation by the conformance vectors in
 //! `packages/zero-conformance`. See `rust/PARITY.md` for what is ported so
 //! far and what is planned.
+//!
+//! # Storage
+//!
+//! **A default build persists nothing across restarts**: its storage is
+//! memory only, and the crate has no dependencies. SQLite storage, which
+//! keeps synced rows and pending mutations across restarts, comes behind the
+//! opt-in `sqlite` feature, and an app can bring its own store. The quick
+//! start, `cargo add zero-client --features tokio-transport,tls,sqlite`,
+//! enables it. (Storage and the transport arrive with the client engine.)
 
 pub mod ast;
 pub mod compare;
