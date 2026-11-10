@@ -1,5 +1,13 @@
 # zero-swift
 
+## 0.7.11
+
+### Patch Changes
+
+- b96f6d1: The code generator moved to the new `zerogen` package, which `zero-swift` depends on at an exact version. `zero-swift codegen` and `zero-swift drift record` take the same config file, flags, and options as before and write the same files.
+- Updated dependencies [b96f6d1]
+  - zerogen@0.1.0
+
 ## 0.7.10
 
 ### Patch Changes

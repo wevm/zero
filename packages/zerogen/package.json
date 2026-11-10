@@ -1,6 +1,6 @@
 {
   "name": "zerogen",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Generates native Zero client bindings from a TypeScript schema.",
   "license": "Apache-2.0",
   "repository": {
