@@ -714,7 +714,11 @@ impl Iterator for TreeRows {
     }
 }
 
-fn assert_ordering_includes_pk(ordering: &[OrderPart], pk: &[String]) -> Result<(), PipelineError> {
+/// `assertOrderingIncludesPK`.
+pub fn assert_ordering_includes_pk(
+    ordering: &[OrderPart],
+    pk: &[String],
+) -> Result<(), PipelineError> {
     let missing: Vec<&str> = pk
         .iter()
         .filter(|k| !ordering.iter().any(|p| &p.field == *k))

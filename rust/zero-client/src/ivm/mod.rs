@@ -12,32 +12,44 @@
 //! Fetches are lazy streams, like JS's generators: a fetch reads operator and
 //! source state when its first row is pulled, not when it is created.
 
+mod aggregate;
 mod change;
 mod constraint;
 mod data;
+mod deferred_input;
 mod failure;
 mod filter;
 mod filter_push;
+mod flipped_join;
+mod group_by;
 mod join;
 mod join_utils;
+mod lift_field;
 mod memory_source;
 mod operator;
 mod predicate;
 mod stream;
+mod take;
 mod union_fan;
 
+pub use aggregate::*;
 pub use change::*;
 pub use constraint::*;
 pub use data::*;
+pub use deferred_input::*;
 pub use failure::*;
 pub use filter::*;
 pub use filter_push::*;
+pub use flipped_join::*;
+pub use group_by::*;
 pub use join::*;
 pub use join_utils::*;
+pub use lift_field::*;
 pub use memory_source::*;
 pub use operator::*;
 pub use predicate::*;
 pub use stream::*;
+pub use take::*;
 pub use union_fan::*;
 
 use crate::json::Object;
