@@ -4,8 +4,8 @@
 
 use super::{Change, Comparator, Constraint, Node, NodeStream, PipelineError, Row, SourceChange};
 use crate::ast::{Condition, OrderPart, System};
+use crate::map::OrderedMap;
 use crate::schema::{Column, Table};
-use indexmap::IndexMap;
 use std::collections::HashSet;
 use std::rc::{Rc, Weak};
 
@@ -13,7 +13,7 @@ use std::rc::{Rc, Weak};
 #[derive(Clone)]
 pub struct SourceSchema {
     pub table_name: String,
-    pub columns: IndexMap<String, Column>,
+    pub columns: OrderedMap<Column>,
     pub primary_key: Vec<String>,
     /// Relationship schemas, in the order they were added.
     pub relationships: Vec<(String, Rc<SourceSchema>)>,

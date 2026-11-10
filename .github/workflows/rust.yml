@@ -82,6 +82,18 @@ jobs:
       # workspace: what a consumer without path overrides compiles.
       - name: Package
         run: cargo package -p zero-client --locked
+      # zero-client has no third-party dependencies in its default build
+      # (rust/DESIGN.md): any normal or build dependency fails. Opt-in
+      # features may add them.
+      - name: No dependencies
+        run: |
+          deps="$(cargo tree -p zero-client -e normal,build --prefix none --locked | grep -v '^zero-client v' || true)"
+          if [ -n "$deps" ]; then
+            echo "zero-client's default build has third-party dependencies:" >&2
+            echo "$deps" >&2
+            echo "Put them behind an opt-in feature, or drop them." >&2
+            exit 1
+          fi
       # The library builds on the oldest Rust its manifest names.
       - name: Minimum Rust version
         run: |

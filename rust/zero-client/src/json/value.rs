@@ -1,4 +1,4 @@
-use indexmap::IndexMap;
+use crate::map::{self, OrderedMap};
 use std::fmt;
 
 /// A JSON value, the data model Zero syncs and stores.
@@ -157,7 +157,7 @@ impl<T: Into<Value>> From<Option<T>> for Value {
 /// equal when they have the same keys with equal values, in any order.
 #[derive(Clone, Default, PartialEq)]
 pub struct Object {
-    entries: IndexMap<String, Value>,
+    entries: OrderedMap<Value>,
     /// How many of the keys, at the front, are integer-like.
     integer_keys: usize,
 }
@@ -169,7 +169,7 @@ impl Object {
 
     pub fn with_capacity(capacity: usize) -> Self {
         Object {
-            entries: IndexMap::with_capacity(capacity),
+            entries: OrderedMap::with_capacity(capacity),
             integer_keys: 0,
         }
     }
@@ -208,7 +208,7 @@ impl Object {
                 .take(self.integer_keys)
                 .position(|k| array_index(k).is_some_and(|m| m > n));
             let at = at.unwrap_or(self.integer_keys);
-            self.entries.shift_insert(at, key, value);
+            self.entries.insert_at(at, key, value);
             self.integer_keys += 1;
         } else {
             self.entries.insert(key, value);
@@ -218,7 +218,7 @@ impl Object {
 
     /// Removes `key`, returning its value. The other keys keep their order.
     pub fn remove(&mut self, key: &str) -> Option<Value> {
-        let (i, _, value) = self.entries.shift_remove_full(key)?;
+        let (i, value) = self.entries.remove_full(key)?;
         if i < self.integer_keys {
             self.integer_keys -= 1;
         }
@@ -226,15 +226,15 @@ impl Object {
     }
 
     /// The entries, in order.
-    pub fn iter(&self) -> indexmap::map::Iter<'_, String, Value> {
+    pub fn iter(&self) -> map::Iter<'_, Value> {
         self.entries.iter()
     }
 
-    pub fn keys(&self) -> indexmap::map::Keys<'_, String, Value> {
+    pub fn keys(&self) -> impl DoubleEndedIterator<Item = &String> + ExactSizeIterator + Clone {
         self.entries.keys()
     }
 
-    pub fn values(&self) -> indexmap::map::Values<'_, String, Value> {
+    pub fn values(&self) -> impl DoubleEndedIterator<Item = &Value> + ExactSizeIterator + Clone {
         self.entries.values()
     }
 
@@ -252,7 +252,7 @@ impl fmt::Debug for Object {
 
 impl<'a> IntoIterator for &'a Object {
     type Item = (&'a String, &'a Value);
-    type IntoIter = indexmap::map::Iter<'a, String, Value>;
+    type IntoIter = map::Iter<'a, Value>;
     fn into_iter(self) -> Self::IntoIter {
         self.entries.iter()
     }
@@ -260,7 +260,7 @@ impl<'a> IntoIterator for &'a Object {
 
 impl IntoIterator for Object {
     type Item = (String, Value);
-    type IntoIter = indexmap::map::IntoIter<String, Value>;
+    type IntoIter = map::IntoIter<Value>;
     fn into_iter(self) -> Self::IntoIter {
         self.entries.into_iter()
     }

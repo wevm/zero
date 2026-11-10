@@ -10,7 +10,6 @@ license = "Apache-2.0"
 repository = "https://github.com/wevm/zero"
 
 [workspace.dependencies]
-indexmap = "2"
 zero-client = { path = "zero-client", version = "0.0.0" }
 
 [workspace.lints.rust]

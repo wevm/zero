@@ -918,8 +918,8 @@ pub fn merge_sorted_streams(streams: Vec<NodeStream>, compare: NodeComparator) -
 mod tests {
     use super::*;
     use crate::json::Object;
+    use crate::map::OrderedMap;
     use crate::schema::{Column, ValueType};
-    use indexmap::IndexMap;
 
     fn table() -> Table {
         let col = |t| Column {
@@ -927,7 +927,7 @@ mod tests {
             optional: false,
             server_name: None,
         };
-        let mut columns = IndexMap::new();
+        let mut columns = OrderedMap::new();
         columns.insert("id".to_owned(), col(ValueType::String));
         columns.insert("n".to_owned(), col(ValueType::Number));
         Table {

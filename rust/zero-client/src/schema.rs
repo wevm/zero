@@ -5,7 +5,7 @@
 use crate::ast::*;
 use crate::decode::{self, DecodeError, Reader, Result};
 use crate::json::{Object, Value};
-use indexmap::IndexMap;
+use crate::map::OrderedMap;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
@@ -27,7 +27,7 @@ pub struct Table {
     pub name: String,
     pub server_name: Option<String>,
     /// In declaration order.
-    pub columns: IndexMap<String, Column>,
+    pub columns: OrderedMap<Column>,
     pub primary_key: Vec<String>,
 }
 
@@ -52,9 +52,9 @@ pub type Relationship = Vec<RelationshipHop>;
 /// The tables of a schema and their relationships, in declaration order.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Schema {
-    pub tables: IndexMap<String, Table>,
+    pub tables: OrderedMap<Table>,
     /// By table, then by name.
-    pub relationships: IndexMap<String, IndexMap<String, Relationship>>,
+    pub relationships: OrderedMap<OrderedMap<Relationship>>,
 }
 
 impl Schema {
@@ -96,7 +96,7 @@ impl Schema {
                     Ok(
                         decode::record(rels, |hops| decode::array(hops, hop_from_json))?
                             .into_iter()
-                            .collect::<IndexMap<_, _>>(),
+                            .collect::<OrderedMap<_>>(),
                     )
                 })
             })?

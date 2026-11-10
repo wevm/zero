@@ -14,6 +14,7 @@ pub mod ivm;
 pub mod json;
 pub mod keys;
 pub mod like;
+pub mod map;
 pub mod protocol;
 pub mod query;
 pub mod schema;
