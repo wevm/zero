@@ -321,26 +321,31 @@ public enum Queries {
   /// A page of an issue's comments, ordered by (created, id); a backward
   /// page flips the order. `start` is the cursor row.
   public static let commentsPage = defineQuery("commentsPage") {
-    (args: CommentsPageArgs, _: AuthData?) in
+    (args: CommentsPageArgs, auth: AuthData?) in
     let dir: AST.Direction = args.dir == .forward ? .asc : .desc
-    var q = zql.comment
-      .related(\.creator)
-      .related(\.emoji) { $0.related(\.creator) }
-      .where(\.issueID, args.issueID)
-      .orderBy(\.created, dir)
-      .orderBy(\.id, dir)
+    var q = applyCommentPermissions(
+      zql.comment
+        .related(\.creator)
+        .related(\.emoji) { $0.related(\.creator) }
+        .where(\.issueID, args.issueID),
+      auth?.role
+    )
+    .orderBy(\.created, dir)
+    .orderBy(\.id, dir)
     if let start = args.start {
       q = q.start([\.id: start.id, \.created: start.created], inclusive: args.inclusive)
     }
     return q.limit(args.limit)
   }
 
-  public static let comment = defineQuery("comment") { (id: String, _: AuthData?) in
-    zql.comment
-      .related(\.creator)
-      .related(\.emoji) { $0.related(\.creator) }
-      .where(\.id, id)
-      .one()
+  public static let comment = defineQuery("comment") { (id: String, auth: AuthData?) in
+    applyCommentPermissions(
+      zql.comment
+        .related(\.creator)
+        .related(\.emoji) { $0.related(\.creator) }
+        .where(\.id, id),
+      auth?.role
+    ).one()
   }
 
   public static let issueDetail = defineQuery("issueDetail") {
@@ -396,10 +401,19 @@ public enum Queries {
       .one()
   }
 
-  public static let emojiChange = defineQuery("emojiChange") { (subjectID: String, _: AuthData?) in
-    zql.emoji
-      .where(\.subjectID, subjectID)
-      .related(\.creator) { $0.one() }
+  public static let emojiChange = defineQuery("emojiChange") {
+    (subjectID: String, auth: AuthData?) in
+    let role = auth?.role
+    var q = zql.emoji.where(\.subjectID, subjectID)
+    if role != .crew {
+      // The subject is an issue or a comment.
+      q = q.where { emoji in
+        emoji.or(
+          emoji.exists(\.issue) { applyIssuePermissions($0, role) },
+          emoji.exists(\.comment) { applyCommentPermissions($0, role) })
+      }
+    }
+    return q.related(\.creator) { $0.one() }
   }
 
   /// Deprecated in zbugs.
@@ -452,6 +466,17 @@ func applyIssuePermissions<Result: QueryResult>(
   -> Query<Issue, Result>
 where Result.Row == Issue {
   role == .crew ? q : q.where(\.visibility, .public)
+}
+
+/// Narrows a comment query to comments whose issue `role` may see. Comments
+/// and emoji are fetched by id, so each of those queries applies the issue's
+/// visibility itself.
+func applyCommentPermissions<Result: QueryResult>(
+  _ q: Query<Comment, Result>, _ role: Role?
+)
+  -> Query<Comment, Result>
+where Result.Row == Comment {
+  role == .crew ? q : q.whereExists(\.issue) { applyIssuePermissions($0, role) }
 }
 
 func labelsQuery(_ projectName: String, _ orderBy: AST.Direction?) -> Query<Label, [Label]> {

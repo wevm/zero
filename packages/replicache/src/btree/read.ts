@@ -1,3 +1,4 @@
+import {compareUTF8} from 'compare-utf8';
 import type {Enum} from '../../../shared/src/enum.ts';
 import {deepEqual} from '../../../shared/src/json.ts';
 import {getSizeOfEntry} from '../../../shared/src/size-of-value.ts';
@@ -141,6 +142,35 @@ export class BTreeRead implements AsyncIterable<Entry<FrozenJSONValue>> {
     );
   }
 
+  /**
+   * Calls `visitor` with each entry from `fromKey` on, in key order, until it
+   * returns `false` or the entries run out.
+   *
+   * This is for reading a long range to its end. {@link scan} is an async
+   * generator, so every entry it produces crosses a microtask boundary and is
+   * yielded again at each level of the tree above it. That is what lets a
+   * caller stop anywhere and pay only for what it read, but over a whole range
+   * it costs more than the read does, and more again on an engine that
+   * compiles async generators to state machines, as Hermes does. A visit
+   * awaits once per node and calls `visitor` for a leaf's entries in a plain
+   * loop.
+   *
+   * The tree must not be written to during the visit. `scan` notices when the
+   * root changes and restarts from the key it had reached. `visit` does not
+   * check for that and does not restart.
+   *
+   * @param prefetch Read sibling nodes in parallel before visiting them so
+   * stores can batch the reads, as for {@link scan}. A visit that stops early
+   * has then read nodes it never visits.
+   */
+  async visit(
+    fromKey: string,
+    prefetch: boolean,
+    visitor: (entry: Entry<FrozenJSONValue>) => boolean,
+  ): Promise<void> {
+    await visitNode(this, this.rootHash, fromKey, prefetch, visitor);
+  }
+
   async *keys(): AsyncIterableIterator<string> {
     const node = await this.getNode(this.rootHash);
     yield* node.keys(this);
@@ -155,21 +185,32 @@ export class BTreeRead implements AsyncIterable<Entry<FrozenJSONValue>> {
     return this.entries();
   }
 
-  async *diff(last: BTreeRead): AsyncIterableIterator<InternalDiffOperation> {
+  /**
+   * The operations that turn `last` into this tree, in key order.
+   *
+   * This builds the array itself rather than yielding into one. Every caller
+   * wants all of the diff, and yielding it out of nested async generators
+   * costs more than computing it: each operation crosses a microtask boundary
+   * once per level of the tree, which on a first sync is every row.
+   */
+  async diff(last: BTreeRead): Promise<InternalDiffOperation[]> {
     const [currentNode, lastNode] = await Promise.all([
       this.getNode(this.rootHash),
       last.getNode(last.rootHash),
     ]);
-    yield* diffNodes(lastNode, currentNode, last, this);
+    const diff: InternalDiffOperation[] = [];
+    await diffNodes(lastNode, currentNode, last, this, diff);
+    return diff;
   }
 }
 
-async function* diffNodes(
+async function diffNodes(
   last: InternalNodeImpl | DataNodeImpl,
   current: InternalNodeImpl | DataNodeImpl,
   lastTree: BTreeRead,
   currentTree: BTreeRead,
-): AsyncIterableIterator<InternalDiffOperation> {
+  diff: InternalDiffOperation[],
+): Promise<void> {
   if (last.level > current.level) {
     // merge all of last's children into a new node
     // We know last is an internal node because level > 0.
@@ -178,7 +219,7 @@ async function* diffNodes(
       last.entries.length,
       lastTree,
     )) as InternalNodeImpl;
-    yield* diffNodes(lastChild, current, lastTree, currentTree);
+    await diffNodes(lastChild, current, lastTree, currentTree, diff);
     return;
   }
 
@@ -191,14 +232,15 @@ async function* diffNodes(
       current.entries.length,
       currentTree,
     )) as InternalNodeImpl;
-    yield* diffNodes(last, currentChild, lastTree, currentTree);
+    await diffNodes(last, currentChild, lastTree, currentTree, diff);
     return;
   }
 
   if (isDataNodeImpl(last) && isDataNodeImpl(current)) {
-    yield* diffEntries(
+    diffEntries(
       (last as DataNodeImpl).entries,
       (current as DataNodeImpl).entries,
+      diff,
     );
     return;
   }
@@ -223,14 +265,15 @@ async function* diffNodes(
         currentTree,
       ),
     ]);
-    yield* diffNodes(lastChild, currentChild, lastTree, currentTree);
+    await diffNodes(lastChild, currentChild, lastTree, currentTree, diff);
   }
 }
 
-function* diffEntries(
+function diffEntries(
   lastEntries: readonly Entry<FrozenJSONValue>[],
   currentEntries: readonly Entry<FrozenJSONValue>[],
-): IterableIterator<InternalDiffOperation> {
+  diff: InternalDiffOperation[],
+): void {
   const lastLength = lastEntries.length;
   const currentLength = currentEntries.length;
   let i = 0;
@@ -240,44 +283,44 @@ function* diffEntries(
     const currentKey = currentEntries[j][0];
     if (lastKey === currentKey) {
       if (!deepEqual(lastEntries[i][1], currentEntries[j][1])) {
-        yield {
+        diff.push({
           op: 'change',
           key: lastKey,
           oldValue: lastEntries[i][1],
           newValue: currentEntries[j][1],
-        };
+        });
       }
       i++;
       j++;
-    } else if (lastKey < currentKey) {
-      yield {
+    } else if (compareUTF8(lastKey, currentKey) < 0) {
+      diff.push({
         op: 'del',
         key: lastKey,
         oldValue: lastEntries[i][1],
-      };
+      });
       i++;
     } else {
-      yield {
+      diff.push({
         op: 'add',
         key: currentKey,
         newValue: currentEntries[j][1],
-      };
+      });
       j++;
     }
   }
   for (; i < lastLength; i++) {
-    yield {
+    diff.push({
       op: 'del',
       key: lastEntries[i][0],
       oldValue: lastEntries[i][1],
-    };
+    });
   }
   for (; j < currentLength; j++) {
-    yield {
+    diff.push({
       op: 'add',
       key: currentEntries[j][0],
       newValue: currentEntries[j][1],
-    };
+    });
   }
 }
 
@@ -288,6 +331,47 @@ type ReadNodeResult = readonly [
 ];
 
 type ReadNode = (hash: Hash) => Promise<ReadNodeResult>;
+
+/**
+ * Visits the entries from `fromKey` on in the subtree at `hash`. Returns
+ * whether to go on to the entries after this subtree.
+ */
+async function visitNode(
+  tree: BTreeRead,
+  hash: Hash,
+  fromKey: string,
+  prefetch: boolean,
+  visitor: (entry: Entry<FrozenJSONValue>) => boolean,
+): Promise<boolean> {
+  const node = await tree.getNode(hash);
+  let i = fromKey ? binarySearch(fromKey, node.entries) : 0;
+  if (isDataNodeImpl(node)) {
+    const {entries} = node;
+    for (; i < entries.length; i++) {
+      if (!visitor(entries[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  const {entries} = node;
+  if (prefetch) {
+    // A failure here is ignored, as in `scanForHash`: the loop below reads
+    // each child again and reports it.
+    await Promise.all(
+      entries.slice(i).map(entry => tree.getNode(entry[1]).catch(() => {})),
+    );
+  }
+  for (; i < entries.length; i++) {
+    if (!(await visitNode(tree, entries[i][1], fromKey, prefetch, visitor))) {
+      return false;
+    }
+    // Only the first subtree can hold keys before `fromKey`.
+    fromKey = '';
+  }
+  return true;
+}
 
 async function* scanForHash(
   expectedRootHash: Hash,

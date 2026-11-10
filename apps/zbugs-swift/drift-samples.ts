@@ -12,7 +12,7 @@ import type {
   DriftSamples,
   MutatorSample,
   QuerySample,
-} from '../../packages/zero-swift-cli/src/drift.ts';
+} from '../../packages/zerogen/src/drift.ts';
 import {mutators} from '../zbugs/shared/mutators.ts';
 import {queries} from '../zbugs/shared/queries.ts';
 import {schema} from '../zbugs/shared/schema.ts';

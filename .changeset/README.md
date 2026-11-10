@@ -5,6 +5,8 @@ separately and are ignored here.
 
 - The Swift client: the `zero-swift` npm package (`packages/zero-swift-cli`)
   and the Swift package (`swift/`), which share one version.
+  `packages/zerogen`, the generator `zero-swift` bundles, is private and isn't
+  released on its own.
 - The Rust client (`rust/`): `zero-rust` (`packages/zero-rust`), which isn't
   published to npm and only carries the crates' version and changelog.
 

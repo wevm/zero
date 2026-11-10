@@ -3,14 +3,11 @@
  * its enumerations and typed JSON columns, the runtime schema, and the
  * `zql` query builder.
  */
-import type {Schema} from '../../zero-types/src/schema.ts';
-import type {CustomTypes, FieldModel, TypeModel} from './types.ts';
+import {z} from 'incur';
+import type {Schema} from '../../../zero-types/src/schema.ts';
+import type {CustomTypes, FieldModel, TypeModel} from '../types.ts';
 
 export type Config = {
-  /** The TS schema module. Default `schema.ts`. */
-  readonly schema?: string | undefined;
-  /** The export of the schema module that holds the schema. Default `schema`. */
-  readonly export?: string | undefined;
   /** The Swift file to write. Default `Schema.swift`. */
   readonly output?: string | undefined;
   /** The `ZeroSchema` static the schema is generated as. Default `app`. */
@@ -38,6 +35,43 @@ export type Config = {
       >
     | undefined;
 };
+
+export const options = {
+  'schema-name': z
+    .string()
+    .optional()
+    .describe('Name of the generated ZeroSchema static (default app)'),
+  'zql': z
+    .string()
+    .optional()
+    .describe('Name of the generated query builder global (default zql)'),
+  'type-prefix': z
+    .string()
+    .optional()
+    .describe('Prefix for every generated type name (default none)'),
+  'access': z
+    .enum(['public', 'internal'])
+    .optional()
+    .describe('Access level of the generated code (default public)'),
+};
+
+export function overrides(input: {
+  'schema-name'?: string | undefined;
+  'zql'?: string | undefined;
+  'type-prefix'?: string | undefined;
+  'access'?: 'public' | 'internal' | undefined;
+}): Config {
+  return {
+    ...(input['schema-name'] !== undefined
+      ? {schemaName: input['schema-name']}
+      : {}),
+    ...(input.zql !== undefined ? {zql: input.zql} : {}),
+    ...(input['type-prefix'] !== undefined
+      ? {typePrefix: input['type-prefix']}
+      : {}),
+    ...(input.access !== undefined ? {access: input.access} : {}),
+  };
+}
 
 /** Zero types the generated code names unqualified. */
 const reservedTypeNames = new Set([

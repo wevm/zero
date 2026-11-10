@@ -1,0 +1,25 @@
+{
+  "name": "zerogen",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The code generator shared by Zero's native client CLIs. Not published: each CLI bundles it.",
+  "type": "module",
+  "scripts": {
+    "check-types": "tsc",
+    "lint": "oxlint --quiet --config ../../oxlint.config.ts src/",
+    "format": "oxfmt .",
+    "check-format": "oxfmt --check ."
+  },
+  "dependencies": {
+    "incur": "0.7.1",
+    "typescript": "6.0.3"
+  },
+  "devDependencies": {
+    "@rocicorp/zero": "workspace:*",
+    "@types/node": "^22.19.19",
+    "oxfmt": "^0.74.0",
+    "shared": "workspace:*",
+    "zero-protocol": "workspace:*",
+    "zero-types": "workspace:*"
+  }
+}

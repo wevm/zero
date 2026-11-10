@@ -90,6 +90,15 @@ jobs:
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          # Only a 404 means unpublished: a failed lookup isn't a reason to
+          # publish.
+          status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            "https://registry.npmjs.org/zero-swift/$version")"
+          case "$status" in
+            200) echo "npm=false" >> "$GITHUB_OUTPUT" ;;
+            404) echo "npm=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "Looking up zero-swift@$version on npm returned HTTP $status." >&2; exit 1 ;;
+          esac
           if git ls-remote --exit-code --tags https://github.com/wevm/zero-swift.git "refs/tags/$version" >/dev/null; then
             echo "mirror=false" >> "$GITHUB_OUTPUT"
           else
@@ -102,11 +111,6 @@ jobs:
             404) echo "release=true" >> "$GITHUB_OUTPUT" ;;
             *) echo "Looking up the $version release returned HTTP $status." >&2; exit 1 ;;
           esac
-          if npm view "zero-swift@$version" version >/dev/null 2>&1; then
-            echo "npm=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "npm=true" >> "$GITHUB_OUTPUT"
-          fi
 
   mirror:
     name: Publish mirror
@@ -180,6 +184,8 @@ jobs:
           node-version-file: .nvmrc
           package-manager-cache: false
       - run: pnpm install --frozen-lockfile
+      - name: Smoke test the packed CLI
+        run: pnpm --filter zero-swift smoke
       - name: Build and pack
         run: |
           pnpm --filter zero-swift build
@@ -209,8 +215,8 @@ jobs:
         with:
           name: zero-swift-npm
           path: dist/npm
-      # npm makes a new version visible to `npm view` a minute or so after the
-      # publish returns, so a run that plans right after the previous run's
+      # npm makes a new version visible to the plan's lookup a minute or so after
+      # the publish returns, so a run that plans right after the previous run's
       # publish can still choose to publish. The registry's refusal settles it.
       - name: Publish
         run: |
