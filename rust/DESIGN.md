@@ -31,8 +31,11 @@ Like the Swift client's (`swift-release.yml`):
   copies `zero-rust`'s version into `rust/Cargo.toml` (`[workspace.package]`)
   and `rust/Cargo.lock` with `rust/scripts/set-version.sh`. A second
   Changesets job would race it for the same branch.
-- On `main`, `rust-release.yml` releases a version that isn't out yet, after
-  approval in the `rust-release` environment: a subtree split of `rust/` to
+- On `main`, `rust-release.yml` releases a version that isn't out yet, which
+  happens when the Version Packages PR merges: merging it is the release
+  gate, as for Swift. The `rust-release` environment limits the release jobs
+  to `main` and holds their secrets, with no required reviewers. A release
+  is a subtree split of `rust/` to
   the mirror, `wevm/zero-rust`, with a tag and a GitHub release from the
   changelog, and `cargo publish` of `zero-client`. 0.0.0 is never released.
 - The mirror token comes from github-sts, authorized by
@@ -40,7 +43,8 @@ Like the Swift client's (`swift-release.yml`):
   crates.io's trusted publishing needs the crate to exist, so the first
   publish uses a `CARGO_REGISTRY_TOKEN` in the environment.
 
-The first mirror push and every crates.io publish need tmm's approval.
+So the first mirror push and every crates.io publish happen only when tmm
+merges a Version Packages PR that carries a `zero-rust` version.
 
 ## Architecture (planned)
 

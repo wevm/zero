@@ -27,7 +27,8 @@ approval in the `swift-release` environment. The same PR versions the Rust
 client: it sets the version in `packages/zero-rust/package.json`,
 `rust/Cargo.toml`, and `rust/Cargo.lock`, and `.github/workflows/rust-release.yml`
 then publishes the mirror (`wevm/zero-rust`) and `zero-client` on crates.io
-after approval in the `rust-release` environment.
+from the `rust-release` environment, which limits it to `main`. Merging the
+PR is the release gate; the environment has no required reviewers.
 
 A change that breaks the Swift package's public API, so that an app building
 against the last release no longer compiles, needs a `minor` changeset while

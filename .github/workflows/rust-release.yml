@@ -8,8 +8,10 @@ name: Rust Release
 # versions both clients.
 #
 # On each push to main, when no zero-rust changeset is pending and the
-# version in rust/Cargo.toml isn't released yet (0.0.0 is never released),
-# after approval in the rust-release environment:
+# version in rust/Cargo.toml isn't released yet (0.0.0 is never released):
+# that is, once the Version Packages PR merges, which is the release gate, as
+# for Swift. The rust-release environment limits the jobs to main and holds
+# their secrets; it has no required reviewers.
 # - publishes rust/ to the mirror (wevm/zero-rust) with a subtree split, tags
 #   the version there, and creates a GitHub release from the version's
 #   section of packages/zero-rust/CHANGELOG.md.
