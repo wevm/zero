@@ -1,19 +1,21 @@
 name: Swift Release
 
-# Releases the Swift client, versioned with Changesets (see .changeset/README.md).
+# Releases the Swift client and zerogen, versioned with Changesets (see
+# .changeset/README.md). zerogen has its own independent version.
 # The zero-swift npm package (packages/zero-swift-cli) and the Swift package
 # (swift/) share one version, kept in step by `pnpm --filter zero-swift version-packages`.
 #
 # On each push to main:
 # - With pending changesets, opens or updates the "Version Packages" PR.
-# - Otherwise, if the version in swift/VERSION isn't released yet, after
-#   approval in the swift-release environment:
+# - Otherwise, plans releases for swift/VERSION and packages/zerogen/package.json.
+#   After approval in the swift-release environment:
 #   - publishes swift/ to the SwiftPM mirror (wevm/zero-swift), tags the
 #     version there, and creates a GitHub release from the version's section
 #     of packages/zero-swift-cli/CHANGELOG.md. SwiftPM needs Package.swift at
 #     a repository root and clones whole repositories, so consumers install
 #     from the mirror.
-#   - publishes the zero-swift CLI to npm with trusted publishing.
+#   - publishes zerogen and the zero-swift CLI, which depends on the exact
+#     zerogen version, to npm with trusted publishing, zerogen first.
 # Each step is skipped when its release already exists, so a failed run can be
 # rerun.
 
@@ -64,9 +66,11 @@ jobs:
     if: needs.version.outputs.has-changesets == 'false'
     outputs:
       version: ${{ steps.plan.outputs.version }}
+      zerogen-version: ${{ steps.plan.outputs.zerogen-version }}
       mirror: ${{ steps.plan.outputs.mirror }}
       release: ${{ steps.plan.outputs.release }}
       npm: ${{ steps.plan.outputs.npm }}
+      zerogen-npm: ${{ steps.plan.outputs.zerogen-npm }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -74,6 +78,7 @@ jobs:
           sparse-checkout: |
             swift/VERSION
             packages/zero-swift-cli/package.json
+            packages/zerogen/package.json
           sparse-checkout-cone-mode: false
       - id: plan
         env:
@@ -82,11 +87,39 @@ jobs:
           set -euo pipefail
           version="$(tr -d '[:space:]' < swift/VERSION)"
           package="$(jq -r .version packages/zero-swift-cli/package.json)"
+          zerogen_version="$(jq -er .version packages/zerogen/package.json)"
           if [ "$package" != "$version" ]; then
             echo "packages/zero-swift-cli is $package but swift/VERSION is $version." >&2
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "zerogen-version=$zerogen_version" >> "$GITHUB_OUTPUT"
+
+          # Only a 404 means unpublished: a failed lookup isn't a reason to
+          # publish.
+          registry_version_exists() {
+            local status
+            status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+              "https://registry.npmjs.org/$1/$2")" || {
+              echo "Looking up $1@$2 on npm failed." >&2
+              exit 1
+            }
+            case "$status" in
+              200) return 0 ;;
+              404) return 1 ;;
+              *) echo "Looking up $1@$2 on npm returned HTTP $status." >&2; exit 1 ;;
+            esac
+          }
+          if registry_version_exists zero-swift "$version"; then
+            echo "npm=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "npm=true" >> "$GITHUB_OUTPUT"
+          fi
+          if registry_version_exists zerogen "$zerogen_version"; then
+            echo "zerogen-npm=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "zerogen-npm=true" >> "$GITHUB_OUTPUT"
+          fi
           if git ls-remote --exit-code --tags https://github.com/wevm/zero-swift.git "refs/tags/$version" >/dev/null; then
             echo "mirror=false" >> "$GITHUB_OUTPUT"
           else
@@ -99,11 +132,6 @@ jobs:
             404) echo "release=true" >> "$GITHUB_OUTPUT" ;;
             *) echo "Looking up the $version release returned HTTP $status." >&2; exit 1 ;;
           esac
-          if npm view "zero-swift@$version" version >/dev/null 2>&1; then
-            echo "npm=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "npm=true" >> "$GITHUB_OUTPUT"
-          fi
 
   mirror:
     name: Publish mirror
@@ -161,10 +189,13 @@ jobs:
             --title "$VERSION" --notes-file "$RUNNER_TEMP/notes.md"
 
   npm-build:
-    name: Build npm package
+    name: Build npm packages
     runs-on: ubuntu-latest
     needs: plan
-    if: needs.plan.outputs.npm == 'true'
+    if: needs.plan.outputs.npm == 'true' || needs.plan.outputs.zerogen-npm == 'true'
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      ZEROGEN_VERSION: ${{ needs.plan.outputs.zerogen-version }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -177,10 +208,20 @@ jobs:
           node-version-file: .nvmrc
           package-manager-cache: false
       - run: pnpm install --frozen-lockfile
+      - name: Smoke test npm packages
+        run: pnpm --filter zerogen smoke
       - name: Build and pack
         run: |
+          set -euo pipefail
+          pnpm --filter zerogen build
           pnpm --filter zero-swift build
+          pnpm --filter zerogen pack --pack-destination "$GITHUB_WORKSPACE/dist/npm"
           pnpm --filter zero-swift pack --pack-destination "$GITHUB_WORKSPACE/dist/npm"
+          dependency="$(tar -xOf "dist/npm/zero-swift-$VERSION.tgz" package/package.json | jq -er .dependencies.zerogen)"
+          if [ "$dependency" != "$ZEROGEN_VERSION" ]; then
+            echo "Packed zero-swift depends on zerogen@$dependency, expected exactly $ZEROGEN_VERSION." >&2
+            exit 1
+          fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: zero-swift-npm
@@ -188,7 +229,7 @@ jobs:
           if-no-files-found: error
 
   npm-publish:
-    name: Publish npm package
+    name: Publish npm packages
     runs-on: ubuntu-latest
     needs: [plan, npm-build]
     environment: swift-release
@@ -197,6 +238,7 @@ jobs:
       id-token: write # For npm trusted publishing.
     env:
       VERSION: ${{ needs.plan.outputs.version }}
+      ZEROGEN_VERSION: ${{ needs.plan.outputs.zerogen-version }}
     steps:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -206,10 +248,23 @@ jobs:
         with:
           name: zero-swift-npm
           path: dist/npm
-      # npm makes a new version visible to `npm view` a minute or so after the
-      # publish returns, so a run that plans right after the previous run's
+      # npm makes a new version visible to the plan's lookup a minute or so after
+      # the publish returns, so a run that plans right after the previous run's
       # publish can still choose to publish. The registry's refusal settles it.
-      - name: Publish
+      # zero-swift depends on this zerogen version, so a failure here stops
+      # the job before zero-swift publishes.
+      - name: Publish zerogen
+        if: needs.plan.outputs.zerogen-npm == 'true'
+        run: |
+          set -uo pipefail
+          npm publish "dist/npm/zerogen-$ZEROGEN_VERSION.tgz" --provenance --access public 2>&1 | tee publish.log && exit 0
+          if grep -q 'cannot publish over the previously published versions' publish.log; then
+            echo "::notice::zerogen@$ZEROGEN_VERSION is already on npm."
+            exit 0
+          fi
+          exit 1
+      - name: Publish zero-swift
+        if: needs.plan.outputs.npm == 'true'
         run: |
           set -uo pipefail
           npm publish "dist/npm/zero-swift-$VERSION.tgz" --provenance --access public 2>&1 | tee publish.log && exit 0

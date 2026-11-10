@@ -4,6 +4,11 @@ The command-line tool for [Zero for Swift](https://github.com/wevm/zero-swift).
 Your Zero app's TypeScript schema, queries, and mutators stay the source of
 truth, and this tool generates what the Swift client needs from them.
 
+The generator itself is
+[`zerogen`](https://github.com/wevm/zero/tree/main/packages/zerogen).
+`zero-swift` runs an exact, tested `zerogen` version, with the same config
+file, flags, and output as before, and stays supported.
+
 ```sh
 npm install --save-dev zero-swift
 npx zero-swift --help

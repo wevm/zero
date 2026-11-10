@@ -1,0 +1,58 @@
+{
+  "name": "zerogen",
+  "version": "0.0.0",
+  "description": "Generates native Zero client bindings from a TypeScript schema.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wevm/zero.git",
+    "directory": "packages/zerogen"
+  },
+  "bin": {
+    "zerogen": "./src/bin.ts"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    "./compat": "./src/compat.ts"
+  },
+  "publishConfig": {
+    "bin": {
+      "zerogen": "./dist/bin.js"
+    },
+    "exports": {
+      "./compat": "./dist/compat.js"
+    }
+  },
+  "scripts": {
+    "build": "esbuild src/bin.ts src/compat.ts --bundle --platform=node --format=esm --target=node22 --splitting --outdir=dist --external:@rocicorp/zero --external:typescript --external:incur",
+    "test": "vitest run",
+    "smoke": "node test/packed.ts",
+    "check-types": "tsc",
+    "lint": "oxlint --quiet --config ../../oxlint.config.ts src/ test/",
+    "format": "oxfmt .",
+    "check-format": "oxfmt --check ."
+  },
+  "dependencies": {
+    "incur": "0.7.1",
+    "typescript": "6.0.3"
+  },
+  "devDependencies": {
+    "@rocicorp/zero": "workspace:*",
+    "@types/node": "^22.19.19",
+    "esbuild": "0.28.2",
+    "oxfmt": "^0.74.0",
+    "shared": "workspace:*",
+    "vitest": "^5.0.5",
+    "zero-protocol": "workspace:*",
+    "zero-types": "workspace:*"
+  },
+  "peerDependencies": {
+    "@rocicorp/zero": ">=1.11.0"
+  },
+  "engines": {
+    "node": ">=22.18"
+  }
+}
