@@ -21,8 +21,9 @@
     }
   },
   "scripts": {
-    "build": "esbuild src/bin.ts --bundle --platform=node --format=esm --target=node22 --outdir=dist --external:zerogen/compat",
+    "build": "esbuild src/bin.ts --bundle --platform=node --format=esm --target=node22 --splitting --outdir=dist --external:@rocicorp/zero --external:typescript --external:incur",
     "test": "vitest run",
+    "smoke": "node test/packed.ts",
     "generate": "UPDATE_GENERATED=1 vitest run",
     "check-types": "tsc",
     "lint": "oxlint --quiet --config ../../oxlint.config.ts src/",
@@ -31,7 +32,8 @@
     "version-packages": "cd ../.. && pnpm dlx @changesets/cli@3.0.3 version && jq -r .version packages/zero-swift-cli/package.json > swift/VERSION"
   },
   "dependencies": {
-    "zerogen": "workspace:*"
+    "incur": "0.7.1",
+    "typescript": "6.0.3"
   },
   "devDependencies": {
     "@rocicorp/zero": "workspace:*",
@@ -40,6 +42,7 @@
     "oxfmt": "^0.74.0",
     "vitest": "^5.0.5",
     "zero-schema": "workspace:*",
+    "zerogen": "workspace:*",
     "zql": "workspace:*"
   },
   "peerDependencies": {

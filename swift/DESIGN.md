@@ -53,8 +53,8 @@ swift/                      Swift package (source of truth)
   scripts/docs.sh           builds the DocC catalogs, failing on warnings
   VERSION
 packages/zero-conformance/  private JS package: fixtures, vector generators, JS runners
-packages/zerogen/           npm package `zerogen`: `codegen --target swift`, `drift record`
-packages/zero-swift-cli/    npm package `zero-swift`: the same commands, delegating to `zerogen`
+packages/zerogen/           private JS package: the generator and drift recorder each client's CLI bundles
+packages/zero-swift-cli/    npm package `zero-swift`: `codegen`, `drift record`
 apps/zbugs-swift/           dogfood app (iOS + macOS)
 ```
 
@@ -62,7 +62,7 @@ apps/zbugs-swift/           dogfood app (iOS + macOS)
 - The mirror is public. The Swift source is visible in this public monorepo either way.
 - SwiftPM products: `Zero`, `ZeroUI`, `ZeroVirtual`, and `ZeroTesting`. Only the end-to-end test target uses swift-nio, so apps don't fetch it.
 - The public API is what apps and the generated code use. The engine (IVM operators, the wire protocol, the B-tree, hashes) is `package`: the package's own modules (tests, `ZeroTesting`, benchmarks) see it, apps don't. A `package` type with `@inlinable` members must itself be `@usableFromInline`, or other modules silently get unspecialized calls.
-- The CLI ships as the unscoped npm package `zero-swift` (we don't own the `@rocicorp` scope) with a peer dependency on `@rocicorp/zero` (1.11 or later: `drift record` must run the app's own copy). It is versioned with the Swift releases. The generator itself is the npm package `zerogen`, with its own version; `zero-swift` depends on an exact `zerogen` version and keeps its config file, flags, and output. `pnpm --filter zerogen build` bundles `zerogen` with esbuild, inlining the workspace sources it imports. CI publishes both with npm trusted publishing, `zerogen` first.
+- The CLI ships as the unscoped npm package `zero-swift` (we don't own the `@rocicorp` scope) with a peer dependency on `@rocicorp/zero` (1.11 or later: `drift record` must run the app's own copy). It is versioned with the Swift releases. `pnpm --filter zero-swift build` bundles it with esbuild, inlining the workspace sources it imports, including the generator in `packages/zerogen`, which is shared with later clients' CLIs and isn't published. CI publishes it with npm trusted publishing.
 - License: Apache-2.0, like this repository.
 - Docs: a DocC catalog per library product, with a getting-started article and a JS→Swift parity matrix (`Zero.docc/JSParity.md`). Oxfmt skips the catalogs; it would turn DocC's ` ``Symbol`` ` links into code voice.
 

@@ -25,17 +25,18 @@
       "isIgnored": true
     },
     {
-      "label": "zerogen reads schemas with the TypeScript compiler API at runtime, which TypeScript 7 does not have",
+      "label": "zero-swift's CLI (packages/zero-swift-cli) and the generator it bundles (packages/zerogen) read schemas with the TypeScript compiler API at runtime, which TypeScript 7 does not have",
       "dependencies": [
         "typescript"
       ],
       "packages": [
+        "zero-swift",
         "zerogen"
       ],
       "pinVersion": "6.0.3"
     },
     {
-      "label": "zerogen and its zero-swift wrapper take the app's @rocicorp/zero, any release they support, not the workspace's",
+      "label": "zero-swift's CLI takes the app's @rocicorp/zero, any release it supports, not the workspace's",
       "dependencies": [
         "@rocicorp/zero"
       ],
@@ -43,8 +44,7 @@
         "peer"
       ],
       "packages": [
-        "zero-swift",
-        "zerogen"
+        "zero-swift"
       ],
       "isIgnored": true
     },

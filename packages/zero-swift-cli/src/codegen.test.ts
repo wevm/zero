@@ -3,7 +3,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {expect, test} from 'vitest';
-import type {Config} from 'zerogen/compat';
+import type {Config} from '../../zerogen/src/cli.ts';
 import {cli, codegenFile, legacyArgv} from './cli.ts';
 
 const repo = fileURLToPath(new URL('../../../', import.meta.url));
