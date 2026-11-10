@@ -374,6 +374,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "zero-codegen-tests"
+version = "0.0.0"
+dependencies = [
+ "zero-client",
+]
+
+[[package]]
 name = "zero-conformance"
 version = "0.0.0"
 dependencies = [

@@ -12,10 +12,12 @@ mutators, and a zbugs model crate, but not their UI.
 
 ## Layout
 
-| Path               | Crate              | Published | What                                                               |
-| ------------------ | ------------------ | --------- | ------------------------------------------------------------------ |
-| `rust/zero-client` | `zero-client`      | not yet   | The client: JSON, hashes, AST, protocol, IVM, and later the engine |
-| `rust/conformance` | `zero-conformance` | never     | The conformance runner: replays every vector file                  |
+| Path                     | Crate                 | Published | What                                                               |
+| ------------------------ | --------------------- | --------- | ------------------------------------------------------------------ |
+| `rust/zero-client`       | `zero-client`         | not yet   | The client: JSON, hashes, AST, protocol, IVM, and later the engine |
+| `rust/conformance`       | `zero-conformance`    | never     | The conformance runner: replays every vector file                  |
+| `rust/codegen-tests`     | `zero-codegen-tests`  | never     | The Rust `zero-rust codegen` generates, checked in, and its tests  |
+| `packages/zero-rust-cli` | (npm) `zero-rust-cli` | not yet   | The `zero-rust` CLI: `codegen`, from the shared `packages/zerogen` |
 
 tmm chose `zero-client` for the crate name (`zero` is taken on crates.io;
 `zero-client` was free on 2026-11-10).
@@ -137,6 +139,66 @@ IndexedDB-shaped machinery.
   `Custom`, for a backend the app brings, which Swift planned but never
   built.
 
+### Codegen (M3)
+
+`zero-rust codegen` generates the Rust a Zero app needs from its TypeScript
+schema, as `zero-swift codegen` does the Swift: one generator,
+`packages/zerogen`, with a target per language (`targets/swift.ts`,
+`targets/rust.ts`). Loading the schema and its column types and writing or
+checking the output (`--check`) are shared; the Rust target has its own
+emitter, not Swift's templates. Options come from `zero-rust.json`
+(`schema`, `export`, `output`, `typePrefix`, and per-table `type` and
+column `type: "int"` overrides, as in `zero-swift.json`).
+
+The generated file holds, against `zero_client::typed`:
+
+- a row struct per table, with a field per column (snake_case) and per
+  relationship (`Option<Vec<Row>>` for many, `Option<Box<Row>>` for one,
+  filled when a query asks with `related`), and the aggregates a query
+  asked for in `related`; a `Column` constant per column and a
+  `Relationship` constant per relationship (`Issue::OWNER_ID`,
+  `Issue::COMMENTS`), which name them in queries;
+- an enum per `enumeration<…>()` and a struct per typed `json<…>()` object,
+  shared when the TS type is one named type;
+- `schema()`, the runtime `Schema`, and `zql`, a function per table that
+  starts a typed `Query<Row>`.
+
+`typed::Query<R, T>` wraps `AnyQuery`: each method calls the `AnyQuery`
+method of the same name with the constant's name, so a typed query builds
+exactly the AST, format, and hash the untyped one does, which the
+conformance vectors check against JS. `T` is what the query materializes
+to: `Vec<R>`, `Option<R>` after `one()`, `i64` for `count()`, `Option<f64>`
+for `sum` and `avg`, the column's type for `min` and `max`, `GroupRow`s
+after `group_by` and `DistinctRow`s after `distinct`. `Query::read` reads a
+view as `T`. Rows read strictly (a value of the wrong type is an error that
+names the column), except that a null in a column the schema says can't be
+null reads as `""`, `0`, or `false`, as JS shows it; Swift does the same.
+
+Identifiers are ASCII: names stay in strings, so any table or column name
+works. A keyword is written `r#name`, or gets `_` when `r#` can't escape it
+(`self_`); names that clash once they are identifiers, or with a prelude or
+`zero_client::typed` type, get `_`, `Row`, or a number. Every schema of
+`packages/zero-swift-cli/test/sweep-schema.ts` generates Rust that compiles
+with clippy's warnings denied.
+
+The generated files are rustfmt-clean only by accident, so they are
+declared `#[rustfmt::skip] mod schema;` (rustfmt formats `@generated` files
+by default).
+
+Tests: `packages/zero-rust-cli/src/codegen.test.ts` checks that the
+generated files in `rust/codegen-tests/src` (the zql test schema, the
+codegen fixture, zbugs, and every sweep schema) are current;
+`rust/codegen-tests/tests/typed.rs` compiles them and checks that typed
+queries build the untyped queries' ASTs, formats, hashes, and errors, and
+that views of them, hydrated from memory sources and pushed to, read as the
+generated rows.
+
+Not yet, with the milestones that need them: the typed mutation API
+(Swift's `Update` and `Key` structs and `tx.mutate.<table>`) comes with the
+mutators (M4); `drift record` for Rust ports of app queries and mutators
+with the zbugs model (M6); publishing the CLI to npm with the first release
+(M7).
+
 ## Conformance
 
 `cargo run -p zero-conformance` replays every file in
@@ -164,7 +226,8 @@ in [PARITY.md](PARITY.md).
 `.github/workflows/rust.yml`, on `main`, `rust-client`, and every PR:
 
 - **Conformance Vectors**: the checked-in vectors match current JS, and the
-  seeded fuzz corpora are generated for the next job.
+  seeded fuzz corpora are generated for the next job; the checked-in
+  generated Rust matches `zero-rust codegen`, whose types and lints pass.
 - **Rust (Linux)**: rustfmt, clippy with warnings denied, the tests, the
   conformance report (in the job summary), rustdoc with warnings denied, and
   `cargo package`, which builds the crate as crates.io would get it, outside
@@ -199,7 +262,7 @@ Each milestone ends with green CI on `rust-client` and a short report.
 | M1        | Primitives and wire: JSON, JS numbers, string orders, hashes, primary and aggregate keys, value comparison, LIKE, TTL, AST and normalization, query hashes, protocol messages, poke chunks | Every primitive, AST, and protocol vector file and corpus passes | done   |
 | M1.5      | Walking skeleton: connect to a real `zero-cache`, handshake, receive pokes, log rows                                                                                                       | Talks to a real server in CI                                     | done   |
 | M2        | IVM: memory sources, every client operator, pipeline builder, change application, aggregates                                                                                               | Curated and seeded-fuzz IVM vectors pass                         | done   |
-| M3        | Codegen: a Rust target for the schema codegen CLI                                                                                                                                          | Generated code compiles and drives M2                            |        |
+| M3        | Codegen: a Rust target for the schema codegen CLI                                                                                                                                          | Generated code compiles and drives M2                            | done   |
 | M4        | Client engine on memory storage: connection, query manager, pokes, mutators, rebase, auth, recovery                                                                                        | Client scenario vectors pass                                     |        |
 | M5        | The storage trait and lifecycle in the core, the memory backend, and SQLite behind the `sqlite` feature; scenarios on both; end-to-end against Postgres and `zero-cache`                   | Scenarios pass on memory and SQLite; end-to-end passes           |        |
 | M6        | The shared zbugs model, then `apps/zbugs-gpui` and `apps/zbugs-rune`                                                                                                                       | Both apps run against a real backend                             |        |

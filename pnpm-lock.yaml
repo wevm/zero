@@ -1495,6 +1495,37 @@ importers:
 
   packages/zero-rust: {}
 
+  packages/zero-rust-cli:
+    dependencies:
+      incur:
+        specifier: 0.7.1
+        version: 0.7.1
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+    devDependencies:
+      '@rocicorp/zero':
+        specifier: workspace:*
+        version: link:../zero
+      '@types/node':
+        specifier: ^22.19.19
+        version: 22.19.19
+      oxfmt:
+        specifier: ^0.74.0
+        version: 0.74.0
+      vitest:
+        specifier: ^5.0.5
+        version: 5.0.5(@opentelemetry/api@1.9.1)(@types/node@22.19.19)(@vitest/browser-playwright@5.0.5)(@vitest/coverage-v8@5.0.5)(@vitest/ui@5.0.5)(vite@8.3.4(@types/node@22.19.19)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.47.1)(tsx@4.22.0)(yaml@2.9.1))
+      zero-schema:
+        specifier: workspace:*
+        version: link:../zero-schema
+      zerogen:
+        specifier: workspace:*
+        version: link:../zerogen
+      zql:
+        specifier: workspace:*
+        version: link:../zql
+
   packages/zero-schema:
     devDependencies:
       oxfmt:

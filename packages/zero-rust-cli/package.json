@@ -1,0 +1,35 @@
+{
+  "name": "zero-rust-cli",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Generates the Rust row types, schema, and query builder of a Zero app for the Zero Rust client (rust/zero-client). Not published yet.",
+  "license": "Apache-2.0",
+  "bin": {
+    "zero-rust": "./src/bin.ts"
+  },
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "generate": "UPDATE_GENERATED=1 vitest run",
+    "check-types": "tsc",
+    "lint": "oxlint --quiet --config ../../oxlint.config.ts src/ test/",
+    "format": "oxfmt .",
+    "check-format": "oxfmt --check ."
+  },
+  "dependencies": {
+    "incur": "0.7.1",
+    "typescript": "6.0.3"
+  },
+  "devDependencies": {
+    "@rocicorp/zero": "workspace:*",
+    "@types/node": "^22.19.19",
+    "oxfmt": "^0.74.0",
+    "vitest": "^5.0.5",
+    "zero-schema": "workspace:*",
+    "zerogen": "workspace:*",
+    "zql": "workspace:*"
+  },
+  "engines": {
+    "node": ">=22.18"
+  }
+}

@@ -1,0 +1,14 @@
+[package]
+name = "zero-codegen-tests"
+version = "0.0.0"
+description = "Compiles and runs the Rust that `zero-rust codegen` generates."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+zero-client.workspace = true
+
+[lints]
+workspace = true

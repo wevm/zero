@@ -30,6 +30,7 @@ updated with each milestone.
 | IVM operators and memory source | `packages/zql/src/ivm`                                  | `ivm`                           | `ivm`, `ivm-features`, `bughunt-ivm`, `generated/ivm-fuzz`, `generated/ivm-features-fuzz`, `generated/sweep-ivm-*`, `generated/harden-ivm-*`              |
 | Pipeline builder                | `packages/zql/src/builder/builder.ts`                   | `builder`                       | the IVM vectors above                                                                                                                                     |
 | Views and change application    | `array-view.ts`, `view-apply-change.ts`                 | `ivm::ArrayView`                | the IVM vectors above                                                                                                                                     |
+| Typed queries and codegen       | `packages/zql/src/query/query.ts`, `packages/zerogen`   | `typed`, `zero-rust codegen`    | the query vectors through `AnyQuery`, which typed queries build (`rust/codegen-tests`)                                                                    |
 
 ## Not ported yet
 
@@ -38,7 +39,7 @@ not implemented. The builder has only the compute mode, where every operator
 runs on the client's own rows; the synced client's mode, which reads
 aggregates and groups from the rows the server streams for them, and its
 optimistic aggregates come with the engine (M4), as does the view snapshot
-(row diff) API. The typed query builder comes with codegen (M3). The
+(row diff) API. The typed mutation API comes with the mutators (M4). The
 WebSocket transport is test-only so far (`tokio-tungstenite`, a
 dev-dependency); the one the client ships comes with the engine (M4).
 

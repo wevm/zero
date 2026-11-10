@@ -31,3 +31,4 @@ pub mod schema;
 pub mod sort;
 pub mod strings;
 pub mod ttl;
+pub mod typed;
