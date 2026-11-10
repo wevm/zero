@@ -1,7 +1,8 @@
 import Foundation
 import Synchronization
 import Testing
-import Zero
+
+@testable import Zero
 
 /// A transport the probes run against.
 enum TransportKind: String, CustomTestStringConvertible, CaseIterable, Sendable {
@@ -268,14 +269,18 @@ struct TransportProbeTests {
         schema: .test, options: options, socketFactory: TransportSocketFactory(kind.transport))
       var states: [ConnectionStatus] = []
       let unsubscribe = zero.connection.subscribe { states.append($0.status) }
-      let reconnected = try await within(.seconds(15)) {
+      // URLSession sees the cut only once the client writes, which is its ping after `pingTimeoutMs`. A reconnect that a stalled system service holds up never reaches the server (freezing the iOS Simulator's `configd_sim` does it, and CI's simulator has done it): the client gives up on it at the connect timeout and tries again within the first retry's longest wait. The window covers one such attempt, and 2 s for the retry to connect.
+      let window = Duration.milliseconds(
+        options.pingTimeoutMs + connectTimeoutMs + fastReconnectInitialMs + 2_000)
+      let reconnected = try await within(window) {
         connections.withLock { $0 } >= 2 && zero.connection.state == .connected
       }
       print(
         "[probe] \(kind) client, server gone mid-\(binary ? "binary" : "text") frame: reconnected \(reconnected), states \(states), \(zero.connection.state)"
       )
       if !reconnected {
-        print("[probe]   server: \(seen.withLock { $0 })")
+        print(
+          "[probe]   server: \(seen.withLock { $0 }), TCP connections accepted: \(server.accepted)")
         for line in logs.all.suffix(8) { print("[probe]   \(line.prefix(300))") }
       }
       #expect(reconnected, "binary \(binary): \(zero.connection.state)")

@@ -120,7 +120,7 @@
       return zero
     }
 
-    /// Whether the client's attempt to connect timed out because the process was stopped. A stop longer than the connect timeout (10 s) while the client is connecting ends the attempt when the process continues, before the server's acknowledgement is read, and the client connects again after its backoff, as zero-client does. Without a stop, a timeout is a failure the tests catch.
+    /// Whether the client's attempt to connect timed out because the process was stopped. A stop longer than the connect timeout (10 s) while the client is connecting ends the attempt when the process continues, before the server's acknowledgement is read, and the client connects again after its backoff, as zero-client does. Without a stop, a timeout of an attempt that reached the server is a failure the tests catch.
     func timedOutWhileStopped(_ zero: Zero<Void>) -> Bool {
       guard
         case .connecting(_, _, .client(.connectTimeout, _)?) = zero.engine.connectionManager.state
@@ -172,6 +172,15 @@
       return true
     }
 
+    /// How long a test waits for the client to connect. An attempt that a stalled system service holds up never reaches the server (freezing the iOS Simulator's `configd_sim` does it, and CI's simulator has done it): the client gives up on it at the connect timeout and tries again within the first retry's longest wait. The wait covers one such attempt, and 2 s for the retry to connect.
+    static let connectWait = Duration.milliseconds(
+      connectTimeoutMs + fastReconnectInitialMs + 2_000)
+
+    /// Waits up to `connectWait` for `zero` to connect.
+    func connected(_ zero: Zero<Void>, _ what: String = "connected") async throws {
+      try await eventually(what, timeout: Self.connectWait) { zero.connection.state == .connected }
+    }
+
     func eventually(
       _ what: String, timeout: Duration = .seconds(10), _ condition: () -> Bool
     ) async throws {
@@ -189,12 +198,12 @@
       defer { server.stop() }
       let zero = try makeZero(server)
       defer { zero.close() }
-      try await eventually("connected") { zero.connection.state == .connected }
+      try await connected(zero)
       hide()
       try await eventually("disconnected") { zero.connection.state.status == .disconnected }
       try await eventually("the socket closed") { server.open == 0 }
       show()
-      try await eventually("reconnected") { zero.connection.state == .connected }
+      try await connected(zero, "reconnected")
       #expect(connections(2).contains(server.connected))
       #expect(server.open == 1)
     }
@@ -206,7 +215,7 @@
       server.acknowledge = false
       let zero = try makeZero(server)
       defer { zero.close() }
-      try await eventually("the socket") { server.connected == 1 }
+      try await eventually("the socket", timeout: Self.connectWait) { server.connected == 1 }
       hide()
       try await Task.sleep(for: .milliseconds(100))
       server.acknowledgeAll()
@@ -220,7 +229,7 @@
       #expect(closed, "the socket stayed open")
       server.acknowledge = true
       show()
-      try await eventually("reconnected") { zero.connection.state == .connected }
+      try await connected(zero, "reconnected")
       #expect(server.open == 1)
     }
 
@@ -230,7 +239,7 @@
       defer { server.stop() }
       let zero = try makeZero(server)
       defer { zero.close() }
-      try await eventually("connected") { zero.connection.state == .connected }
+      try await connected(zero)
       for round in 0..<3 {
         for _ in 0..<50 {
           hide()
@@ -240,9 +249,7 @@
           for _ in 0..<round { await Task.yield() }
         }
       }
-      try await eventually("connected after the transitions") {
-        zero.connection.state == .connected
-      }
+      try await connected(zero, "connected after the transitions")
       try await eventually("one socket open", timeout: .seconds(10)) { server.open == 1 }
       for _ in 0..<50 {
         show()
@@ -261,7 +268,7 @@
       let server = try await Server(log)
       defer { server.stop() }
       let zero = try makeZero(server)
-      try await eventually("connected") { zero.connection.state == .connected }
+      try await connected(zero)
       zero.close()
       try await eventually("the socket closed") { server.open == 0 }
       for _ in 0..<5 {
@@ -282,7 +289,7 @@
       do {
         let zero = try makeZero(server)
         weakZero = zero
-        try await eventually("connected") { zero.connection.state == .connected }
+        try await connected(zero)
       }
       for _ in 0..<5 {
         hide()
@@ -300,7 +307,7 @@
         defer { server.stop() }
         let zero = try makeZero(server)
         defer { zero.close() }
-        try await eventually("connected") { zero.connection.state == .connected }
+        try await connected(zero)
         zero.mutate(Notes.put(.init(id: "n1", text: "pending")))
         try await eventually("the push") { server.messages.contains { $0.hasPrefix(#"["push""#) } }
         hide()
@@ -317,7 +324,7 @@
         defer { server.stop() }
         let zero = try makeZero(server)
         defer { zero.close() }
-        try await eventually("connected") { zero.connection.state == .connected }
+        try await connected(zero)
         zero.mutate(Notes.put(.init(id: "n1", text: "pending")))
         let start = ContinuousClock.now
         hide()
