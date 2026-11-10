@@ -71,6 +71,16 @@ package enum ConnectionError: Error, Sendable, Hashable, CustomStringConvertible
     }
   }
 
+  /// `isTransportFailure`: the socket closed or never answered, rather than
+  /// the server replying. These carry no backoff instructions and usually
+  /// clear within seconds, so they are retried on the fast schedule.
+  var isTransportFailure: Bool {
+    switch clientKind {
+    case .abruptClose?, .cleanClose?, .connectTimeout?, .pingTimeout?: true
+    default: false
+    }
+  }
+
   static func isHTTPAuthFailure(_ cause: FailureCause) -> Bool {
     if case .http(let status, _) = cause { return status == 401 || status == 403 }
     return false

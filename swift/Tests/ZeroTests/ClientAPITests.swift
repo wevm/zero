@@ -208,8 +208,11 @@ import ZeroTesting
     }
     guard case .zeroError = try await three.server.value else { return }
 
-    // It comes back: the two are replayed, and it rejects one.
-    scheduler.advance(by: 5_000)
+    // It comes back on the next attempt: the two are replayed, and it
+    // rejects one.
+    for _ in 0..<150 where sockets.sockets.last?.closed != false {
+      scheduler.advance(by: 100)
+    }
     let second = try connect()
     poke(
       second, #""01""#, "02",

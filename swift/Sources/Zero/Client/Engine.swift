@@ -1,5 +1,27 @@
 /// `RUN_LOOP_INTERVAL_MS`: the backoff before retrying a failed connection.
 let runLoopIntervalMs: Double = 5_000
+/// `FAST_RECONNECT_INITIAL_MS`: the longest wait before the first retry
+/// after a transport failure. Each further consecutive failure doubles it, up
+/// to `runLoopIntervalMs`.
+let fastReconnectInitialMs: Double = 500
+/// `STABLE_CONNECTION_MS`: how long a connection must stay up before a later
+/// failure starts the fast schedule from the beginning again.
+let stableConnectionMs: Double = 5_000
+
+/// `reconnectBackoffMs`: the wait before retrying after `failedAttempts`
+/// consecutive transport failures (1 for the first). The ceiling starts at
+/// `fastReconnectInitialMs` and doubles with each failure, and the wait is
+/// between half the ceiling and the ceiling, so that clients that lost the
+/// same server don't all retry at once. Once the ceiling reaches `maxMs`, the
+/// wait is `maxMs`.
+func reconnectBackoffMs(
+  _ failedAttempts: Int, maxMs: Double, random: () -> Double = { .random(in: 0..<1) }
+) -> Double {
+  let ceiling =
+    fastReconnectInitialMs * Double(sign: .plus, exponent: failedAttempts - 1, significand: 1)
+  if ceiling >= maxMs { return maxMs }
+  return (ceiling / 2 + random() * ceiling / 2).rounded(.toNearestOrAwayFromZero)
+}
 /// `CONNECT_TIMEOUT_MS`: each phase of a connection attempt gets this long.
 let connectTimeoutMs: Double = 10_000
 
@@ -130,6 +152,11 @@ final class Engine {
   private var persistTimer: (any ScheduledTimer)?
   private var lastPersistAt: Double?
   private var additionalConnectParams: [(String, String)]?
+  /// When the current connection got the server's `connected`, or nil.
+  private var connectedAt: Double?
+  /// Consecutive transport failures, which set the reconnect backoff. Reset
+  /// when a connection that stayed up for `stableConnectionMs` ends.
+  private var transportFailures = 0
   private var currentAttempt: ConnectAttempt?
   private var connectionReady = ReadyPromise()
   private var recentSentMessages: [JSONValue] = []
@@ -445,6 +472,12 @@ final class Engine {
     var sleepMs: Double?
     switch transition {
     case .none:
+      // A transport failure is retried soon, then less often. Errors the
+      // server sent keep the full interval, adjusted by any backoff they carry.
+      if reason.isTransportFailure {
+        transportFailures += 1
+        backoffMs = reconnectBackoffMs(transportFailures, maxMs: runLoopIntervalMs)
+      }
       if let backoff = reason.backoff {
         if let min = backoff.minBackoffMs { backoffMs = max(backoffMs, min) }
         if let max = backoff.maxBackoffMs { backoffMs = Swift.min(backoffMs, max) }
@@ -861,6 +894,10 @@ final class Engine {
       log.debug("disconnect() called while closed")
       return
     }
+    if let connectedAt, scheduler.monotonicNow - connectedAt >= stableConnectionMs {
+      transportFailures = 0
+    }
+    connectedAt = nil
     socket?.close(code: closeCode)
     socket = nil
     lastMutationIDsSent.removeAll()
@@ -1008,6 +1045,7 @@ final class Engine {
     log.info(
       "Connected: timeToConnectMs=\(JSNumber.format(scheduler.monotonicNow - attempt.start))")
     addConnectEvent(attempt, "processing the server acknowledgement")
+    connectedAt = scheduler.monotonicNow
     lastMutationIDsSent.removeAll()
     let patch = queryManager.queriesPatch(store: store, lastPatch: initConnectionQueries)
     if patch.count > 0, initConnectionQueries != nil {

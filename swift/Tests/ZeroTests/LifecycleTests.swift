@@ -99,7 +99,7 @@ import ZeroTesting
     scheduler.runDueTimers()
     #expect(sockets.sockets.count == 2)
     sockets.sockets[1].serverClose(code: 1006)
-    scheduler.advance(by: 1000)
+    scheduler.advance(by: 200)
     #expect(sockets.sockets.count == 2)
 
     zero.reconnectNow()

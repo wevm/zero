@@ -210,6 +210,9 @@ function startZeroCache() {
         ['ZERO_QUERY_URL']: apiURLs('query'),
         ['ZERO_MUTATE_URL']: apiURLs('mutate'),
         ['ZERO_NUM_SYNC_WORKERS']: '1',
+        // zbugs' API returns the userID it validated from /query and
+        // /mutate, so refuse a connection's userID it didn't vouch for.
+        ['ZERO_AUTH_REQUIRE_SERVER_USER_ID']: 'true',
         ['ZERO_LOG_LEVEL']: env['ZERO_LOG_LEVEL'] ?? 'info',
       },
     },
