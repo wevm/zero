@@ -18,7 +18,7 @@ indexmap.workspace = true
 [dev-dependencies]
 futures-util = { version = "0.3", default-features = false }
 tokio = { version = "1", features = ["macros", "rt", "time"] }
-tokio-tungstenite = "0.30"
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect"] }
 
 [lints]
 workspace = true

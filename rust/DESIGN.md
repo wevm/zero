@@ -17,8 +17,8 @@ mutators, and a zbugs model crate, but not their UI.
 | `rust/zero-client` | `zero-client`      | not yet   | The client: JSON, hashes, AST, protocol, and later IVM, engine |
 | `rust/conformance` | `zero-conformance` | never     | The conformance runner: replays every vector file              |
 
-The crate names are provisional; `zero` is taken on crates.io and
-`zero-client` was free on 2026-11-10.
+tmm chose `zero-client` for the crate name (`zero` is taken on crates.io;
+`zero-client` was free on 2026-11-10).
 
 ## Releases
 
@@ -50,18 +50,25 @@ merges a Version Packages PR that carries a `zero-rust` version.
 
 - A synchronous, single-owner engine with an injected clock and deterministic
   scheduling; no `await` inside a mutator or a rebase.
-- Queries read in-memory IVM sources. SQLite (`rusqlite`) holds snapshots,
-  pending mutations, cookies, and client and client-group lifecycle, with
-  Replicache's semantics but not its IndexedDB-shaped storage.
+- Queries read in-memory IVM sources. Persistence (snapshots, pending
+  mutations, cookies, and client and client-group lifecycle, with
+  Replicache's semantics but not its IndexedDB-shaped storage) is planned on
+  SQLite (`rusqlite`). Whether it is opt-in, behind a trait or a feature, is
+  tmm's to decide; until then `rusqlite` is not a required dependency.
 - The socket is behind a `Transport` trait that the core defines (tmm's
   decision): by default `zero-client` depends on no async runtime and no
   WebSocket crate, so an app can bring its own transport without
   downloading crates it doesn't use. A reference transport,
   `tokio-tungstenite` with rustls, comes behind an opt-in Cargo feature of
   `zero-client` for a quick start. Its public API exposes no tungstenite
-  types, so a tungstenite major bump doesn't make a `zero-client` one. The
-  quick-start path (`cargo add zero-client --features tokio-transport`)
-  goes in the README with M4.
+  types, so a tungstenite major bump doesn't make a `zero-client` one. To
+  keep downloads small, `tokio-tungstenite` is declared with
+  `default-features = false` and only the features the transport uses, and
+  TLS is a feature of its own: rustls pulls in a crypto provider (`ring`,
+  or `aws-lc-rs`, whose `aws-lc-sys` needs cmake and a C toolchain), so an
+  app on `ws://` or behind its own TLS pulls in none of it. The quick-start
+  path (`cargo add zero-client --features tokio-transport,tls`) goes in the
+  README with M4.
 - The tests already speak to a real `zero-cache` through
   `tokio-tungstenite`, as a dev-dependency only (M1.5).
 - Snapshots and subscriptions that don't depend on a UI framework, bridged
