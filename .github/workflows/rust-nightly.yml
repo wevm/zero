@@ -1,0 +1,83 @@
+name: Rust Nightly
+
+# Long fuzz runs of the Rust client, on seeds the PR checks don't reach. Each
+# run takes new seeds from its run number, and a failure names the seed to
+# replay: JS's answers to new random queries and pushes, compared with
+# Rust's. The seeds are the ones Swift Nightly uses on the same run number.
+
+on:
+  schedule:
+    # 3:30 AM US Eastern, after Swift Nightly.
+    - cron: '30 7 * * *'
+  workflow_dispatch:
+    inputs:
+      first-seed:
+        description: The seed (the run number when empty)
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  # JS's answers on new seeds, 5 to 10 times the PR checks' cases. The seeds
+  # are printed, so a mismatch replays with the same environment variables.
+  differential-vectors:
+    name: Differential vectors (JS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.11.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - run: pnpm install --frozen-lockfile
+      - name: Generate
+        working-directory: packages/zero-conformance
+        env:
+          SEED: ${{ inputs.first-seed || format('{0}', github.run_number) }}
+        run: |
+          base=$((1000000 + SEED))
+          export IVM_FUZZ_SEED=$base IVM_FUZZ_CASES=6000
+          export SWEEP_IVM_SEED=$base SWEEP_IVM_CASES=15000
+          export HARDEN_IVM_SEED=$((base * 10)) HARDEN_IVM_SEEDS=5
+          env | grep -E '_(SEED|SEEDS|CASES)=' | sort
+          # Five to ten times the cases outlast vitest's 10 s default; the
+          # job's timeout bounds them.
+          pnpm exec vitest run --test-timeout=600000 src/ivm/ivm.test.ts src/ivm/ivm-features.test.ts \
+            src/ivm/sweep-ivm.test.ts src/ivm/harden-ivm.test.ts
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: differential-vectors
+          path: packages/zero-conformance/generated/
+          if-no-files-found: error
+          retention-days: 7
+
+  differential-rust:
+    name: Differential vectors (Rust)
+    needs: differential-vectors
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: differential-vectors
+          path: packages/zero-conformance/generated/
+      # rustup is preinstalled; rust-toolchain.toml picks the version.
+      - name: Install the toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      # Only the IVM corpora are written, so the others are missing; the
+      # report still fails on any case that differs from JS.
+      - name: Compare with JS
+        run: cargo run --locked --release -p zero-conformance -- --summary "$GITHUB_STEP_SUMMARY" ivm

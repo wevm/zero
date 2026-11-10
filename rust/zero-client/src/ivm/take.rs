@@ -31,6 +31,76 @@ fn start(row: &Row, basis: Basis) -> Option<Start> {
     })
 }
 
+/// The first fetch of a `Take` or `Cap` partition: passes the first
+/// `limit` nodes of its input and hands the rows it counted to `store` once
+/// it is done, as the JS generator's `finally` does.
+///
+/// A node counts once the next one is asked for, as in the generator, which
+/// resumes after the `yield`. A consumer that stops early, even right after
+/// the last node, leaves the generator suspended: JS stores what it counted
+/// and asserts, so the query fails.
+/// Hands a hydrated partition's rows to its operator.
+type StoreRows = Box<dyn Fn(&[Row])>;
+
+struct Hydration {
+    input: Option<NodeStream>,
+    limit: usize,
+    rows: Vec<Row>,
+    pending: Option<Row>,
+    store: StoreRows,
+}
+
+impl Hydration {
+    fn new(input: NodeStream, limit: usize, store: StoreRows) -> Self {
+        Hydration {
+            input: Some(input),
+            limit,
+            rows: Vec::new(),
+            pending: None,
+            store,
+        }
+    }
+
+    fn finish(&mut self) {
+        self.input = None;
+        (self.store)(&self.rows);
+    }
+}
+
+impl Iterator for Hydration {
+    type Item = Node;
+
+    fn next(&mut self) -> Option<Node> {
+        self.input.as_ref()?;
+        if let Some(row) = self.pending.take() {
+            self.rows.push(row);
+            if self.rows.len() == self.limit {
+                self.finish();
+                return None;
+            }
+        }
+        match self.input.as_mut()?.next() {
+            Some(node) => {
+                self.pending = Some(node.row.clone());
+                Some(node)
+            }
+            None => {
+                self.finish();
+                None
+            }
+        }
+    }
+}
+
+impl Drop for Hydration {
+    fn drop(&mut self) {
+        if self.input.is_some() {
+            self.finish();
+            report("Unexpected early return prevented full hydration");
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct TakeState {
     size: usize,
@@ -216,33 +286,12 @@ impl Take {
             return empty();
         }
         let me = self.clone();
-        let mut it = Some(self.input.fetch(&req));
-        let mut size = 0;
-        let mut bound: Option<Row> = None;
-        let mut pending: Option<Row> = None;
-        Box::new(std::iter::from_fn(move || {
-            it.as_ref()?;
-            if let Some(p) = pending.take() {
-                bound = Some(p);
-                size += 1;
-                if size == me.limit {
-                    it = None;
-                    me.set_state(&key, size, bound.clone());
-                    return None;
-                }
-            }
-            match it.as_mut()?.next() {
-                Some(node) => {
-                    pending = Some(node.row.clone());
-                    Some(node)
-                }
-                None => {
-                    it = None;
-                    me.set_state(&key, size, bound.clone());
-                    None
-                }
-            }
-        }))
+        let limit = self.limit;
+        Box::new(Hydration::new(
+            self.input.fetch(&req),
+            limit,
+            Box::new(move |rows: &[Row]| me.set_state(&key, rows.len(), rows.last().cloned())),
+        ))
     }
 
     fn push_add_or_remove(&self, change: Change) {
@@ -867,31 +916,14 @@ impl Cap {
             "Constraint should match partition key"
         );
         let me = self.clone();
-        let mut it = Some(self.input.fetch(&req));
-        let mut pks: Vec<String> = Vec::new();
-        let mut pending: Option<Row> = None;
-        Box::new(std::iter::from_fn(move || {
-            it.as_ref()?;
-            if let Some(p) = pending.take() {
-                pks.push(me.serialize_pk(&p));
-                if pks.len() == me.limit {
-                    it = None;
-                    me.set_state(&key, pks.len(), pks.clone());
-                    return None;
-                }
-            }
-            match it.as_mut()?.next() {
-                Some(node) => {
-                    pending = Some(node.row.clone());
-                    Some(node)
-                }
-                None => {
-                    it = None;
-                    me.set_state(&key, pks.len(), pks.clone());
-                    None
-                }
-            }
-        }))
+        Box::new(Hydration::new(
+            self.input.fetch(&req),
+            self.limit,
+            Box::new(move |rows: &[Row]| {
+                let pks = rows.iter().map(|r| me.serialize_pk(r)).collect();
+                me.set_state(&key, rows.len(), pks)
+            }),
+        ))
     }
 }
 

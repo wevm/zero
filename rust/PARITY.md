@@ -27,11 +27,18 @@ updated with each milestone.
 | Connect URL                     | `createConnectionURL` in `zero.ts`                      | `protocol::ConnectionUrl`       | a unit test against `URLSearchParams`; `tests/walking_skeleton.rs`                                                                                        |
 | Client schema                   | `clientSchemaFrom`                                      | `schema::Schema::client_schema` | `tests/walking_skeleton.rs` (zero-cache rejects a wrong one)                                                                                              |
 | Protocol version                | `PROTOCOL_VERSION` (57)                                 | `protocol::PROTOCOL_VERSION`    | `meta`                                                                                                                                                    |
+| IVM operators and memory source | `packages/zql/src/ivm`                                  | `ivm`                           | `ivm`, `ivm-features`, `bughunt-ivm`, `generated/ivm-fuzz`, `generated/ivm-features-fuzz`, `generated/sweep-ivm-*`, `generated/harden-ivm-*`              |
+| Pipeline builder                | `packages/zql/src/builder/builder.ts`                   | `builder`                       | the IVM vectors above                                                                                                                                     |
+| Views and change application    | `array-view.ts`, `view-apply-change.ts`                 | `ivm::ArrayView`                | the IVM vectors above                                                                                                                                     |
 
 ## Not ported yet
 
-IVM, the client engine, and persistence. The runner lists their vector files
-as not implemented. The typed query builder comes with codegen (M3). The
+The client engine and persistence. The runner lists their vector files as
+not implemented. The builder has only the compute mode, where every operator
+runs on the client's own rows; the synced client's mode, which reads
+aggregates and groups from the rows the server streams for them, and its
+optimistic aggregates come with the engine (M4), as does the view snapshot
+(row diff) API. The typed query builder comes with codegen (M3). The
 WebSocket transport is test-only so far (`tokio-tungstenite`, a
 dev-dependency); the one the client ships comes with the engine (M4).
 
@@ -53,12 +60,25 @@ dev-dependency); the one the client ships comes with the engine (M4).
   `limit` or `orderBy` inside a junction relationship, so a unit test in
   `query.rs` pins those two messages.
 
+- The IVM vectors (`ivm/harness.ts`) are programs of query builder calls.
+  Rust replays each with its own builder, must build JS's AST and format or
+  fail with JS's message, then runs JS's AST over memory sources, as Swift
+  does: JS runs the AST with each ordering naming a column once, and Rust
+  must give that answer to the AST as written. Each push (or, for
+  `harden-ivm`, each batch) compares the changes the view received and the
+  view itself; `harden-ivm` also compares whether listeners were notified,
+  and tags numbers JSON can't carry. Errors are compared by message,
+  including JS's internal assertions: Rust reports "Unexpected early return
+  prevented full hydration" where JS's `Take` and `Cap` assert it, which the
+  Swift client skips.
+
 ## Documented differences
 
 Each is counted separately in the conformance report, never as an exact
 match.
 
-| Difference     | Why                                                                                                                                                                                                                                                                                                                  |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Lone surrogate | A Rust `String` can't hold a lone surrogate, which a JS string can. The parser reads an escaped one (`"\ud800"`) as U+FFFD, as the Swift client does; such a case matches when JS's output, with each such escape read as U+FFFD, is what Rust writes. Real servers send valid UTF-8, so this only shows in fuzzing. |
-| Nesting        | JSON nested deeper than `json::MAX_DEPTH` (1,500) is rejected. Dropping, comparing, and writing a value recurse, and a debug build overflows a 2 MB thread stack by 3,000 levels. JS has no limit short of its own stack (zero-cache writes about 4,100 levels). The Swift client has the same limit.                |
+| Difference      | Why                                                                                                                                                                                                                                                                                                                         |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Lone surrogate  | A Rust `String` can't hold a lone surrogate, which a JS string can. The parser reads an escaped one (`"\ud800"`) as U+FFFD, as the Swift client does; such a case matches when JS's output, with each such escape read as U+FFFD, is what Rust writes. Real servers send valid UTF-8, so this only shows in fuzzing.        |
+| Nesting         | JSON nested deeper than `json::MAX_DEPTH` (1,500) is rejected. Dropping, comparing, and writing a value recurse, and a debug build overflows a 2 MB thread stack by 3,000 levels. JS has no limit short of its own stack (zero-cache writes about 4,100 levels). The Swift client has the same limit.                       |
+| Unwritable path | A JSON path index is a `u32`, so a program with a negative or fractional index (`json('metadata', -1)`) can't be written in Rust. JS rejects it with "Invalid JSON path segment …"; such a case matches when JS rejects it that way. An index past `MAX_JSON_PATH_INDEX` can be written, and is rejected with JS's message. |

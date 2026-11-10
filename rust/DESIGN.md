@@ -12,10 +12,10 @@ mutators, and a zbugs model crate, but not their UI.
 
 ## Layout
 
-| Path               | Crate              | Published | What                                                           |
-| ------------------ | ------------------ | --------- | -------------------------------------------------------------- |
-| `rust/zero-client` | `zero-client`      | not yet   | The client: JSON, hashes, AST, protocol, and later IVM, engine |
-| `rust/conformance` | `zero-conformance` | never     | The conformance runner: replays every vector file              |
+| Path               | Crate              | Published | What                                                               |
+| ------------------ | ------------------ | --------- | ------------------------------------------------------------------ |
+| `rust/zero-client` | `zero-client`      | not yet   | The client: JSON, hashes, AST, protocol, IVM, and later the engine |
+| `rust/conformance` | `zero-conformance` | never     | The conformance runner: replays every vector file                  |
 
 tmm chose `zero-client` for the crate name (`zero` is taken on crates.io;
 `zero-client` was free on 2026-11-10).
@@ -180,8 +180,14 @@ in [PARITY.md](PARITY.md).
   bump the pending changesets declare. It does nothing until `zero-client` is
   on crates.io.
 
-Still to come, with the milestones that need them: a nightly differential run on fresh seeds
-(M2, like `swift-nightly.yml`), macOS and Windows (M6, with the apps).
+`.github/workflows/rust-nightly.yml`, nightly and by hand: JS's answers to
+new random queries and pushes on fresh seeds (the ones Swift Nightly uses),
+five to ten times the PR checks' IVM cases, replayed by the conformance
+runner. Scheduled workflows run from the default branch, so it starts once
+`rust-client` is merged.
+
+Still to come, with the milestones that need them: client scenario seeds in
+the nightly run (M4), macOS and Windows (M6, with the apps).
 
 ## Milestones
 
@@ -192,7 +198,7 @@ Each milestone ends with green CI on `rust-client` and a short report.
 | M0        | Scaffolding: the `rust/` workspace, the conformance runner and its report, CI                                                                                                              | CI green on `rust-client`, running the runner on real vectors    | done   |
 | M1        | Primitives and wire: JSON, JS numbers, string orders, hashes, primary and aggregate keys, value comparison, LIKE, TTL, AST and normalization, query hashes, protocol messages, poke chunks | Every primitive, AST, and protocol vector file and corpus passes | done   |
 | M1.5      | Walking skeleton: connect to a real `zero-cache`, handshake, receive pokes, log rows                                                                                                       | Talks to a real server in CI                                     | done   |
-| M2        | IVM: memory sources, every client operator, pipeline builder, change application, aggregates                                                                                               | Curated and seeded-fuzz IVM vectors pass                         |        |
+| M2        | IVM: memory sources, every client operator, pipeline builder, change application, aggregates                                                                                               | Curated and seeded-fuzz IVM vectors pass                         | done   |
 | M3        | Codegen: a Rust target for the schema codegen CLI                                                                                                                                          | Generated code compiles and drives M2                            |        |
 | M4        | Client engine on memory storage: connection, query manager, pokes, mutators, rebase, auth, recovery                                                                                        | Client scenario vectors pass                                     |        |
 | M5        | The storage trait and lifecycle in the core, the memory backend, and SQLite behind the `sqlite` feature; scenarios on both; end-to-end against Postgres and `zero-cache`                   | Scenarios pass on memory and SQLite; end-to-end passes           |        |

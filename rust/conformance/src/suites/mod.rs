@@ -1,4 +1,5 @@
 mod ast;
+mod ivm;
 pub(crate) mod json;
 mod primitives;
 mod protocol;
@@ -9,6 +10,7 @@ use crate::Suite;
 pub fn all() -> Vec<Suite> {
     [
         ast::suites(),
+        ivm::suites(),
         json::suites(),
         primitives::suites(),
         protocol::suites(),

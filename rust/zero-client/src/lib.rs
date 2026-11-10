@@ -15,6 +15,7 @@
 //! enables it. (Storage and the transport arrive with the client engine.)
 
 pub mod ast;
+pub mod builder;
 pub mod compare;
 pub mod decode;
 pub mod format;

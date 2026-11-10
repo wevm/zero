@@ -31,6 +31,7 @@ mod predicate;
 mod stream;
 mod take;
 mod union_fan;
+mod view;
 
 pub use aggregate::*;
 pub use change::*;
@@ -51,6 +52,7 @@ pub use predicate::*;
 pub use stream::*;
 pub use take::*;
 pub use union_fan::*;
+pub use view::*;
 
 use crate::json::Object;
 use std::rc::Rc;
