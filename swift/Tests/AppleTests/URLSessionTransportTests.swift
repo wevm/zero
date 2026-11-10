@@ -216,8 +216,8 @@
       while !recorder.opened { try await Task.sleep(for: .milliseconds(10)) }
 
       for i in 0..<200 { connection.send("\(i)") }
-      // The main actor stays busy; the frames still go out.
-      usleep(1_000_000)
+      // The main actor stays busy, without suspending, for 100 slices of 10 ms or until the frames are out. Counting slices rather than time means that a stall of the whole process, which CI's iOS Simulator has had for 20 s, stretches one slice instead of using up the second: the frames' writer stalls with it and gets the frames out after. A writer on the main actor gets none out.
+      for _ in 0..<100 where received.withLock({ $0 }) < 200 { usleep(10_000) }
       #expect(received.withLock { $0 } == 200)
     }
 
