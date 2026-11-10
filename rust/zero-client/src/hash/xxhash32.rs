@@ -36,7 +36,7 @@ pub fn hash(bytes: &[u8], seed: u32) -> u32 {
             seed.wrapping_sub(PRIME1),
         ];
         while rest.len() >= 16 {
-            for (lane, chunk) in v.iter_mut().zip(rest[..16].chunks_exact(4)) {
+            for (lane, chunk) in v.iter_mut().zip(rest[..16].as_chunks::<4>().0) {
                 *lane = round(*lane, word(chunk));
             }
             rest = &rest[16..];
