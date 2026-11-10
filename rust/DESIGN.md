@@ -50,11 +50,14 @@ merges a Version Packages PR that carries a `zero-rust` version.
 
 - A synchronous, single-owner engine with an injected clock and deterministic
   scheduling; no `await` inside a mutator or a rebase.
-- Queries read in-memory IVM sources. Persistence (snapshots, pending
-  mutations, cookies, and client and client-group lifecycle, with
-  Replicache's semantics but not its IndexedDB-shaped storage) is planned on
-  SQLite (`rusqlite`). Whether it is opt-in, behind a trait or a feature, is
-  tmm's to decide; until then `rusqlite` is not a required dependency.
+- **No third-party dependencies** (tmm's decision): `cargo tree -e normal`
+  of `zero-client` with its default features shows `zero-client` alone, and
+  CI fails otherwise. Third-party crates come only behind opt-in features,
+  such as the reference transport and SQLite storage below. JSON objects and
+  schemas use `map::OrderedMap`, an insertion-ordered map in the crate
+  (`indexmap` was dropped), and no third-party type is in the public API.
+- Queries read in-memory IVM sources. Persistence is behind a storage
+  trait; see [Storage](#storage-planned-m5).
 - The socket is behind a `Transport` trait that the core defines (tmm's
   decision): by default `zero-client` depends on no async runtime and no
   WebSocket crate, so an app can bring its own transport without
@@ -73,6 +76,54 @@ merges a Version Packages PR that carries a `zero-rust` version.
   `tokio-tungstenite`, as a dev-dependency only (M1.5).
 - Snapshots and subscriptions that don't depend on a UI framework, bridged
   into GPUI entities and Rune state by the apps.
+
+### Storage (planned, M5)
+
+Opt-in, like the transport (tmm's decision), and shaped after zero-swift's
+(`swift/DESIGN.md`, Storage), which keeps Replicache's semantics but not its
+IndexedDB-shaped machinery.
+
+- The core owns everything but the bytes: the in-memory mirror of the
+  client groups, clients, snapshots, and pending mutations; every decision,
+  made in JS's order; and the client and client-group lifecycle and GC
+  (heartbeats, deleting inactive clients and telling the server, dropping
+  empty groups, disabling a group after `ClientNotFound`,
+  `SchemaVersionNotSupported`, or a 1009 close, and dropping the database
+  after the base cookie or last mutation ID errors).
+- A storage backend implements a small trait: load everything at open, then
+  apply an ordered stream of writes (Swift's `StorageOp`: put or delete a
+  group or clients, the deleted clients, the profile ID, a poke's snapshot
+  changes with its cookie and last mutation IDs, a pending mutation, a
+  rebase's aggregate writes, and dropping confirmed mutations), plus
+  listing and deleting whole databases for the database GC. The trait is
+  public, so an app can bring its own store, the "custom store" Swift
+  planned but never built.
+- The memory backend is in the core. It keeps databases for the life of the
+  process, keyed by name, like JS `kvStore: 'mem'`, and it is also the
+  fallback when a store can't be opened.
+- A `sqlite` feature (`rusqlite` on the system `libsqlite3`) implements only
+  the trait and the database-file GC; `sqlite-bundled` compiles SQLite in,
+  for platforms without a `libsqlite3`. WAL mode, `synchronous = NORMAL`.
+  Writes run in order on a plain `std::thread` fed by a channel, one
+  transaction per mutation or poke, so no async runtime is needed.
+- Versioning by name, as in Swift, with no migration framework: the
+  database name covers the user, the storage key, the mutate and query
+  URLs, the client schema's hash, the storage version, and the format, so a
+  schema change starts a new database as in JS; the file name is a hash of
+  it plus a Rust layout version.
+- Failure handling as in Swift: if the store can't be opened the client
+  runs on memory and calls `on_storage_failure`; a failed write stops
+  writing and calls it too; opening waits at most 250 ms for another
+  connection's lock before falling back; stored data that doesn't decode is
+  lost client state, so the client starts a new database and calls
+  `on_client_state_not_found`. The database-file GC follows Swift's: five
+  minutes after launch and then every 12 hours, databases no client used
+  for two days are deleted, only ours, renamed away first.
+- The client scenario vectors run on both backends.
+- Open: whether the default build is memory-only. A default `sqlite`
+  feature would put `rusqlite` in the default dependency tree, which the
+  no-third-party-dependencies rule above doesn't allow, so the CI check
+  would need an exception.
 
 ## Conformance
 
@@ -105,7 +156,9 @@ in [PARITY.md](PARITY.md).
 - **Rust (Linux)**: rustfmt, clippy with warnings denied, the tests, the
   conformance report (in the job summary), rustdoc with warnings denied, and
   `cargo package`, which builds the crate as crates.io would get it, outside
-  the workspace, and a build on the `rust-version` the manifest names.
+  the workspace, a check that the default build of `zero-client` has no
+  third-party normal or build dependencies, and a build on the
+  `rust-version` the manifest names.
 - **Rust end-to-end (Linux)**: Postgres and `zero-cache` from this repo's
   source over the fixture database (`packages/zero-conformance/src/e2e/`),
   and `zero-client/tests/walking_skeleton.rs` against them, with
@@ -130,6 +183,6 @@ Each milestone ends with green CI on `rust-client` and a short report.
 | M2        | IVM: memory sources, every client operator, pipeline builder, change application, aggregates                                                                                               | Curated and seeded-fuzz IVM vectors pass                         |        |
 | M3        | Codegen: a Rust target for the schema codegen CLI                                                                                                                                          | Generated code compiles and drives M2                            |        |
 | M4        | Client engine on memory storage: connection, query manager, pokes, mutators, rebase, auth, recovery                                                                                        | Client scenario vectors pass                                     |        |
-| M5        | SQLite persistence and lifecycle; scenarios on SQLite; end-to-end against Postgres and `zero-cache`                                                                                        | Scenarios pass on SQLite; end-to-end passes                      |        |
+| M5        | The storage trait and lifecycle in the core, the memory backend, and SQLite behind the `sqlite` feature; scenarios on both; end-to-end against Postgres and `zero-cache`                   | Scenarios pass on memory and SQLite; end-to-end passes           |        |
 | M6        | The shared zbugs model, then `apps/zbugs-gpui` and `apps/zbugs-rune`                                                                                                                       | Both apps run against a real backend                             |        |
 | M7        | Hardening, docs, packaging, the first crates.io release (with tmm's approval)                                                                                                              | `0.1.0` ready to publish                                         |        |
