@@ -10,6 +10,7 @@ pub mod compare;
 pub mod decode;
 pub mod format;
 pub mod hash;
+pub mod ivm;
 pub mod json;
 pub mod keys;
 pub mod like;

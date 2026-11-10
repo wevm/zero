@@ -53,7 +53,17 @@ merges a Version Packages PR that carries a `zero-rust` version.
 - Queries read in-memory IVM sources. SQLite (`rusqlite`) holds snapshots,
   pending mutations, cookies, and client and client-group lifecycle, with
   Replicache's semantics but not its IndexedDB-shaped storage.
-- Tokio for background I/O, `tokio-tungstenite` with rustls for the socket.
+- The socket is behind a `Transport` trait that the core defines (tmm's
+  decision): by default `zero-client` depends on no async runtime and no
+  WebSocket crate, so an app can bring its own transport without
+  downloading crates it doesn't use. A reference transport,
+  `tokio-tungstenite` with rustls, comes behind an opt-in Cargo feature of
+  `zero-client` for a quick start. Its public API exposes no tungstenite
+  types, so a tungstenite major bump doesn't make a `zero-client` one. The
+  quick-start path (`cargo add zero-client --features tokio-transport`)
+  goes in the README with M4.
+- The tests already speak to a real `zero-cache` through
+  `tokio-tungstenite`, as a dev-dependency only (M1.5).
 - Snapshots and subscriptions that don't depend on a UI framework, bridged
   into GPUI entities and Rune state by the apps.
 
