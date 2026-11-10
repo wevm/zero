@@ -5,7 +5,7 @@ use zero_client::json::{Object, Value};
 pub enum Outcome {
     /// Exactly.
     Pass,
-    /// Only under the named documented exception (`rust/DESIGN.md`).
+    /// Only under the named documented exception (`rust/PARITY.md`).
     Exception(&'static str),
 }
 

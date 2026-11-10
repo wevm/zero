@@ -1,3 +1,4 @@
+mod ast;
 mod json;
 mod primitives;
 mod values;
@@ -5,5 +6,11 @@ mod values;
 use crate::Suite;
 
 pub fn all() -> Vec<Suite> {
-    [json::suites(), primitives::suites(), values::suites()].concat()
+    [
+        ast::suites(),
+        json::suites(),
+        primitives::suites(),
+        values::suites(),
+    ]
+    .concat()
 }

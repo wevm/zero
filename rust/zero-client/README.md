@@ -9,7 +9,7 @@ So far it has Zero's primitives: JSON with JS semantics, JS number formatting
 and parsing, string orders, hashes, row keys, value comparison, `LIKE`, and
 TTLs. Syncing, queries, and mutators come next.
 
-- [Design and milestones](https://github.com/wevm/zero/blob/main/rust/DESIGN.md)
+- [Design and milestones](https://github.com/wevm/zero/blob/main/rust/PARITY.md)
 - [Parity with JS](https://github.com/wevm/zero/blob/main/rust/PARITY.md): what
   is ported, and the documented differences
 

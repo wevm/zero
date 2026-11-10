@@ -8,7 +8,7 @@ use std::fmt;
 ///
 /// Rust strings compare by code point, which for valid strings is the same
 /// as comparing by UTF-16 code unit, as JS `===` does. A Rust `String` can't
-/// hold a lone surrogate, which a JS string can (see `rust/DESIGN.md`).
+/// hold a lone surrogate, which a JS string can (see `rust/PARITY.md`).
 #[derive(Clone, Debug, PartialEq, Default)]
 pub enum Value {
     #[default]

@@ -6,7 +6,7 @@
 //! not implemented, so a report never reads as more coverage than it has.
 //! Each case is checked on its own: a failing or panicking case is counted
 //! and the rest still run. A case that matches JS only under one of the
-//! documented exceptions (`rust/DESIGN.md`) is counted apart from the cases
+//! documented exceptions (`rust/PARITY.md`) is counted apart from the cases
 //! that match exactly.
 
 mod case;
@@ -167,7 +167,7 @@ impl Report {
             }
         }
         if !exceptions.is_empty() {
-            out.push_str("\nCases matched under a documented exception (`rust/DESIGN.md`):\n\n");
+            out.push_str("\nCases matched under a documented exception (`rust/PARITY.md`):\n\n");
             for (e, n) in exceptions {
                 let _ = writeln!(out, "- {e}: {n}");
             }

@@ -22,7 +22,7 @@ impl std::error::Error for ParseError {}
 /// Parsing doesn't recurse, but dropping, comparing, and writing a value do,
 /// so the limit keeps them within a 2 MB thread stack (the default for
 /// spawned Rust threads) in a debug build, which overflows one by 3,000
-/// levels. JS has no limit short of its own stack; see `rust/DESIGN.md`.
+/// levels. JS has no limit short of its own stack; see `rust/PARITY.md`.
 pub const MAX_DEPTH: usize = 1_500;
 
 /// The message of the error for JSON nested deeper than [`MAX_DEPTH`].

@@ -20,9 +20,12 @@ updated with each milestone.
 
 ## Not ported yet
 
-AST and normalization, query hashes, the query builder, wire messages and poke
-chunks, IVM, the client engine, persistence. The runner lists their vector
+The query builder (`sweep-query-hash`), wire messages and poke chunks, IVM, the client engine, persistence. The runner lists their vector
 files as not implemented.
+
+`ast-features` checks that the wire schema rejects what JS rejects, but not
+valita's error messages. Its name mapping uses the JS test schema as JS wrote
+it into `ivm.json`'s shared fixtures.
 
 ## Documented differences
 
