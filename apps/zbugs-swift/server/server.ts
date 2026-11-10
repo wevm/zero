@@ -6,7 +6,8 @@
  * replica, and its signing keys from the last run instead, so an app keeps
  * its local data and its token across restarts, and it outlives zero-cache:
  * when zero-cache exits, as when Postgres is unreachable after this machine
- * sleeps, it restarts zero-cache once Postgres answers again.
+ * sleeps, it restarts zero-cache once Postgres answers again. With
+ * `ZBUGS_PG_START` it also starts Postgres again when Postgres stops.
  *
  *   node apps/zbugs-swift/server/server.ts
  *
@@ -29,6 +30,10 @@
  *   ZBUGS_KEEP       1 to keep the last run's database, and the replica and
  *                    keys in ZBUGS_DIR, which it needs, and to restart
  *                    zero-cache when it exits
+ *   ZBUGS_PG_START   with ZBUGS_KEEP, a shell command that starts Postgres,
+ *                    run once Postgres has missed three checks 10 seconds
+ *                    apart (for example `docker compose -f
+ *                    apps/zbugs/docker/docker-compose.yml start`)
  */
 import {execFile, execFileSync, spawn} from 'node:child_process';
 import {
@@ -250,6 +255,35 @@ async function postgresAnswers() {
   }
 }
 
+/**
+ * zero-cache keeps retrying while Postgres refuses connections and catches
+ * up once it answers, but nothing starts a stopped Postgres again: Docker's
+ * `restart: always` leaves a container that `docker stop` stopped alone
+ * until Docker itself restarts. So a kept backend runs `start` once
+ * Postgres has missed three checks 10 seconds apart, longer than a Docker
+ * restart takes, and again after three more.
+ */
+function watchPostgres(start: string) {
+  let misses = 0;
+  const check = async () => {
+    if (await postgresAnswers()) {
+      misses = 0;
+    } else if (++misses === 3) {
+      misses = 0;
+      process.stderr.write(
+        'Postgres is not answering; running ZBUGS_PG_START\n',
+      );
+      try {
+        await promisify(execFile)('/bin/sh', ['-c', start], {timeout: 60_000});
+      } catch (e) {
+        process.stderr.write(`ZBUGS_PG_START failed: ${String(e)}\n`);
+      }
+    }
+    setTimeout(check, 10_000);
+  };
+  setTimeout(check, 10_000);
+}
+
 let ready = false;
 let zeroCache = startZeroCache();
 
@@ -292,3 +326,6 @@ ready = true;
 process.stdout.write(
   `ready ws://${localHost}:${port} http://${localHost}:${apiPort}\n`,
 );
+if (keep && env['ZBUGS_PG_START']) {
+  watchPostgres(env['ZBUGS_PG_START']);
+}
