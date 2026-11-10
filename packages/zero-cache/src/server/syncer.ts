@@ -35,6 +35,7 @@ import {QueryStats} from '../services/view-syncer/query-stats.ts';
 import {SnapshotRowCache} from '../services/view-syncer/snapshot-row-cache.ts';
 import {Snapshotter} from '../services/view-syncer/snapshotter.ts';
 import {ViewSyncerService} from '../services/view-syncer/view-syncer.ts';
+import {clientGroupLogID} from '../types/client-group-log-id.ts';
 import {ProtocolErrorWithLevel} from '../types/error-with-level.ts';
 import {connectPgClient} from '../types/pg.ts';
 import {
@@ -109,9 +110,17 @@ export default async function runWorker(
   );
   lc.debug?.(`running view-syncer on ${replicaFile}`);
 
-  const cvrDB = await connectPgClient(lc, cvr.db, `sync-worker-${pid}-cvr`, {
-    max: must(cvr.maxConnsPerWorker, 'cvr.maxConnsPerWorker must be set'),
-  });
+  const cvrDB = await connectPgClient(
+    lc,
+    cvr.db,
+    `sync-worker-${pid}-cvr`,
+    {
+      max: must(cvr.maxConnsPerWorker, 'cvr.maxConnsPerWorker must be set'),
+    },
+    // Every number in the CVR is a JavaScript number, but JSONB returns a large
+    // one as digits, which would otherwise be parsed as a bigint.
+    {plainJSON: true},
+  );
 
   const upstreamDB =
     enableCrudMutations && upstream.type === 'pg'
@@ -276,7 +285,7 @@ export default async function runWorker(
       .withContext('component', 'view-syncer')
       .withContext('appID', shard.appID)
       .withContext('shardNum', shard.shardNum)
-      .withContext('clientGroupID', id)
+      .withContext('clientGroupID', clientGroupLogID(id))
       .withContext('instance', randomID());
 
     const customQueryTransformer =
@@ -288,6 +297,8 @@ export default async function runWorker(
       customQueryConfig,
       pushConfig,
       validateLegacyJWT,
+      undefined,
+      config.auth.requireServerUserID,
     );
 
     lc.debug?.(
@@ -352,7 +363,7 @@ export default async function runWorker(
         new MutagenService(
           lc
             .withContext('component', 'mutagen')
-            .withContext('clientGroupID', id),
+            .withContext('clientGroupID', clientGroupLogID(id)),
           shard,
           id,
           upstreamDB,
@@ -367,7 +378,7 @@ export default async function runWorker(
       : (id: string, connContextManager: ConnectionContextManager) =>
           new PusherService(
             config,
-            lc.withContext('clientGroupID', id),
+            lc.withContext('clientGroupID', clientGroupLogID(id)),
             id,
             connContextManager,
           );
