@@ -1,0 +1,196 @@
+name: Rust Release
+
+# Releases the Rust client (rust/), versioned with Changesets (see
+# .changeset/README.md). The zero-rust package (packages/zero-rust), which
+# isn't published to npm, carries the version and the changelog;
+# `pnpm --filter zero-rust sync-version` copies the version into
+# rust/Cargo.toml. Swift Release's "Version Packages" PR runs it, so one PR
+# versions both clients.
+#
+# On each push to main, when no zero-rust changeset is pending and the
+# version in rust/Cargo.toml isn't released yet (0.0.0 is never released),
+# after approval in the rust-release environment:
+# - publishes rust/ to the mirror (wevm/zero-rust) with a subtree split, tags
+#   the version there, and creates a GitHub release from the version's
+#   section of packages/zero-rust/CHANGELOG.md.
+# - publishes zero-client to crates.io, with trusted publishing once the
+#   crate exists, and with the environment's CARGO_REGISTRY_TOKEN for the
+#   first publish.
+# Each step is skipped when its release already exists, so a failed run can be
+# rerun. The plan reads the mirror without a token, so the mirror has to be
+# public, as wevm/zero-swift is.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-release
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Plan release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      mirror: ${{ steps.plan.outputs.mirror }}
+      release: ${{ steps.plan.outputs.release }}
+      crates: ${{ steps.plan.outputs.crates }}
+      first-publish: ${{ steps.plan.outputs.first-publish }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .changeset
+            rust/Cargo.toml
+            packages/zero-rust/package.json
+          sparse-checkout-cone-mode: false
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          nothing() {
+            for o in mirror release crates; do echo "$o=false" >> "$GITHUB_OUTPUT"; done
+            echo "first-publish=false" >> "$GITHUB_OUTPUT"
+          }
+          # The Version Packages PR releases these.
+          if grep -lE "^['\"]?zero-rust['\"]?: " .changeset/*.md 2>/dev/null; then
+            echo "::notice::zero-rust changesets are pending; nothing to release."
+            nothing
+            exit 0
+          fi
+          version="$(sed -nE '/^\[workspace\.package\]/,/^\[/ s/^version = "([^"]*)"/\1/p' rust/Cargo.toml)"
+          package="$(jq -r .version packages/zero-rust/package.json)"
+          if [ "$package" != "$version" ]; then
+            echo "packages/zero-rust is $package but rust/Cargo.toml is $version." >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$version" = "0.0.0" ]; then
+            echo "::notice::The Rust client is unreleased (0.0.0)."
+            nothing
+            exit 0
+          fi
+          if git ls-remote --exit-code --tags https://github.com/wevm/zero-rust.git "refs/tags/$version" >/dev/null; then
+            echo "mirror=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "mirror=true" >> "$GITHUB_OUTPUT"
+          fi
+          status="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/wevm/zero-rust/releases/tags/$version")"
+          case "$status" in
+            200) echo "release=false" >> "$GITHUB_OUTPUT" ;;
+            404) echo "release=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "Looking up the $version release returned HTTP $status." >&2; exit 1 ;;
+          esac
+          # crates.io asks for a User-Agent that says who is asking.
+          ua='wevm/zero rust-release (https://github.com/wevm/zero)'
+          crate="$(curl -s -o /dev/null -w '%{http_code}' -A "$ua" https://crates.io/api/v1/crates/zero-client)"
+          case "$crate" in
+            200) echo "first-publish=false" >> "$GITHUB_OUTPUT" ;;
+            404) echo "first-publish=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "Looking up zero-client on crates.io returned HTTP $crate." >&2; exit 1 ;;
+          esac
+          published="$(curl -s -o /dev/null -w '%{http_code}' -A "$ua" "https://crates.io/api/v1/crates/zero-client/$version")"
+          case "$published" in
+            200) echo "crates=false" >> "$GITHUB_OUTPUT" ;;
+            404) echo "crates=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "Looking up zero-client $version on crates.io returned HTTP $published." >&2; exit 1 ;;
+          esac
+
+  mirror:
+    name: Publish mirror
+    runs-on: ubuntu-latest
+    needs: plan
+    if: needs.plan.outputs.mirror == 'true' || needs.plan.outputs.release == 'true'
+    environment: rust-release
+    permissions:
+      contents: read
+      id-token: write # For the github-sts token exchange.
+    env:
+      MIRROR_REPO: wevm/zero-rust
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      # Short-lived token for the mirror, authorized by
+      # rust/.github/sts/mirror.sts.yaml (published to the mirror's main).
+      - name: Fetch mirror token
+        id: sts
+        uses: wevm/actions/.github/actions/github-sts@b518cf981b50a4c745a8b7335fc693f34b108a75 # main
+        with:
+          scope: wevm/zero-rust
+          policy: mirror
+          ttl: 5m
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Split and push
+        if: needs.plan.outputs.mirror == 'true'
+        env:
+          MIRROR_TOKEN: ${{ steps.sts.outputs.token }}
+        run: |
+          set -euo pipefail
+          git subtree split --prefix=rust -b mirror
+          remote="https://x-access-token:${MIRROR_TOKEN}@github.com/${MIRROR_REPO}.git"
+          git push "$remote" mirror:main
+          git tag "$VERSION" mirror
+          git push "$remote" "refs/tags/$VERSION"
+      # The version's changelog section. Its commit hashes are wevm/zero's,
+      # which GitHub doesn't link from the mirror, so they become links.
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ steps.sts.outputs.token }}
+        run: |
+          set -euo pipefail
+          awk -v v="## $VERSION" '$0 == v {f = 1; next} /^## / {f = 0} f' \
+            packages/zero-rust/CHANGELOG.md |
+            sed -E 's|^- ([0-9a-f]{7,40}):|- [`\1`](https://github.com/wevm/zero/commit/\1):|' \
+            >"$RUNNER_TEMP/notes.md"
+          if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/notes.md"; then
+            echo "No section for $VERSION in packages/zero-rust/CHANGELOG.md." >&2
+            exit 1
+          fi
+          gh release create "$VERSION" -R "$MIRROR_REPO" --verify-tag \
+            --title "$VERSION" --notes-file "$RUNNER_TEMP/notes.md"
+
+  crates:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    needs: plan
+    if: needs.plan.outputs.crates == 'true'
+    environment: rust-release
+    permissions:
+      contents: read
+      id-token: write # For crates.io trusted publishing.
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Install the toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      # Trusted publishing only works for a crate that exists, so the first
+      # publish uses the environment's CARGO_REGISTRY_TOKEN instead.
+      - name: Authenticate
+        id: auth
+        if: needs.plan.outputs.first-publish == 'false'
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token || secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
+            echo "No crates.io token: set CARGO_REGISTRY_TOKEN in the rust-release environment for the first publish." >&2
+            exit 1
+          fi
+          cargo publish -p zero-client --locked

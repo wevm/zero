@@ -18,7 +18,29 @@ mutators, and a zbugs model crate, but not their UI.
 | `rust/conformance` | `zero-conformance` | never     | The conformance runner: replays every vector file              |
 
 The crate names are provisional; `zero` is taken on crates.io and
-`zero-client` was free on 2026-11-10. Publishing needs tmm's approval.
+`zero-client` was free on 2026-11-10.
+
+## Releases
+
+Like the Swift client's (`swift-release.yml`):
+
+- Changesets versions the client. `packages/zero-rust` is a version carrier,
+  not published to npm: it holds the version and `CHANGELOG.md`. Add a
+  changeset for `zero-rust` to release a change.
+- Swift Release's "Version Packages" PR versions both clients; its script
+  copies `zero-rust`'s version into `rust/Cargo.toml` (`[workspace.package]`)
+  and `rust/Cargo.lock` with `rust/scripts/set-version.sh`. A second
+  Changesets job would race it for the same branch.
+- On `main`, `rust-release.yml` releases a version that isn't out yet, after
+  approval in the `rust-release` environment: a subtree split of `rust/` to
+  the mirror, `wevm/zero-rust`, with a tag and a GitHub release from the
+  changelog, and `cargo publish` of `zero-client`. 0.0.0 is never released.
+- The mirror token comes from github-sts, authorized by
+  `rust/.github/sts/mirror.sts.yaml`, which the first mirror push publishes.
+  crates.io's trusted publishing needs the crate to exist, so the first
+  publish uses a `CARGO_REGISTRY_TOKEN` in the environment.
+
+The first mirror push and every crates.io publish need tmm's approval.
 
 ## Architecture (planned)
 
@@ -50,14 +72,26 @@ documented exception, and how many fail.
   wrong (the Swift client found such cases), the difference is listed below
   and counted as an exception, with the reason.
 
-### Documented exceptions
+Deliberate differences from JS, each counted separately in the report, are
+in [PARITY.md](PARITY.md).
 
-Each is counted separately in the report.
+### CI
 
-| Exception      | Why                                                                                                                                                                                                                                                                                                               |
-| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Lone surrogate | A Rust `String` can't hold a lone surrogate, which a JS string can. The parser reads an escaped one (`"\ud800"`) as U+FFFD, as the Swift client does; the case matches when JS's output, with each such escape read as U+FFFD, is what Rust writes. Real servers send valid UTF-8, so this only shows in fuzzing. |
-| Nesting        | JSON nested deeper than `json::MAX_DEPTH` (1,500) is rejected. Dropping, comparing, and writing a value recurse, and a debug build overflows a 2 MB thread stack by 3,000 levels. JS has no limit short of its own stack (zero-cache writes about 4,100 levels). Swift has the same limit.                        |
+`.github/workflows/rust.yml`, on `main`, `rust-client`, and every PR:
+
+- **Conformance Vectors**: the checked-in vectors match current JS, and the
+  seeded fuzz corpora are generated for the next job.
+- **Rust (Linux)**: rustfmt, clippy with warnings denied, the tests, the
+  conformance report (in the job summary), rustdoc with warnings denied, and
+  `cargo package`, which builds the crate as crates.io would get it, outside
+  the workspace.
+- **Rust API breaks**: `cargo semver-checks` against the last release, at the
+  bump the pending changesets declare. It does nothing until `zero-client` is
+  on crates.io.
+
+Still to come, with the milestones that need them: end-to-end against
+Postgres and `zero-cache` (M1.5), a nightly differential run on fresh seeds
+(M2, like `swift-nightly.yml`), macOS and Windows (M6, with the apps).
 
 ## Milestones
 

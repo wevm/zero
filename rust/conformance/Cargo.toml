@@ -1,6 +1,6 @@
 [package]
 name = "zero-conformance"
-version = "0.0.0"
+version.workspace = true
 description = "Replays the JS client's conformance vectors (packages/zero-conformance) against zero-client."
 publish = false
 edition.workspace = true

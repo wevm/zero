@@ -73,3 +73,49 @@ jobs:
       # documented exception, or fail, and which files aren't replayed yet.
       - name: Conformance
         run: cargo run --locked --release -p zero-conformance -- --require-generated --summary "$GITHUB_STEP_SUMMARY"
+      # Broken intra-doc links and other rustdoc warnings fail.
+      - name: Docs
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --no-deps --locked
+      # The crate as crates.io would get it, built on its own, outside the
+      # workspace: what a consumer without path overrides compiles.
+      - name: Package
+        run: cargo package -p zero-client --locked
+
+  # Fails on a public API break since the last release that no changeset
+  # declares: below 1.0 a break needs a minor changeset, from 1.0 a major one.
+  # Nothing to compare with until zero-client is on crates.io.
+  api-breaks:
+    name: Rust API breaks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Find the baseline
+        id: baseline
+        run: |
+          status="$(curl -s -o /dev/null -w '%{http_code}' \
+            -A 'wevm/zero rust CI (https://github.com/wevm/zero)' https://crates.io/api/v1/crates/zero-client)"
+          case "$status" in
+            200) echo "released=true" >> "$GITHUB_OUTPUT" ;;
+            404) echo "released=false" >> "$GITHUB_OUTPUT"; echo "::notice::zero-client isn't on crates.io yet." ;;
+            *) echo "Looking up zero-client on crates.io returned HTTP $status." >&2; exit 1 ;;
+          esac
+      - name: Install cargo-semver-checks
+        if: steps.baseline.outputs.released == 'true'
+        run: rustup show active-toolchain || rustup toolchain install && cargo install cargo-semver-checks --locked
+      # The largest bump the pending zero-rust changesets declare.
+      - name: API breaks
+        if: steps.baseline.outputs.released == 'true'
+        run: |
+          set -euo pipefail
+          bumps="$(sed -nE "s/^['\"]?zero-rust['\"]?: *(major|minor|patch)/\1/p" ../.changeset/*.md 2>/dev/null || true)"
+          type=patch
+          echo "$bumps" | grep -q minor && type=minor
+          echo "$bumps" | grep -q major && type=major
+          cargo semver-checks -p zero-client --release-type "$type"

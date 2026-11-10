@@ -1,0 +1,11 @@
+# Lets wevm/zero's Rust Release workflow (main, rust-release environment)
+# push the subtree split of rust/ and its release tags to this mirror, and
+# create the matching GitHub release.
+# Lives in wevm/zero under rust/ so each mirror push publishes it here.
+subject: repo:wevm@109633172/zero@1425053827:environment:rust-release
+claim_pattern:
+  ref: refs/heads/main
+  workflow_ref: 'wevm/zero/\.github/workflows/rust-release\.yml@refs/heads/main'
+permissions:
+  contents: write
+max_ttl: 5m

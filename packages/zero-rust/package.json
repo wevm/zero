@@ -1,0 +1,16 @@
+{
+  "name": "zero-rust",
+  "version": "0.0.0",
+  "description": "Carries the version of the Zero Rust client (rust/) for Changesets. Not published to npm.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wevm/zero.git",
+    "directory": "packages/zero-rust"
+  },
+  "files": [],
+  "scripts": {
+    "version-packages": "cd ../.. && pnpm dlx @changesets/cli@3.0.3 version && pnpm --filter zero-rust sync-version",
+    "sync-version": "sh ../../rust/scripts/set-version.sh \"$(node -p 'require(\"./package.json\").version')\""
+  }
+}

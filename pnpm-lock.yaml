@@ -1493,6 +1493,8 @@ importers:
         specifier: workspace:*
         version: link:../shared
 
+  packages/zero-rust: {}
+
   packages/zero-schema:
     devDependencies:
       oxfmt:

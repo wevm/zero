@@ -3,6 +3,7 @@ resolver = "3"
 members = ["zero-client", "conformance"]
 
 [workspace.package]
+version = "0.0.0"
 edition = "2024"
 rust-version = "1.85"
 license = "Apache-2.0"
@@ -10,7 +11,7 @@ repository = "https://github.com/wevm/zero"
 
 [workspace.dependencies]
 indexmap = "2"
-zero-client = { path = "zero-client" }
+zero-client = { path = "zero-client", version = "0.0.0" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

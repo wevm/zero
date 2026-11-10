@@ -1,12 +1,14 @@
 [package]
 name = "zero-client"
-version = "0.0.0"
+version.workspace = true
 description = "A native Rust client for Zero."
-publish = false
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+readme = "README.md"
+keywords = ["zero", "sync", "local-first", "ivm"]
+categories = ["database", "web-programming::websocket"]
 
 [dependencies]
 indexmap.workspace = true
