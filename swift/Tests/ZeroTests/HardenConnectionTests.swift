@@ -471,4 +471,16 @@ import ZeroTesting
     #expect(zero.connection.state.status == .error)
     zero.close()
   }
+
+  /// 06622e6ec: the nth consecutive transport failure waits between half
+  /// of 500 ms × 2^(n−1) and all of it, until that reaches the 5 s interval.
+  /// Rows follow `reconnect-backoff.test.ts`.
+  @Test(arguments: [
+    (1, 250.0, 500.0), (2, 500, 1000), (3, 1000, 2000), (4, 2000, 4000), (5, 5000, 5000),
+    (50, 5000, 5000),
+  ])
+  func transportFailureBackoff(failures: Int, min: Double, max: Double) {
+    #expect(reconnectBackoffMs(failures, maxMs: 5_000) { 0 } == min)
+    #expect(reconnectBackoffMs(failures, maxMs: 5_000) { 0.999999 } == max)
+  }
 }
