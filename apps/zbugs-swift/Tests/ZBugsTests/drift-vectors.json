@@ -1377,16 +1377,52 @@
       "ast": {
         "table": "comment",
         "where": {
-          "type": "simple",
-          "op": "=",
-          "left": {
-            "type": "column",
-            "name": "issueID"
-          },
-          "right": {
-            "type": "literal",
-            "value": "i-public"
-          }
+          "type": "and",
+          "conditions": [
+            {
+              "type": "simple",
+              "op": "=",
+              "left": {
+                "type": "column",
+                "name": "issueID"
+              },
+              "right": {
+                "type": "literal",
+                "value": "i-public"
+              }
+            },
+            {
+              "type": "correlatedSubquery",
+              "related": {
+                "correlation": {
+                  "parentField": [
+                    "issueID"
+                  ],
+                  "childField": [
+                    "id"
+                  ]
+                },
+                "subquery": {
+                  "table": "issue",
+                  "alias": "zsubq_issue",
+                  "where": {
+                    "type": "simple",
+                    "op": "=",
+                    "left": {
+                      "type": "column",
+                      "name": "visibility"
+                    },
+                    "right": {
+                      "type": "literal",
+                      "value": "public"
+                    }
+                  }
+                },
+                "system": "client"
+              },
+              "op": "EXISTS"
+            }
+          ]
         },
         "related": [
           {
@@ -1449,7 +1485,7 @@
           ]
         ]
       },
-      "hash": "1ktu3ow0mv1kbs"
+      "hash": "04xl0ev109av76"
     },
     {
       "name": "commentsPage",
@@ -1469,16 +1505,52 @@
       "ast": {
         "table": "comment",
         "where": {
-          "type": "simple",
-          "op": "=",
-          "left": {
-            "type": "column",
-            "name": "issueID"
-          },
-          "right": {
-            "type": "literal",
-            "value": "i-public"
-          }
+          "type": "and",
+          "conditions": [
+            {
+              "type": "simple",
+              "op": "=",
+              "left": {
+                "type": "column",
+                "name": "issueID"
+              },
+              "right": {
+                "type": "literal",
+                "value": "i-public"
+              }
+            },
+            {
+              "type": "correlatedSubquery",
+              "related": {
+                "correlation": {
+                  "parentField": [
+                    "issueID"
+                  ],
+                  "childField": [
+                    "id"
+                  ]
+                },
+                "subquery": {
+                  "table": "issue",
+                  "alias": "zsubq_issue",
+                  "where": {
+                    "type": "simple",
+                    "op": "=",
+                    "left": {
+                      "type": "column",
+                      "name": "visibility"
+                    },
+                    "right": {
+                      "type": "literal",
+                      "value": "public"
+                    }
+                  }
+                },
+                "system": "client"
+              },
+              "op": "EXISTS"
+            }
+          ]
         },
         "related": [
           {
@@ -1548,7 +1620,7 @@
           ]
         ]
       },
-      "hash": "0cpd0ic04h36wd"
+      "hash": "1kf8fgs1l321lc"
     },
     {
       "name": "comment",
@@ -1559,16 +1631,52 @@
       "ast": {
         "table": "comment",
         "where": {
-          "type": "simple",
-          "op": "=",
-          "left": {
-            "type": "column",
-            "name": "id"
-          },
-          "right": {
-            "type": "literal",
-            "value": "c-1"
-          }
+          "type": "and",
+          "conditions": [
+            {
+              "type": "simple",
+              "op": "=",
+              "left": {
+                "type": "column",
+                "name": "id"
+              },
+              "right": {
+                "type": "literal",
+                "value": "c-1"
+              }
+            },
+            {
+              "type": "correlatedSubquery",
+              "related": {
+                "correlation": {
+                  "parentField": [
+                    "issueID"
+                  ],
+                  "childField": [
+                    "id"
+                  ]
+                },
+                "subquery": {
+                  "table": "issue",
+                  "alias": "zsubq_issue",
+                  "where": {
+                    "type": "simple",
+                    "op": "=",
+                    "left": {
+                      "type": "column",
+                      "name": "visibility"
+                    },
+                    "right": {
+                      "type": "literal",
+                      "value": "public"
+                    }
+                  }
+                },
+                "system": "client"
+              },
+              "op": "EXISTS"
+            }
+          ]
         },
         "related": [
           {
@@ -1621,7 +1729,7 @@
         ],
         "limit": 1
       },
-      "hash": "0khochh0hvtn9l"
+      "hash": "0owmakh1ulashf"
     },
     {
       "name": "issueDetail",
@@ -4503,16 +4611,107 @@
       "ast": {
         "table": "emoji",
         "where": {
-          "type": "simple",
-          "op": "=",
-          "left": {
-            "type": "column",
-            "name": "subjectID"
-          },
-          "right": {
-            "type": "literal",
-            "value": "i-public"
-          }
+          "type": "and",
+          "conditions": [
+            {
+              "type": "simple",
+              "op": "=",
+              "left": {
+                "type": "column",
+                "name": "subjectID"
+              },
+              "right": {
+                "type": "literal",
+                "value": "i-public"
+              }
+            },
+            {
+              "type": "or",
+              "conditions": [
+                {
+                  "type": "correlatedSubquery",
+                  "related": {
+                    "correlation": {
+                      "parentField": [
+                        "subjectID"
+                      ],
+                      "childField": [
+                        "id"
+                      ]
+                    },
+                    "subquery": {
+                      "table": "comment",
+                      "alias": "zsubq_comment",
+                      "where": {
+                        "type": "correlatedSubquery",
+                        "related": {
+                          "correlation": {
+                            "parentField": [
+                              "issueID"
+                            ],
+                            "childField": [
+                              "id"
+                            ]
+                          },
+                          "subquery": {
+                            "table": "issue",
+                            "alias": "zsubq_issue",
+                            "where": {
+                              "type": "simple",
+                              "op": "=",
+                              "left": {
+                                "type": "column",
+                                "name": "visibility"
+                              },
+                              "right": {
+                                "type": "literal",
+                                "value": "public"
+                              }
+                            }
+                          },
+                          "system": "client"
+                        },
+                        "op": "EXISTS"
+                      }
+                    },
+                    "system": "client"
+                  },
+                  "op": "EXISTS"
+                },
+                {
+                  "type": "correlatedSubquery",
+                  "related": {
+                    "correlation": {
+                      "parentField": [
+                        "subjectID"
+                      ],
+                      "childField": [
+                        "id"
+                      ]
+                    },
+                    "subquery": {
+                      "table": "issue",
+                      "alias": "zsubq_issue",
+                      "where": {
+                        "type": "simple",
+                        "op": "=",
+                        "left": {
+                          "type": "column",
+                          "name": "visibility"
+                        },
+                        "right": {
+                          "type": "literal",
+                          "value": "public"
+                        }
+                      }
+                    },
+                    "system": "client"
+                  },
+                  "op": "EXISTS"
+                }
+              ]
+            }
+          ]
         },
         "related": [
           {
@@ -4533,7 +4732,7 @@
           }
         ]
       },
-      "hash": "010fjoe0a9hfol"
+      "hash": "11hyrzw1n33f2k"
     },
     {
       "name": "prevNext",
