@@ -268,7 +268,7 @@ impl JsonCodable for ValuePosition {
 }
 
 /// `isHomogeneousList`: every element has the JS type of the first.
-fn is_homogeneous(list: &[Value]) -> bool {
+pub(crate) fn is_homogeneous(list: &[Value]) -> bool {
     list.first()
         .is_none_or(|first| list.iter().all(|v| v.type_name() == first.type_name()))
 }

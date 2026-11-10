@@ -15,6 +15,20 @@ pub struct Format {
     pub aggregate: Option<Aggregate>,
 }
 
+impl Format {
+    /// Sets the format of the relationship `name`, keeping the
+    /// relationships in order.
+    pub fn set_relationship(&mut self, name: &str, format: Format) {
+        match self
+            .relationships
+            .binary_search_by(|(k, _)| strings::utf16(k, name))
+        {
+            Ok(i) => self.relationships[i].1 = format,
+            Err(i) => self.relationships.insert(i, (name.to_owned(), format)),
+        }
+    }
+}
+
 impl JsonCodable for Format {
     fn from_json(v: &Value) -> Result<Self> {
         let r = Reader::new(v, "object")?;

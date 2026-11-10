@@ -235,7 +235,7 @@ fn cmp_literal_value(a: &Value, b: &Value) -> Ordering {
     }
 }
 
-fn cmp_related(a: &CorrelatedSubquery, b: &CorrelatedSubquery) -> Ordering {
+pub(crate) fn cmp_related(a: &CorrelatedSubquery, b: &CorrelatedSubquery) -> Ordering {
     utf8(
         a.subquery.alias.as_deref().unwrap_or(""),
         b.subquery.alias.as_deref().unwrap_or(""),

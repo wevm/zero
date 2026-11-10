@@ -14,6 +14,7 @@ pub mod json;
 pub mod keys;
 pub mod like;
 pub mod protocol;
+pub mod query;
 pub mod schema;
 pub mod sort;
 pub mod strings;

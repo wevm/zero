@@ -4,6 +4,10 @@ mod coding;
 mod normalize;
 pub mod strict;
 
+pub(crate) use coding::is_homogeneous;
+pub(crate) use normalize::cmp_related;
+pub use normalize::normalize_condition;
+
 use crate::json::{Object, Value};
 
 /// A query: a table, its filters, relationships, order, and bounds.

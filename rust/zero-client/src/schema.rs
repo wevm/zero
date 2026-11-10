@@ -31,16 +31,36 @@ pub struct Table {
     pub primary_key: Vec<String>,
 }
 
-/// The tables of a schema, in declaration order. Relationships come with
-/// the query builder.
+crate::ast::string_enum!(
+    /// How many rows a relationship hop leads to.
+    Cardinality { One = "one", Many = "many" }
+);
+
+/// One hop of a relationship: from `source_field` of the table to
+/// `dest_field` of `dest_schema`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RelationshipHop {
+    pub source_field: Vec<String>,
+    pub dest_field: Vec<String>,
+    pub dest_schema: String,
+    pub cardinality: Cardinality,
+}
+
+/// A relationship: one hop, or two through a junction table.
+pub type Relationship = Vec<RelationshipHop>;
+
+/// The tables of a schema and their relationships, in declaration order.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Schema {
     pub tables: IndexMap<String, Table>,
+    /// By table, then by name.
+    pub relationships: IndexMap<String, IndexMap<String, Relationship>>,
 }
 
 impl Schema {
     /// A schema in the JSON form JS's schema object has (`tables`, each with
-    /// `name`, `serverName`, `columns`, and `primaryKey`).
+    /// `name`, `serverName`, `columns`, and `primaryKey`, and optionally
+    /// `relationships`).
     pub fn from_json(v: &Value) -> Result<Schema> {
         let r = Reader::new(v, "schema")?;
         let tables = r.required("tables", |v| {
@@ -70,10 +90,40 @@ impl Schema {
                 })
             })
         })?;
+        let relationships = r
+            .optional("relationships", |v| {
+                decode::record(v, |rels| {
+                    Ok(
+                        decode::record(rels, |hops| decode::array(hops, hop_from_json))?
+                            .into_iter()
+                            .collect::<IndexMap<_, _>>(),
+                    )
+                })
+            })?
+            .unwrap_or_default();
         Ok(Schema {
             tables: tables.into_iter().collect(),
+            relationships: relationships.into_iter().collect(),
         })
     }
+
+    /// The relationship `name` of `table`.
+    pub fn relationship(&self, table: &str, name: &str) -> Option<&Relationship> {
+        self.relationships.get(table)?.get(name)
+    }
+}
+
+fn hop_from_json(v: &Value) -> Result<RelationshipHop> {
+    let h = Reader::new(v, "relationship")?;
+    let cardinality = h.string("cardinality")?;
+    Ok(RelationshipHop {
+        source_field: h.required("sourceField", decode::strings)?,
+        dest_field: h.required("destField", decode::strings)?,
+        dest_schema: h.string("destSchema")?,
+        cardinality: Cardinality::parse(&cardinality).ok_or_else(|| {
+            DecodeError::new(format!("Invalid cardinality \"{cardinality}\"")).at("cardinality")
+        })?,
+    })
 }
 
 /// An unknown table or column met while mapping names.
