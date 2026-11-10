@@ -68,10 +68,11 @@ jobs:
       - name: Check generated Swift and drift vectors are current
         run: pnpm --filter zero-swift run test
       - name: Check types
-        run: pnpm --filter zero-conformance --filter zero-swift run check-types
-      # The published CLI is a bundle; this keeps it bundling.
-      - name: Build the zero-swift CLI
-        run: pnpm --filter zero-swift run build
+        run: pnpm --filter zero-conformance --filter zerogen --filter zero-swift run check-types
+      # The published CLI is a bundle with zerogen inlined. This installs the
+      # packed package outside the workspace and runs it.
+      - name: Smoke test the packed CLI
+        run: pnpm --filter zero-swift smoke
 
   linux:
     name: Swift (Linux)

@@ -3,8 +3,8 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {expect, test} from 'vitest';
+import type {Config} from '../../zerogen/src/cli.ts';
 import {cli, codegenFile, legacyArgv} from './cli.ts';
-import type {Config} from './generate.ts';
 
 const repo = fileURLToPath(new URL('../../../', import.meta.url));
 const update = process.env['UPDATE_GENERATED'] === '1';

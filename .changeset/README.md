@@ -3,6 +3,8 @@
 Changesets version the Swift client: the `zero-swift` npm package
 (`packages/zero-swift-cli`) and the Swift package (`swift/`), which share one
 version. Upstream Zero's packages are released separately and are ignored here.
+`packages/zerogen`, the generator `zero-swift` bundles, is private and isn't
+released on its own.
 
 To release a change to either, add a changeset for `zero-swift`:
 

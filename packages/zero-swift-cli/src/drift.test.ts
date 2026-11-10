@@ -1,7 +1,7 @@
 import {readFileSync, writeFileSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {expect, test} from 'vitest';
-import {recordDriftFile} from './drift.ts';
+import {recordDriftFile} from '../../zerogen/src/drift.ts';
 
 const repo = fileURLToPath(new URL('../../../', import.meta.url));
 const update = process.env['UPDATE_GENERATED'] === '1';
