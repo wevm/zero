@@ -15,9 +15,10 @@ name: Rust Release
 # - publishes rust/ to the mirror (wevm/zero-rust) with a subtree split, tags
 #   the version there, and creates a GitHub release from the version's
 #   section of packages/zero-rust/CHANGELOG.md.
-# - publishes zero-client to crates.io, with trusted publishing once the
-#   crate exists, and with the environment's CARGO_REGISTRY_TOKEN for the
-#   first publish.
+# - publishes zero-client to crates.io with trusted publishing. Trusted
+#   publishing needs the crate to exist, so tmm makes the first publish by
+#   hand, from his machine with his own `cargo login` (rust/DESIGN.md); until
+#   then this job is skipped with a notice. CI holds no crates.io token.
 # Each step is skipped when its release already exists, so a failed run can be
 # rerun. The plan reads the mirror without a token, so the mirror has to be
 # public, as wevm/zero-swift is.
@@ -43,7 +44,6 @@ jobs:
       mirror: ${{ steps.plan.outputs.mirror }}
       release: ${{ steps.plan.outputs.release }}
       crates: ${{ steps.plan.outputs.crates }}
-      first-publish: ${{ steps.plan.outputs.first-publish }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -60,7 +60,6 @@ jobs:
           set -euo pipefail
           nothing() {
             for o in mirror release crates; do echo "$o=false" >> "$GITHUB_OUTPUT"; done
-            echo "first-publish=false" >> "$GITHUB_OUTPUT"
           }
           # The Version Packages PR releases these.
           if grep -lE "^['\"]?zero-rust['\"]?: " .changeset/*.md 2>/dev/null; then
@@ -96,8 +95,14 @@ jobs:
           ua='wevm/zero rust-release (https://github.com/wevm/zero)'
           crate="$(curl -s -o /dev/null -w '%{http_code}' -A "$ua" https://crates.io/api/v1/crates/zero-client)"
           case "$crate" in
-            200) echo "first-publish=false" >> "$GITHUB_OUTPUT" ;;
-            404) echo "first-publish=true" >> "$GITHUB_OUTPUT" ;;
+            200) ;;
+            404)
+              # The first publish is made by hand (rust/DESIGN.md); trusted
+              # publishing takes over once the crate exists.
+              echo "::warning::zero-client isn't on crates.io yet. Publish $version by hand (cargo publish -p zero-client from rust/ at this commit), set up trusted publishing for wevm/zero's rust-release.yml, then rerun this workflow."
+              echo "crates=false" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
             *) echo "Looking up zero-client on crates.io returned HTTP $crate." >&2; exit 1 ;;
           esac
           published="$(curl -s -o /dev/null -w '%{http_code}' -A "$ua" "https://crates.io/api/v1/crates/zero-client/$version")"
@@ -180,19 +185,12 @@ jobs:
           persist-credentials: false
       - name: Install the toolchain
         run: rustup show active-toolchain || rustup toolchain install
-      # Trusted publishing only works for a crate that exists, so the first
-      # publish uses the environment's CARGO_REGISTRY_TOKEN instead.
+      # Trusted publishing: a short-lived token for this workflow, which
+      # crates.io trusts once the crate exists and is configured for it.
       - name: Authenticate
         id: auth
-        if: needs.plan.outputs.first-publish == 'false'
         uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
       - name: Publish
         env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token || secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
-            echo "No crates.io token: set CARGO_REGISTRY_TOKEN in the rust-release environment for the first publish." >&2
-            exit 1
-          fi
-          cargo publish -p zero-client --locked
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: cargo publish -p zero-client --locked

@@ -40,8 +40,14 @@ Like the Swift client's (`swift-release.yml`):
   changelog, and `cargo publish` of `zero-client`. 0.0.0 is never released.
 - The mirror token comes from github-sts, authorized by
   `rust/.github/sts/mirror.sts.yaml`, which the first mirror push publishes.
-  crates.io's trusted publishing needs the crate to exist, so the first
-  publish uses a `CARGO_REGISTRY_TOKEN` in the environment.
+  wevm/zero-rust is in the `wevm-github-sts-production` app.
+- crates.io's trusted publishing needs the crate to exist, so tmm makes the
+  first publish by hand, at the first real release, from his machine with
+  his own `cargo login` (`cargo publish -p zero-client` in `rust/` at the
+  released commit), then sets up trusted publishing for `rust-release.yml`.
+  CI holds no crates.io token: until the crate exists, the release run
+  skips the crates.io job with a notice and still pushes the mirror and its
+  release; a rerun after the manual publish finds the version published.
 
 So the first mirror push and every crates.io publish happen only when tmm
 merges a Version Packages PR that carries a `zero-rust` version.
