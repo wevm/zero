@@ -25,19 +25,19 @@
       "isIgnored": true
     },
     {
-      "label": "The native clients' CLIs (packages/zero-swift-cli, packages/zero-rust-cli) and the generator they share (packages/zerogen) read schemas with the TypeScript compiler API at runtime, which TypeScript 7 does not have",
+      "label": "The native clients' CLIs (zero-swift in packages/zero-swift-cli, zero-rust in packages/zero-rust-cli) and the generator they share (packages/zerogen) read schemas with the TypeScript compiler API at runtime, which TypeScript 7 does not have",
       "dependencies": [
         "typescript"
       ],
       "packages": [
         "zero-swift",
-        "zero-rust-cli",
+        "zero-rust",
         "zerogen"
       ],
       "pinVersion": "6.0.3"
     },
     {
-      "label": "zero-swift's CLI takes the app's @rocicorp/zero, any release it supports, not the workspace's",
+      "label": "The native clients' CLIs take the app's @rocicorp/zero, any release they support, not the workspace's",
       "dependencies": [
         "@rocicorp/zero"
       ],
@@ -45,7 +45,8 @@
         "peer"
       ],
       "packages": [
-        "zero-swift"
+        "zero-swift",
+        "zero-rust"
       ],
       "isIgnored": true
     },

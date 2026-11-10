@@ -12,12 +12,12 @@ mutators, and a zbugs model crate, but not their UI.
 
 ## Layout
 
-| Path                     | Crate                 | Published | What                                                               |
-| ------------------------ | --------------------- | --------- | ------------------------------------------------------------------ |
-| `rust/zero-client`       | `zero-client`         | not yet   | The client: JSON, hashes, AST, protocol, IVM, and later the engine |
-| `rust/conformance`       | `zero-conformance`    | never     | The conformance runner: replays every vector file                  |
-| `rust/codegen-tests`     | `zero-codegen-tests`  | never     | The Rust `zero-rust codegen` generates, checked in, and its tests  |
-| `packages/zero-rust-cli` | (npm) `zero-rust-cli` | not yet   | The `zero-rust` CLI: `codegen`, from the shared `packages/zerogen` |
+| Path                     | Crate                | Published | What                                                                                    |
+| ------------------------ | -------------------- | --------- | --------------------------------------------------------------------------------------- |
+| `rust/zero-client`       | `zero-client`        | not yet   | The client: JSON, hashes, AST, protocol, IVM, and later the engine                      |
+| `rust/conformance`       | `zero-conformance`   | never     | The conformance runner: replays every vector file                                       |
+| `rust/codegen-tests`     | `zero-codegen-tests` | never     | The Rust `zero-rust codegen` generates, checked in, and its tests                       |
+| `packages/zero-rust-cli` | (npm) `zero-rust`    | not yet   | The `zero-rust` CLI: `codegen`, from the shared `packages/zerogen`; carries the version |
 
 tmm chose `zero-client` for the crate name (`zero` is taken on crates.io;
 `zero-client` was free on 2026-11-10).
@@ -26,9 +26,11 @@ tmm chose `zero-client` for the crate name (`zero` is taken on crates.io;
 
 Like the Swift client's (`swift-release.yml`):
 
-- Changesets versions the client. `packages/zero-rust` is a version carrier,
-  not published to npm: it holds the version and `CHANGELOG.md`. Add a
-  changeset for `zero-rust` to release a change.
+- Changesets versions the client. As for Swift, the CLI's npm package
+  carries the version (tmm's decision): `zero-rust`
+  (`packages/zero-rust-cli`) holds it and `CHANGELOG.md`, and the CLI and
+  the crates share it. Add a changeset for `zero-rust` to release a change
+  to either.
 - Swift Release's "Version Packages" PR versions both clients; its script
   copies `zero-rust`'s version into `rust/Cargo.toml` (`[workspace.package]`)
   and `rust/Cargo.lock` with `rust/scripts/set-version.sh`. A second
@@ -39,7 +41,8 @@ Like the Swift client's (`swift-release.yml`):
   to `main` and holds their secrets, with no required reviewers. A release
   is a subtree split of `rust/` to
   the mirror, `wevm/zero-rust`, with a tag and a GitHub release from the
-  changelog, and `cargo publish` of `zero-client`. 0.0.0 is never released.
+  changelog, `cargo publish` of `zero-client`, and `npm publish` of the
+  `zero-rust` CLI. 0.0.0 is never released.
 - The mirror token comes from github-sts, authorized by
   `rust/.github/sts/mirror.sts.yaml`, which the first mirror push publishes.
   wevm/zero-rust is in the `wevm-github-sts-production` app.
@@ -50,8 +53,12 @@ Like the Swift client's (`swift-release.yml`):
   CI holds no crates.io token: until the crate exists, the release run
   skips the crates.io job with a notice and still pushes the mirror and its
   release; a rerun after the manual publish finds the version published.
+- npm's trusted publishing also needs the package to exist, so the first
+  `zero-rust` publish is made by hand too (`pnpm --filter zero-rust build`,
+  then `npm publish` in `packages/zero-rust-cli`); until then the npm job is
+  skipped with a notice.
 
-So the first mirror push and every crates.io publish happen only when tmm
+So the first mirror push and every crates.io and npm publish happen only when tmm
 merges a Version Packages PR that carries a `zero-rust` version.
 
 ## Architecture (planned)
@@ -196,8 +203,8 @@ generated rows.
 Not yet, with the milestones that need them: the typed mutation API
 (Swift's `Update` and `Key` structs and `tx.mutate.<table>`) comes with the
 mutators (M4); `drift record` for Rust ports of app queries and mutators
-with the zbugs model (M6); publishing the CLI to npm with the first release
-(M7).
+with the zbugs model (M6); publishing the CLI to npm, as `zero-rust`, with
+the first release (M7).
 
 ## Conformance
 

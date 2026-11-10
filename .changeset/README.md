@@ -7,8 +7,9 @@ separately and are ignored here.
   and the Swift package (`swift/`), which share one version.
   `packages/zerogen`, the generator `zero-swift` bundles, is private and isn't
   released on its own.
-- The Rust client (`rust/`): `zero-rust` (`packages/zero-rust`), which isn't
-  published to npm and only carries the crates' version and changelog.
+- The Rust client: the `zero-rust` npm package (`packages/zero-rust-cli`), its
+  codegen CLI, and the crates in `rust/`, which share one version.
+  `packages/zerogen` is bundled into `zero-rust` too.
 
 To release a change to the Swift client, add a changeset for `zero-swift`; to
 release one to the Rust client, add one for `zero-rust`:
@@ -26,10 +27,10 @@ request open with the pending version and changelog. Merging it sets the
 version in `packages/zero-swift-cli/package.json` and `swift/VERSION`, and the
 workflow then publishes the npm package and tags the SwiftPM mirror after
 approval in the `swift-release` environment. The same PR versions the Rust
-client: it sets the version in `packages/zero-rust/package.json`,
+client: it sets the version in `packages/zero-rust-cli/package.json`,
 `rust/Cargo.toml`, and `rust/Cargo.lock`, and `.github/workflows/rust-release.yml`
-then publishes the mirror (`wevm/zero-rust`) and `zero-client` on crates.io
-from the `rust-release` environment, which limits it to `main`. Merging the
+then publishes the mirror (`wevm/zero-rust`), `zero-client` on crates.io, and
+the `zero-rust` CLI on npm from the `rust-release` environment, which limits it to `main`. Merging the
 PR is the release gate; the environment has no required reviewers.
 
 A change that breaks the Swift package's public API, so that an app building

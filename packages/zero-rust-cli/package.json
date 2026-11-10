@@ -1,20 +1,35 @@
 {
-  "name": "zero-rust-cli",
+  "name": "zero-rust",
   "version": "0.0.0",
-  "private": true,
-  "description": "Generates the Rust row types, schema, and query builder of a Zero app for the Zero Rust client (rust/zero-client). Not published yet.",
+  "description": "Generates the Rust row types, schema, and query builder of a Zero app for the Zero Rust client.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wevm/zero.git",
+    "directory": "packages/zero-rust-cli"
+  },
   "bin": {
     "zero-rust": "./src/bin.ts"
   },
+  "files": [
+    "dist"
+  ],
   "type": "module",
+  "publishConfig": {
+    "bin": {
+      "zero-rust": "./dist/bin.js"
+    }
+  },
   "scripts": {
+    "build": "esbuild src/bin.ts --bundle --platform=node --format=esm --target=node22 --splitting --outdir=dist --external:@rocicorp/zero --external:typescript --external:incur",
     "test": "vitest run",
+    "smoke": "node test/packed.ts",
     "generate": "UPDATE_GENERATED=1 vitest run",
     "check-types": "tsc",
     "lint": "oxlint --quiet --config ../../oxlint.config.ts src/ test/",
     "format": "oxfmt .",
-    "check-format": "oxfmt --check ."
+    "check-format": "oxfmt --check .",
+    "sync-version": "sh ../../rust/scripts/set-version.sh \"$(node -p 'require(\"./package.json\").version')\""
   },
   "dependencies": {
     "incur": "0.7.1",
@@ -23,11 +38,15 @@
   "devDependencies": {
     "@rocicorp/zero": "workspace:*",
     "@types/node": "^22.19.19",
+    "esbuild": "0.28.2",
     "oxfmt": "^0.74.0",
     "vitest": "^5.0.5",
     "zero-schema": "workspace:*",
     "zerogen": "workspace:*",
     "zql": "workspace:*"
+  },
+  "peerDependencies": {
+    "@rocicorp/zero": ">=1.11.0"
   },
   "engines": {
     "node": ">=22.18"

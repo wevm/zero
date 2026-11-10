@@ -15,9 +15,10 @@ there (`pnpm --filter zero-conformance run test` writes them).
 
 ## Generated types
 
-`zero-rust codegen` (`packages/zero-rust-cli`) generates a row struct per
-table, the schema, and a typed query builder from an app's TypeScript
-schema. It isn't on npm yet; from a checkout of this repository:
+`zero-rust codegen` (the npm package `zero-rust`, in `packages/zero-rust-cli`)
+generates a row struct per table, the schema, and a typed query builder from
+an app's TypeScript schema. It isn't on npm yet; from a checkout of this
+repository:
 
 ```sh
 node packages/zero-rust-cli/src/bin.ts codegen --schema-file path/to/schema.ts --out path/to/src/schema.rs

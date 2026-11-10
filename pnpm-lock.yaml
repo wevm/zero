@@ -1493,8 +1493,6 @@ importers:
         specifier: workspace:*
         version: link:../shared
 
-  packages/zero-rust: {}
-
   packages/zero-rust-cli:
     dependencies:
       incur:
@@ -1510,6 +1508,9 @@ importers:
       '@types/node':
         specifier: ^22.19.19
         version: 22.19.19
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
       oxfmt:
         specifier: ^0.74.0
         version: 0.74.0

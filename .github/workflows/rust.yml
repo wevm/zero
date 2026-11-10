@@ -38,13 +38,17 @@ jobs:
       # Public JS checks oxfmt formatting, Markdown and TOML included, on pull
       # requests and main but not on rust-client pushes; this catches it there.
       - name: Format (oxfmt)
-        run: pnpm exec oxfmt --check rust .github/workflows/rust.yml .github/workflows/rust-release.yml .github/workflows/rust-nightly.yml packages/zero-rust packages/zero-rust-cli packages/zerogen
+        run: pnpm exec oxfmt --check rust .github/workflows/rust.yml .github/workflows/rust-release.yml .github/workflows/rust-nightly.yml packages/zero-rust-cli packages/zerogen
       # The Rust tests (rust/codegen-tests) compile and run what `zero-rust
       # codegen` generates, checked in; this fails when it is stale.
       - name: Check generated Rust is current
-        run: pnpm --filter zero-rust-cli run test
+        run: pnpm --filter zero-rust run test
       - name: Check the generator's types and lints
-        run: pnpm --filter zerogen --filter zero-rust-cli run check-types && pnpm --filter zerogen --filter zero-rust-cli run lint
+        run: pnpm --filter zerogen --filter zero-rust run check-types && pnpm --filter zerogen --filter zero-rust run lint
+      # The published CLI is a bundle with zerogen inlined. This installs the
+      # packed package outside the workspace and runs it.
+      - name: Smoke test the packed CLI
+        run: pnpm --filter zero-rust smoke
       # Fails when the checked-in vectors no longer match the JS behavior. Also
       # writes the seeded fuzz corpora (generated/), which aren't checked in.
       - name: Check vectors are current

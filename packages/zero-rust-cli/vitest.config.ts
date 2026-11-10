@@ -16,7 +16,7 @@ export default mergeConfig(config, {
     ],
   },
   test: {
-    name: 'zero-rust-cli',
+    name: 'zero-rust',
     browser: {
       enabled: false,
     },

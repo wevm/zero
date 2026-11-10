@@ -1,9 +1,9 @@
 name: Rust Release
 
 # Releases the Rust client (rust/), versioned with Changesets (see
-# .changeset/README.md). The zero-rust package (packages/zero-rust), which
-# isn't published to npm, carries the version and the changelog;
-# `pnpm --filter zero-rust sync-version` copies the version into
+# .changeset/README.md). The zero-rust npm package (packages/zero-rust-cli),
+# the codegen CLI, carries the version and the changelog, as zero-swift does
+# for Swift; `pnpm --filter zero-rust sync-version` copies the version into
 # rust/Cargo.toml. Swift Release's "Version Packages" PR runs it, so one PR
 # versions both clients.
 #
@@ -14,11 +14,14 @@ name: Rust Release
 # their secrets; it has no required reviewers.
 # - publishes rust/ to the mirror (wevm/zero-rust) with a subtree split, tags
 #   the version there, and creates a GitHub release from the version's
-#   section of packages/zero-rust/CHANGELOG.md.
+#   section of packages/zero-rust-cli/CHANGELOG.md.
 # - publishes zero-client to crates.io with trusted publishing. Trusted
 #   publishing needs the crate to exist, so tmm makes the first publish by
 #   hand, from his machine with his own `cargo login` (rust/DESIGN.md); until
 #   then this job is skipped with a notice. CI holds no crates.io token.
+# - publishes the zero-rust CLI to npm with trusted publishing, which also
+#   needs the package to exist: until tmm publishes it by hand the first
+#   time, this job is skipped with a notice too.
 # Each step is skipped when its release already exists, so a failed run can be
 # rerun. The plan reads the mirror without a token, so the mirror has to be
 # public, as wevm/zero-swift is.
@@ -44,6 +47,7 @@ jobs:
       mirror: ${{ steps.plan.outputs.mirror }}
       release: ${{ steps.plan.outputs.release }}
       crates: ${{ steps.plan.outputs.crates }}
+      npm: ${{ steps.plan.outputs.npm }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -51,7 +55,7 @@ jobs:
           sparse-checkout: |
             .changeset
             rust/Cargo.toml
-            packages/zero-rust/package.json
+            packages/zero-rust-cli/package.json
           sparse-checkout-cone-mode: false
       - id: plan
         env:
@@ -59,7 +63,7 @@ jobs:
         run: |
           set -euo pipefail
           nothing() {
-            for o in mirror release crates; do echo "$o=false" >> "$GITHUB_OUTPUT"; done
+            for o in mirror release crates npm; do echo "$o=false" >> "$GITHUB_OUTPUT"; done
           }
           # The Version Packages PR releases these.
           if grep -lE "^['\"]?zero-rust['\"]?: " .changeset/*.md 2>/dev/null; then
@@ -68,9 +72,9 @@ jobs:
             exit 0
           fi
           version="$(sed -nE '/^\[workspace\.package\]/,/^\[/ s/^version = "([^"]*)"/\1/p' rust/Cargo.toml)"
-          package="$(jq -r .version packages/zero-rust/package.json)"
+          package="$(jq -r .version packages/zero-rust-cli/package.json)"
           if [ "$package" != "$version" ]; then
-            echo "packages/zero-rust is $package but rust/Cargo.toml is $version." >&2
+            echo "packages/zero-rust-cli is $package but rust/Cargo.toml is $version." >&2
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -90,6 +94,25 @@ jobs:
             200) echo "release=false" >> "$GITHUB_OUTPUT" ;;
             404) echo "release=true" >> "$GITHUB_OUTPUT" ;;
             *) echo "Looking up the $version release returned HTTP $status." >&2; exit 1 ;;
+          esac
+          # Only a 404 means unpublished: a failed lookup isn't a reason to
+          # publish. Trusted publishing needs the package to exist, so the
+          # first publish is made by hand, as for crates.io.
+          pkg="$(curl -s -o /dev/null -w '%{http_code}' https://registry.npmjs.org/zero-rust)"
+          case "$pkg" in
+            200)
+              npm="$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/zero-rust/$version")"
+              case "$npm" in
+                200) echo "npm=false" >> "$GITHUB_OUTPUT" ;;
+                404) echo "npm=true" >> "$GITHUB_OUTPUT" ;;
+                *) echo "Looking up zero-rust@$version on npm returned HTTP $npm." >&2; exit 1 ;;
+              esac
+              ;;
+            404)
+              echo "::warning::zero-rust isn't on npm yet. Publish $version by hand (pnpm --filter zero-rust build, then npm publish from packages/zero-rust-cli at this commit), set up trusted publishing for wevm/zero's rust-release.yml, then rerun this workflow."
+              echo "npm=false" >> "$GITHUB_OUTPUT"
+              ;;
+            *) echo "Looking up zero-rust on npm returned HTTP $pkg." >&2; exit 1 ;;
           esac
           # crates.io asks for a User-Agent that says who is asking.
           ua='wevm/zero rust-release (https://github.com/wevm/zero)'
@@ -157,11 +180,11 @@ jobs:
         run: |
           set -euo pipefail
           awk -v v="## $VERSION" '$0 == v {f = 1; next} /^## / {f = 0} f' \
-            packages/zero-rust/CHANGELOG.md |
+            packages/zero-rust-cli/CHANGELOG.md |
             sed -E 's|^- ([0-9a-f]{7,40}):|- [`\1`](https://github.com/wevm/zero/commit/\1):|' \
             >"$RUNNER_TEMP/notes.md"
           if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/notes.md"; then
-            echo "No section for $VERSION in packages/zero-rust/CHANGELOG.md." >&2
+            echo "No section for $VERSION in packages/zero-rust-cli/CHANGELOG.md." >&2
             exit 1
           fi
           gh release create "$VERSION" -R "$MIRROR_REPO" --verify-tag \
@@ -194,3 +217,63 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: cargo publish -p zero-client --locked
+
+  npm-build:
+    name: Build npm package
+    runs-on: ubuntu-latest
+    needs: plan
+    if: needs.plan.outputs.npm == 'true'
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.11.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - run: pnpm install --frozen-lockfile
+      - name: Smoke test the packed CLI
+        run: pnpm --filter zero-rust smoke
+      - name: Build and pack
+        run: |
+          pnpm --filter zero-rust build
+          pnpm --filter zero-rust pack --pack-destination "$GITHUB_WORKSPACE/dist/npm"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zero-rust-npm
+          path: dist/npm/*.tgz
+          if-no-files-found: error
+
+  npm-publish:
+    name: Publish npm package
+    runs-on: ubuntu-latest
+    needs: [plan, npm-build]
+    environment: rust-release
+    permissions:
+      contents: read
+      id-token: write # For npm trusted publishing.
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+          registry-url: 'https://registry.npmjs.org'
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: zero-rust-npm
+          path: dist/npm
+      # As in Swift Release: a run that plans right after the previous run's
+      # publish can still choose to publish. The registry's refusal settles it.
+      - name: Publish
+        run: |
+          set -uo pipefail
+          npm publish "dist/npm/zero-rust-$VERSION.tgz" --provenance --access public 2>&1 | tee publish.log && exit 0
+          if grep -q 'cannot publish over the previously published versions' publish.log; then
+            echo "::notice::zero-rust@$VERSION is already on npm."
+            exit 0
+          fi
+          exit 1
