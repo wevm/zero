@@ -7,25 +7,39 @@ updated with each milestone.
 
 ## Ported
 
-| Area                     | JS source                                      | Rust             | Vectors                                                                                           |
-| ------------------------ | ---------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------- |
-| JSON parse and stringify | `JSON.parse`, `JSON.stringify`, property order | `json`           | `json-parse`, `json-stringify-strings`, `sweep-json`, `harden-json`, `generated/harden-json-fuzz` |
-| JS numbers               | `Number#toString`, `Number(string)`            | `json::number`   | `number-format`, `number-parse`                                                                   |
-| String orders            | `compareUTF8`, JS `<`                          | `strings`        | `string-compare`                                                                                  |
-| Hashes                   | `packages/shared/src/hash.ts`                  | `hash::xxhash32` | `hash`                                                                                            |
-| Value comparison         | `packages/zql/src/ivm/data.ts`                 | `compare`        | `compare-values`                                                                                  |
-| Row keys                 | `packages/zero-client/src/client/keys.ts`      | `keys`           | `primary-key-string`, `aggregate-row-key`                                                         |
-| `LIKE` and `ILIKE`       | `packages/zql/src/builder/like.ts`             | `like`           | `like`                                                                                            |
-| TTL                      | `packages/zql/src/query/ttl.ts`                | `ttl`            | `ttl`                                                                                             |
+| Area                            | JS source                                          | Rust                         | Vectors                                                                                                                                                   |
+| ------------------------------- | -------------------------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| JSON parse and stringify        | `JSON.parse`, `JSON.stringify`, property order     | `json`                       | `json-parse`, `json-stringify-strings`, `sweep-json`, `harden-json`, `generated/harden-json-fuzz`                                                         |
+| JS numbers                      | `Number#toString`, `Number(string)`                | `json::number`               | `number-format`, `number-parse`                                                                                                                           |
+| String orders                   | `compareUTF8`, JS `<`                              | `strings`                    | `string-compare`                                                                                                                                          |
+| Hashes                          | `packages/shared/src/hash.ts`                      | `hash::xxhash32`             | `hash`                                                                                                                                                    |
+| Value comparison                | `packages/zql/src/ivm/data.ts`                     | `compare`                    | `compare-values`                                                                                                                                          |
+| Row keys                        | `packages/zero-client/src/client/keys.ts`          | `keys`                       | `primary-key-string`, `aggregate-row-key`                                                                                                                 |
+| `LIKE` and `ILIKE`              | `packages/zql/src/builder/like.ts`                 | `like`                       | `like`                                                                                                                                                    |
+| TTL                             | `packages/zql/src/query/ttl.ts`                    | `ttl`                        | `ttl`                                                                                                                                                     |
+| AST, normalization, wire schema | `packages/zero-protocol/src/ast.ts`                | `ast`                        | `ast`, `ast-features`, `generated/ast-fuzz`                                                                                                               |
+| Query hashes                    | `packages/zero-protocol/src/query-hash-visitor.ts` | `hash::query`                | `ast`, `query-internals-hash`, `name-args-hash`, `sweep-name-args-hash`                                                                                   |
+| Name mapping                    | `packages/zero-types/src/name-mapper.ts`           | `schema::NameMapper`         | `ast-features`                                                                                                                                            |
+| Wire messages                   | `packages/zero-protocol/src` (`up.ts`, `down.ts`)  | `protocol`                   | `protocol-upstream`, `protocol-downstream`, `sweep-downstream`, `protocol-client-schema`, `generated/protocol-*-fuzz`, `generated/harden-downstream-text` |
+| Binary poke chunks              | `decodePokeChunks`                                 | `protocol::poke_chunk`       | `protocol-poke-chunks`, `generated/protocol-poke-chunks-fuzz`, `generated/harden-poke-bytes`                                                              |
+| `Sec-WebSocket-Protocol`        | `encodeSecProtocols`, `decodeSecProtocols`         | `protocol::sec_protocols`    | `protocol-sec-protocols`                                                                                                                                  |
+| Protocol version                | `PROTOCOL_VERSION` (57)                            | `protocol::PROTOCOL_VERSION` | `meta`                                                                                                                                                    |
 
 ## Not ported yet
 
-The query builder (`sweep-query-hash`), wire messages and poke chunks, IVM, the client engine, persistence. The runner lists their vector
-files as not implemented.
+The query builder (`sweep-query-hash`), IVM, the client engine, and
+persistence. The runner lists their vector files as not implemented.
 
-`ast-features` checks that the wire schema rejects what JS rejects, but not
-valita's error messages. Its name mapping uses the JS test schema as JS wrote
-it into `ivm.json`'s shared fixtures.
+## How some vectors are compared
+
+- `ast-features` checks that the wire schema rejects what JS rejects, but not
+  valita's error messages. Its name mapping uses the JS test schema as JS
+  wrote it into `ivm.json`'s shared fixtures.
+- Protocol messages are compared as JSON values, not text: Rust re-encodes a
+  message from its fields, in an order of its own (`sweep-downstream`
+  compares text with keys sorted). The header encoder is checked by decoding
+  what it writes, as Swift checks it, so its exact escaping isn't pinned by a
+  vector.
 
 ## Documented differences
 
