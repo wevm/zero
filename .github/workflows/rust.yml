@@ -82,6 +82,61 @@ jobs:
       # workspace: what a consumer without path overrides compiles.
       - name: Package
         run: cargo package -p zero-client --locked
+      # The library builds on the oldest Rust its manifest names.
+      - name: Minimum Rust version
+        run: |
+          msrv="$(sed -nE 's/^rust-version = "(.*)"/\1/p' Cargo.toml)"
+          rustup toolchain install "$msrv" --profile minimal
+          cargo "+$msrv" check -p zero-client --locked
+
+  e2e:
+    name: Rust end-to-end (Linux)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.11.0
+      # zero-cache runs from source, which needs Node 24 (`using`).
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+          package-manager-cache: false
+      - run: pnpm install --frozen-lockfile
+      - name: Start Postgres
+        run: |
+          sudo systemctl start postgresql.service
+          sudo -u postgres psql -q -c "ALTER SYSTEM SET wal_level = logical" \
+            -c "ALTER USER postgres PASSWORD 'postgres'"
+          sudo systemctl restart postgresql.service
+          until pg_isready -q -h 127.0.0.1; do sleep 1; done
+      - name: Install the toolchain
+        working-directory: rust
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Build
+        working-directory: rust
+        run: cargo test -p zero-client --test walking_skeleton --locked --no-run
+      - name: Start zero-cache
+        env:
+          ZERO_E2E_PG: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+        run: |
+          node packages/zero-conformance/src/e2e/server.ts > "$RUNNER_TEMP/server.log" 2>&1 &
+          for _ in $(seq 1 120); do
+            grep -q '^ready ' "$RUNNER_TEMP/server.log" && exit 0
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/server.log"
+          exit 1
+      - name: Test
+        working-directory: rust
+        env:
+          ZERO_E2E_URL: ws://127.0.0.1:4848
+        run: cargo test -p zero-client --test walking_skeleton --locked -- --nocapture
+      - name: zero-cache log
+        if: failure()
+        run: cat "$RUNNER_TEMP/server.log"
 
   # Fails on a public API break since the last release that no changeset
   # declares: below 1.0 a break needs a minor changeset, from 1.0 a major one.

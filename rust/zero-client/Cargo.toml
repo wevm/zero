@@ -13,5 +13,12 @@ categories = ["database", "web-programming::websocket"]
 [dependencies]
 indexmap.workspace = true
 
+# The end-to-end tests' WebSocket client. Which transport the client ships
+# is decided with the engine (M4).
+[dev-dependencies]
+futures-util = { version = "0.3", default-features = false }
+tokio = { version = "1", features = ["macros", "rt", "time"] }
+tokio-tungstenite = "0.30"
+
 [lints]
 workspace = true

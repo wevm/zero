@@ -107,6 +107,34 @@ impl Schema {
         })
     }
 
+    /// The schema zero-cache checks the client's against, with server names
+    /// (`clientSchemaFrom` in `packages/zero-schema/src/builder/schema-builder.ts`).
+    pub fn client_schema(&self) -> crate::protocol::ClientSchema {
+        use crate::protocol::{ClientSchema, ClientTable};
+        let tables = self
+            .tables
+            .iter()
+            .map(|(name, t)| {
+                let server = |c: &str| {
+                    t.columns
+                        .get(c)
+                        .and_then(|c| c.server_name.clone())
+                        .unwrap_or_else(|| c.to_owned())
+                };
+                let table = ClientTable {
+                    columns: t
+                        .columns
+                        .iter()
+                        .map(|(c, col)| (server(c), col.type_))
+                        .collect(),
+                    primary_key: t.primary_key.iter().map(|k| server(k)).collect(),
+                };
+                (t.server_name.clone().unwrap_or_else(|| name.clone()), table)
+            })
+            .collect();
+        ClientSchema { tables }.normalized()
+    }
+
     /// The relationship `name` of `table`.
     pub fn relationship(&self, table: &str, name: &str) -> Option<&Relationship> {
         self.relationships.get(table)?.get(name)

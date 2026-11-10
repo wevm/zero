@@ -1,5 +1,5 @@
 /**
- * Runs the server side of the Swift end-to-end tests: a fresh Postgres
+ * Runs the server side of the Swift and Rust end-to-end tests: a fresh Postgres
  * database loaded from `fixture.sql`, an API server for the app's named
  * queries and mutators, and zero-cache from this repository's source.
  *

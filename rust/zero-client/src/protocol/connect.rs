@@ -98,6 +98,80 @@ impl JsonCodable for InitConnectionBody {
     }
 }
 
+/// The sync socket's URL: `/sync/v{PROTOCOL_VERSION}/connect` on the
+/// socket origin, with the query parameters in the order JS sets them
+/// (`createConnectionURL` in `packages/zero-client/src/client/zero.ts`).
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct ConnectionUrl {
+    /// `ws://` or `wss://`, host, and port, and optionally a path.
+    pub socket_origin: String,
+    pub client_id: String,
+    pub client_group_id: String,
+    pub user_id: Option<String>,
+    /// The cookie of the client's last server snapshot, `None` for none.
+    pub base_cookie: Option<String>,
+    /// The `ts` parameter, `performance.now()` in JS.
+    pub timestamp: f64,
+    pub last_mutation_id: f64,
+    pub wsid: String,
+    pub profile_id: String,
+    pub debug_perf: bool,
+    /// More parameters; one the client sets itself is skipped, as JS does.
+    pub additional_params: Vec<(String, String)>,
+}
+
+impl std::fmt::Display for ConnectionUrl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut params: Vec<(&str, String)> = vec![
+            ("clientID", self.client_id.clone()),
+            ("clientGroupID", self.client_group_id.clone()),
+        ];
+        if let Some(user_id) = &self.user_id {
+            params.push(("userID", user_id.clone()));
+        }
+        params.extend([
+            ("baseCookie", self.base_cookie.clone().unwrap_or_default()),
+            ("ts", json::number::format(self.timestamp)),
+            ("lmid", json::number::format(self.last_mutation_id)),
+            ("wsid", self.wsid.clone()),
+            ("profileID", self.profile_id.clone()),
+        ]);
+        if self.debug_perf {
+            params.push(("debugPerf", "true".to_owned()));
+        }
+        for (k, v) in &self.additional_params {
+            if !params.iter().any(|(p, _)| p == k) {
+                params.push((k, v.clone()));
+            }
+        }
+        let origin = self
+            .socket_origin
+            .strip_suffix('/')
+            .unwrap_or(&self.socket_origin);
+        write!(f, "{origin}/sync/v{PROTOCOL_VERSION}/connect?")?;
+        for (i, (k, v)) in params.iter().enumerate() {
+            let sep = if i == 0 { "" } else { "&" };
+            write!(f, "{sep}{}={}", form_encode(k), form_encode(v))?;
+        }
+        Ok(())
+    }
+}
+
+/// `application/x-www-form-urlencoded`, as `URLSearchParams` writes it.
+fn form_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for &b in s.as_bytes() {
+        match b {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'*' | b'-' | b'.' | b'_' => {
+                out.push(char::from(b))
+            }
+            b' ' => out.push('+'),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
 const UTF8_BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
 
 /// The `Sec-WebSocket-Protocol` value that carries the `initConnection`
@@ -243,4 +317,32 @@ fn uri_component_decode(s: &str) -> Result<String> {
     }
     out.push_str(&s[copied..]);
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The expected URL is what `URLSearchParams` writes for the same
+    /// parameters in Node.
+    #[test]
+    fn connection_url_is_form_encoded_in_js_order() {
+        let url = ConnectionUrl {
+            socket_origin: "ws://h:1/".to_owned(),
+            client_id: "a b*-._~é😀&=+/".to_owned(),
+            client_group_id: "g".to_owned(),
+            timestamp: 1.5,
+            wsid: "w".to_owned(),
+            profile_id: "p".to_owned(),
+            additional_params: vec![
+                ("wsid".to_owned(), "skipped".to_owned()),
+                ("extra".to_owned(), "1".to_owned()),
+            ],
+            ..ConnectionUrl::default()
+        };
+        assert_eq!(
+            url.to_string(),
+            "ws://h:1/sync/v57/connect?clientID=a+b*-._%7E%C3%A9%F0%9F%98%80%26%3D%2B%2F&clientGroupID=g&baseCookie=&ts=1.5&lmid=0&wsid=w&profileID=p&extra=1"
+        );
+    }
 }

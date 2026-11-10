@@ -84,13 +84,17 @@ in [PARITY.md](PARITY.md).
 - **Rust (Linux)**: rustfmt, clippy with warnings denied, the tests, the
   conformance report (in the job summary), rustdoc with warnings denied, and
   `cargo package`, which builds the crate as crates.io would get it, outside
-  the workspace.
+  the workspace, and a build on the `rust-version` the manifest names.
+- **Rust end-to-end (Linux)**: Postgres and `zero-cache` from this repo's
+  source over the fixture database (`packages/zero-conformance/src/e2e/`),
+  and `zero-client/tests/walking_skeleton.rs` against them, with
+  `ZERO_E2E_URL` set. Without it the test skips, so `cargo test` needs no
+  server.
 - **Rust API breaks**: `cargo semver-checks` against the last release, at the
   bump the pending changesets declare. It does nothing until `zero-client` is
   on crates.io.
 
-Still to come, with the milestones that need them: end-to-end against
-Postgres and `zero-cache` (M1.5), a nightly differential run on fresh seeds
+Still to come, with the milestones that need them: a nightly differential run on fresh seeds
 (M2, like `swift-nightly.yml`), macOS and Windows (M6, with the apps).
 
 ## Milestones
@@ -101,7 +105,7 @@ Each milestone ends with green CI on `rust-client` and a short report.
 | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- | ------ |
 | M0        | Scaffolding: the `rust/` workspace, the conformance runner and its report, CI                                                                                                              | CI green on `rust-client`, running the runner on real vectors    | done   |
 | M1        | Primitives and wire: JSON, JS numbers, string orders, hashes, primary and aggregate keys, value comparison, LIKE, TTL, AST and normalization, query hashes, protocol messages, poke chunks | Every primitive, AST, and protocol vector file and corpus passes | done   |
-| M1.5      | Walking skeleton: connect to a real `zero-cache`, handshake, receive pokes, log rows                                                                                                       | Talks to a real server in CI                                     |        |
+| M1.5      | Walking skeleton: connect to a real `zero-cache`, handshake, receive pokes, log rows                                                                                                       | Talks to a real server in CI                                     | done   |
 | M2        | IVM: memory sources, every client operator, pipeline builder, change application, aggregates                                                                                               | Curated and seeded-fuzz IVM vectors pass                         |        |
 | M3        | Codegen: a Rust target for the schema codegen CLI                                                                                                                                          | Generated code compiles and drives M2                            |        |
 | M4        | Client engine on memory storage: connection, query manager, pokes, mutators, rebase, auth, recovery                                                                                        | Client scenario vectors pass                                     |        |
