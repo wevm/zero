@@ -5,6 +5,10 @@
 //! `packages/zero-conformance`. See `rust/DESIGN.md` for what is ported so
 //! far and what is planned.
 
+pub mod compare;
 pub mod hash;
 pub mod json;
+pub mod keys;
+pub mod like;
 pub mod strings;
+pub mod ttl;
