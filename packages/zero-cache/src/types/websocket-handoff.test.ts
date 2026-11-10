@@ -2,6 +2,7 @@ import {createServer, type Server} from 'node:http';
 import {connect, type AddressInfo} from 'node:net';
 import {afterEach, expect, test} from 'vitest';
 import {createSilentLogContext} from '../../../shared/src/logging-test-utils.ts';
+import type {Worker} from './processes.ts';
 import {installWebSocketHandoff} from './websocket-handoff.ts';
 
 let server: Server | undefined;
@@ -40,4 +41,23 @@ test('a client reset while a handoff is pending does not crash the process', asy
     process.off('uncaughtException', onUncaught);
   }
   expect(uncaught).toEqual([]);
+});
+
+test('a handoff whose socket closed on the way does not crash the process', () => {
+  // Node delivers the message without the socket when the connection closed
+  // while it was being sent to this process.
+  let deliver!: (msg: unknown, socket?: unknown) => void;
+  const parent = {
+    onMessageType: (_type: string, handler: typeof deliver) => {
+      deliver = handler;
+    },
+  } as unknown as Worker;
+  installWebSocketHandoff(createSilentLogContext(), () => {}, parent);
+  expect(() =>
+    deliver({
+      message: {url: '/sync/v57/connect', headers: {}},
+      head: new ArrayBuffer(0),
+      payload: undefined,
+    }),
+  ).not.toThrow();
 });

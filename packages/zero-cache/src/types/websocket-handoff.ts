@@ -158,6 +158,12 @@ export function installWebSocketHandoff<P>(
   } else {
     // handoff messages from this worker's parent.
     source.onMessageType<Handoff<P>>('handoff', (msg, socket) => {
+      // As in installWebSocketReceiver: the connection may have closed while
+      // it was being sent to this process, and then there's no socket.
+      if (!socket) {
+        lc.warn?.('websocket closed during handoff');
+        return;
+      }
       const {message, head} = msg;
       handle(message, socket as Socket, head);
     });
