@@ -69,10 +69,11 @@ cd apps/zbugs-rune
 cargo run --release
 ```
 
-Log in from the sidebar with the printed token, or through GitHub when the
-API server has a GitHub app (zbugs' own backend); Servers… points the app
-elsewhere. `ZBUGS_TOKEN`, `ZBUGS_CACHE_URL`, and `ZBUGS_API_URL` in the
-environment override the saved ones for that launch, and `ZBUGS_RUNE_DIR`
+Log in from the account menu over the issue list with the printed token, or
+through GitHub when the API server has a GitHub app (zbugs' own backend);
+Servers…, in the same menu, points the app elsewhere. `ZBUGS_TOKEN`,
+`ZBUGS_CACHE_URL`, and `ZBUGS_API_URL` in the environment override the
+saved ones for that launch, and `ZBUGS_RUNE_DIR`
 moves the settings, the replica, and the token (as a file, out of the
 Keychain), so a test leaves the real login alone.
 
