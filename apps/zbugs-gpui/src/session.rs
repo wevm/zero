@@ -29,8 +29,13 @@ pub fn now_ms() -> f64 {
 }
 
 /// The app's own directory: its settings and its local store, apart from
-/// zbugs-swift's.
+/// zbugs-swift's. `ZBUGS_APP_DIR` moves it, as the end-to-end run does.
 pub fn app_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("ZBUGS_APP_DIR") {
+        let dir = PathBuf::from(dir);
+        let _ = std::fs::create_dir_all(&dir);
+        return dir;
+    }
     let home = std::env::var_os("HOME").map_or_else(|| PathBuf::from("."), PathBuf::from);
     let dir = if cfg!(target_os = "macos") {
         home.join("Library/Application Support/zbugs-gpui")

@@ -1,6 +1,9 @@
 //! The window: the issue list with its filters on the left, the selected
 //! issue on the right, as zbugs' list and issue pages.
 
+#[cfg(feature = "e2e")]
+pub mod e2e;
+
 use crate::live::Live;
 use crate::session::{Session, app_dir, now_ms, save_setting};
 use futures::StreamExt;

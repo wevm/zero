@@ -34,6 +34,10 @@ zbugs-model = { path = "../zbugs-model" }
 # SQLite storage, so the app keeps its data across launches.
 zero-client = { path = "../../rust/zero-client", features = ["sqlite"] }
 
+[features]
+# The end-to-end run CI does against zbugs' backend: see src/app/e2e.rs.
+e2e = []
+
 [lints.rust]
 unsafe_code = "forbid"
 

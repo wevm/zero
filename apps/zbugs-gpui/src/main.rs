@@ -15,7 +15,7 @@ fn main() {
             app::bind_keys(cx);
             let session = session::Session::load(cx);
             let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
-            gpui_kit::open_window(
+            let (_window, _app) = gpui_kit::open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     titlebar: Some(TitlebarOptions {
@@ -29,5 +29,7 @@ fn main() {
             )
             .expect("the main window opens");
             cx.activate(true);
+            #[cfg(feature = "e2e")]
+            app::e2e::run(_window, _app, cx);
         });
 }
