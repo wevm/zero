@@ -16,7 +16,7 @@ const generated = 'rust/codegen-tests/src/';
  * schemas are the names the Swift generator has to work around, which
  * Rust has to as well.
  */
-const fixtures: {name: string; config: Config}[] = [
+const fixtures: {name: string; dir?: string; config: Config}[] = [
   {
     name: 'zql test schema',
     config: {
@@ -44,6 +44,13 @@ const fixtures: {name: string; config: Config}[] = [
       },
     },
   },
+  {
+    name: 'zbugs model',
+    dir: 'apps/zbugs-model/',
+    config: JSON.parse(
+      readFileSync(repo + 'apps/zbugs-model/zero-rust.json', 'utf8'),
+    ) as Config,
+  },
   ...Object.keys(sweep).map(name => ({
     name: `sweep schema ${name}`,
     config: {
@@ -58,10 +65,10 @@ function snake(name: string) {
   return name.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
 }
 
-for (const {name, config} of fixtures) {
+for (const {name, dir = '', config} of fixtures) {
   test(`generated Rust for the ${name} is current`, async () => {
-    const rust = await codegenRustFile(config, repo);
-    const path = repo + config.output;
+    const rust = await codegenRustFile(config, repo + dir);
+    const path = repo + dir + config.output;
     if (update) {
       writeFileSync(path, rust);
     }

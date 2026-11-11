@@ -1,0 +1,25 @@
+[package]
+name = "zbugs-model"
+version = "0.0.0"
+description = "zbugs' schema, queries, and mutators on the Zero Rust client, for the Rust zbugs apps."
+edition = "2024"
+rust-version = "1.88"
+license = "Apache-2.0"
+publish = false
+
+# Its own workspace: the apps depend on it by path, and it isn't part of
+# rust/, which is the client's.
+[workspace]
+
+[dependencies]
+# The default build: no transport and no storage; the apps choose theirs.
+zero-client = { path = "../../rust/zero-client" }
+getrandom = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
