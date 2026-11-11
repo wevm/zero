@@ -20,6 +20,7 @@ import {getBearerToken} from '../../../packages/shared/src/headers.ts';
 import {must} from '../../../packages/shared/src/must.ts';
 import {dbProvider, sql} from '../server/db.ts';
 import {registerMachineRoutes} from '../server/machine-routes.ts';
+import {nativeAppRedirect} from '../server/native-login.ts';
 import {createServerMutators} from '../server/server-mutators.ts';
 import {jwtDataSchema, type JWTData} from '../shared/auth.ts';
 import {queries} from '../shared/queries.ts';
@@ -118,13 +119,10 @@ fastify.get<{
     .setExpirationTime('30days')
     .sign(privateJwk);
 
-  // The Swift app (apps/zbugs-swift) logs in through a web authentication
-  // session, which can't read the cookie, so its callback carries the token.
-  // That's safe because the session hands the callback only to the app that
-  // started it, even if another app registers zbugs-swift://. The app doesn't
-  // register the scheme with the system, so the link isn't opened any other way.
-  if (request.query.redirect === nativeAppRedirect) {
-    reply.redirect(`${nativeAppRedirect}?jwt=${encodeURIComponent(jwt)}`);
+  // A native app can't read the cookie: its callback carries the token.
+  const native = nativeAppRedirect(request.query.redirect, jwt);
+  if (native) {
+    reply.redirect(native);
     return;
   }
 
@@ -139,8 +137,6 @@ fastify.get<{
       request.query.redirect ? decodeURIComponent(request.query.redirect) : '/',
     );
 });
-
-const nativeAppRedirect = 'zbugs-swift://auth';
 
 async function withAuth<T extends {headers: IncomingHttpHeaders}>(
   request: T,
