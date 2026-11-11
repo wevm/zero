@@ -1,7 +1,9 @@
 # Zero for Rust
 
 A native Rust client for Zero, in progress. See [DESIGN.md](DESIGN.md) for
-the plan, the milestones, and the documented differences from JS.
+the plan, the milestones, and the documented differences from JS, and
+[BENCHMARKS.md](BENCHMARKS.md) for how it compares with the JS and Swift
+clients.
 
 ```sh
 cd rust
