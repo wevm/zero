@@ -8182,6 +8182,8 @@ dependencies = [
  "futures",
  "gpui-kit",
  "rustls",
+ "serde",
+ "serde_json",
  "tokio",
  "tokio-tungstenite",
  "zbugs-model",

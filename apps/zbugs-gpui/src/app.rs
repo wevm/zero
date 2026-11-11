@@ -2,7 +2,7 @@
 //! issue on the right, as zbugs' list and issue pages.
 
 use crate::live::Live;
-use crate::session::{Session, now_ms};
+use crate::session::{Session, app_dir, now_ms};
 use futures::StreamExt;
 use futures::channel::mpsc;
 use gpui_kit::component::button::*;
@@ -15,6 +15,7 @@ use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::*;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
@@ -51,7 +52,7 @@ pub fn bind_keys(cx: &mut App) {
     ]);
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Status {
     Open,
     Closed,
@@ -59,7 +60,7 @@ pub enum Status {
 }
 
 /// What the list shows, as zbugs' list context.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 struct Filters {
     status: Status,
     text: String,
@@ -68,6 +69,25 @@ struct Filters {
     assignee: Option<String>,
     /// Label names; an issue needs all of them.
     labels: Vec<String>,
+}
+
+/// What the window shows, kept across launches as zbugs keeps it in the
+/// URL.
+#[derive(Serialize, Deserialize)]
+struct Saved {
+    filters: Filters,
+    limit: i64,
+    selected: Option<String>,
+}
+
+impl Saved {
+    fn path() -> std::path::PathBuf {
+        app_dir().join("window.json")
+    }
+
+    fn load() -> Option<Saved> {
+        serde_json::from_slice(&std::fs::read(Self::path()).ok()?).ok()
+    }
 }
 
 /// One entry of a picker menu: `value` is what picking it passes on,
@@ -125,6 +145,9 @@ pub struct ZbugsApp {
     /// first, up to `comments_limit`.
     comment_page: Option<Live<Vec<Comment>>>,
     list_focus: FocusHandle,
+    /// Scroll to the selected issue once the list has it: after a launch
+    /// restores the selection.
+    reveal_selected: bool,
     search: Entity<InputState>,
     comment: Entity<InputState>,
     scroll: UniformListScrollHandle,
@@ -141,7 +164,23 @@ fn ttl() -> Ttl {
 
 impl ZbugsApp {
     pub fn new(session: Session, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search issues"));
+        let saved = Saved::load();
+        let filters = saved.as_ref().map_or_else(
+            || Filters {
+                status: Status::Open,
+                text: String::new(),
+                creator: None,
+                assignee: None,
+                labels: Vec::new(),
+            },
+            |s| s.filters.clone(),
+        );
+        let limit = saved.as_ref().map_or(PAGE, |s| s.limit.max(PAGE));
+        let search = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Search issues")
+                .default_value(filters.text.clone())
+        });
         let comment = cx.new(|cx| InputState::new(window, cx).placeholder("Add a comment…"));
         let subscriptions = vec![
             cx.subscribe_in(&search, window, |this, state, event, _, cx| {
@@ -173,14 +212,7 @@ impl ZbugsApp {
             }
         });
 
-        let filters = Filters {
-            status: Status::Open,
-            text: String::new(),
-            creator: None,
-            assignee: None,
-            labels: Vec::new(),
-        };
-        let (list, count) = Self::queries(&session, &filters, PAGE, cx);
+        let (list, count) = Self::queries(&session, &filters, limit, cx);
         let auth = session.auth.as_ref();
         let projects = Live::new(&session.zero, ALL_PROJECTS.call(&(), auth), &ttl(), cx);
         let users = |filter, cx: &mut Context<Self>| {
@@ -211,10 +243,10 @@ impl ZbugsApp {
             &ttl(),
             cx,
         );
-        ZbugsApp {
+        let mut app = ZbugsApp {
             session,
             filters,
-            limit: PAGE,
+            limit,
             list,
             count,
             projects,
@@ -227,6 +259,7 @@ impl ZbugsApp {
             comments_limit: COMMENT_PAGE,
             comment_page: None,
             list_focus: cx.focus_handle(),
+            reveal_selected: false,
             search,
             comment,
             scroll: UniformListScrollHandle::new(),
@@ -235,6 +268,23 @@ impl ZbugsApp {
             _unsubscribe: unsubscribe,
             _tasks: vec![watch],
             _subscriptions: subscriptions,
+        };
+        if let Some(id) = saved.and_then(|s| s.selected) {
+            app.select(id, cx);
+            app.reveal_selected = true;
+        }
+        app
+    }
+
+    /// Keeps what the window shows for the next launch.
+    fn save(&self) {
+        let saved = Saved {
+            filters: self.filters.clone(),
+            limit: self.limit,
+            selected: self.selected.clone(),
+        };
+        if let Ok(json) = serde_json::to_vec(&saved) {
+            let _ = std::fs::write(Saved::path(), json);
         }
     }
 
@@ -290,6 +340,7 @@ impl ZbugsApp {
         }
         self.filters = filters;
         self.limit = PAGE;
+        self.save();
         let (list, count) = Self::queries(&self.session, &self.filters, self.limit, cx);
         self.list = list;
         self.count = count;
@@ -305,6 +356,7 @@ impl ZbugsApp {
             return;
         }
         self.limit += PAGE;
+        self.save();
         let (list, _) = Self::queries(&self.session, &self.filters, self.limit, cx);
         self.list = list;
         cx.notify();
@@ -341,6 +393,7 @@ impl ZbugsApp {
         self.selected = Some(id);
         self.comments_limit = COMMENT_PAGE;
         self.comment_page = None;
+        self.save();
         cx.notify();
     }
 
@@ -1231,6 +1284,16 @@ impl Render for ZbugsApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(message) = self.error.take() {
             window.push_notification(Notification::error(message), cx);
+        }
+        if self.reveal_selected {
+            let at = self.list.snapshot().value.as_ref().and_then(|rows| {
+                rows.iter()
+                    .position(|r| Some(&r.id) == self.selected.as_ref())
+            });
+            if let Some(ix) = at {
+                self.scroll.scroll_to_item(ix, ScrollStrategy::Center);
+                self.reveal_selected = false;
+            }
         }
         h_flex()
             .size_full()
