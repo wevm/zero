@@ -1,6 +1,7 @@
 //! zbugs on the Zero Rust client, in GPUI.
 
 mod app;
+mod emoji_picker;
 mod http;
 mod live;
 mod login;

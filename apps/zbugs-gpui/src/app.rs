@@ -4,6 +4,7 @@
 #[cfg(feature = "e2e")]
 pub mod e2e;
 
+use crate::emoji_picker::{EmojiPicker, OnPick as OnPickEmoji};
 use crate::live::Live;
 use crate::session::{Session, app_dir, now_ms, save_setting};
 use futures::StreamExt;
@@ -1329,7 +1330,6 @@ impl ZbugsApp {
         self.mutate(request, cx);
     }
 
-    /// Takes back the user's reaction with `unicode`, or adds it.
     /// The user's skin tone for reactions, 0 for none.
     fn skin_tone(&self) -> u32 {
         let pref = self
@@ -1349,6 +1349,7 @@ impl ZbugsApp {
         self.mutate(SET_USER_PREF.with(&args), cx);
     }
 
+    /// Takes back the user's reaction with `unicode`, or adds it.
     fn toggle_emoji(
         &mut self,
         subject: Subject,
@@ -1379,6 +1380,7 @@ impl ZbugsApp {
                     .find(|e| normalize_emoji(&e.value) == key)
                     .map(|e| e.annotation.clone())
             })
+            .or_else(|| emojis::get(&key).map(|e| e.name().to_owned()))
             .unwrap_or_default();
         let args = AddEmojiArgs {
             id: make_id(),
@@ -1392,6 +1394,39 @@ impl ZbugsApp {
             Subject::Comment => ADD_EMOJI_TO_COMMENT,
         };
         self.mutate(add.with(&args), cx);
+    }
+
+    /// Opens the picker with every emoji, to react with any of them.
+    fn open_emoji_picker(
+        &mut self,
+        subject: Subject,
+        subject_id: &str,
+        emoji: &Rc<Vec<Emoji>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (app, all, id) = (
+            cx.entity().downgrade(),
+            emoji.clone(),
+            subject_id.to_owned(),
+        );
+        let on_pick: OnPickEmoji = Rc::new(move |unicode, _, window, cx| {
+            window.close_dialog(cx);
+            let _ = app.update(cx, |this, cx| {
+                this.toggle_emoji(subject, &id, &all, unicode, cx)
+            });
+        });
+        let picker = cx.new(|cx| EmojiPicker::new(self.skin_tone(), on_pick, window, cx));
+        let query = picker.read(cx).query.clone();
+        window.open_dialog(cx, move |dialog, _, _| {
+            dialog
+                .w(px(400.))
+                .title("Add reaction")
+                .child(picker.clone())
+        });
+        window.defer(cx, move |window, cx| {
+            query.update(cx, |state, cx| state.focus(window, cx));
+        });
     }
 
     fn post_comment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2103,6 +2138,14 @@ impl ZbugsApp {
                             }),
                     );
                 }
+                let (picker, all, id) = (app.clone(), all.clone(), id.clone());
+                menu = menu.item(PopupMenuItem::new("More reactions…").on_click(
+                    move |_, window, cx| {
+                        let _ = picker.update(cx, |this, cx| {
+                            this.open_emoji_picker(subject, &id, &all, window, cx)
+                        });
+                    },
+                ));
                 let app = app.clone();
                 menu.separator()
                     .submenu("Skin tone", window, cx, move |mut menu, _, _| {
