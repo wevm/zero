@@ -24,15 +24,15 @@ use std::ops::Range;
 use std::rc::Rc;
 use zbugs_model::args::*;
 use zbugs_model::mutators::{
-    ADD_COMMENT, ADD_EMOJI_TO_COMMENT, ADD_EMOJI_TO_ISSUE, ADD_LABEL, CREATE_ISSUE, DELETE_ISSUE,
-    EDIT_COMMENT, MutateRequest, REMOVE_COMMENT, REMOVE_EMOJI, REMOVE_LABEL, SET_VIEW_STATE,
-    UPDATE_ISSUE, UPDATE_NOTIFICATION,
+    ADD_COMMENT, ADD_EMOJI_TO_COMMENT, ADD_EMOJI_TO_ISSUE, ADD_LABEL, CREATE_AND_ADD_LABEL,
+    CREATE_ISSUE, DELETE_ISSUE, EDIT_COMMENT, MutateRequest, REMOVE_COMMENT, REMOVE_EMOJI,
+    REMOVE_LABEL, SET_VIEW_STATE, UPDATE_ISSUE, UPDATE_NOTIFICATION,
 };
 use zbugs_model::queries::{
     ALL_PROJECTS, COMMENTS_PAGE, ISSUE_DETAIL, ISSUE_LIST_COUNT, ISSUE_LIST_V2, LABELS, USER,
     USERS_FOR_PROJECT,
 };
-use zbugs_model::schema::{Comment, Emoji, Issue, Label, Project, User};
+use zbugs_model::schema::{Comment, Emoji, Issue, IssueVisibility, Label, Project, User};
 use zbugs_model::{AuthData, ZERO_PROJECT_NAME, make_id};
 use zero_client::client::{ConnectionState, MutationOutcome};
 use zero_client::ttl::Ttl;
@@ -43,12 +43,16 @@ const ROW_HEIGHT: f32 = 52.;
 /// Comments `issueDetail` loads, and how many more "Show older comments"
 /// adds.
 const COMMENT_PAGE: i64 = 50;
+/// The label picker's choice that makes a new label.
+const NEW_LABEL: &str = "\u{0}new-label";
 
-actions!(zbugs, [SelectNext, SelectPrevious]);
+actions!(zbugs, [SelectNext, SelectPrevious, FocusSearch]);
 
-/// j/k and the arrow keys move the selection while the list has focus.
+/// j/k and the arrow keys move the selection while the list has focus, and
+/// `/` goes to the search field, as on the web app's list.
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
+        KeyBinding::new("/", FocusSearch, Some("IssueList")),
         KeyBinding::new("j", SelectNext, Some("IssueList")),
         KeyBinding::new("down", SelectNext, Some("IssueList")),
         KeyBinding::new("k", SelectPrevious, Some("IssueList")),
@@ -73,7 +77,28 @@ struct Filters {
     assignee: Option<String>,
     /// Label names; an issue needs all of them.
     labels: Vec<String>,
+    /// By created rather than modified, as the web app's sort toggle.
+    #[serde(default)]
+    by_created: bool,
+    /// Oldest first.
+    #[serde(default)]
+    ascending: bool,
+    /// The project's name, as the web app's project picker.
+    #[serde(default = "zero_project")]
+    project: String,
 }
+
+fn zero_project() -> String {
+    ZERO_PROJECT_NAME.into()
+}
+
+/// The users and labels the pickers offer: the project's.
+type ProjectLives = (
+    Live<Vec<User>>,
+    Live<Vec<User>>,
+    Live<Vec<User>>,
+    Live<Vec<Label>>,
+);
 
 /// What the window shows, kept across launches as zbugs keeps it in the
 /// URL.
@@ -128,7 +153,7 @@ fn normalize_emoji(emoji: &str) -> String {
         .collect()
 }
 
-type OnPick = Rc<dyn Fn(&mut ZbugsApp, Option<String>, &mut Context<ZbugsApp>)>;
+type OnPick = Rc<dyn Fn(&mut ZbugsApp, Option<String>, &mut Window, &mut Context<ZbugsApp>)>;
 
 pub struct ZbugsApp {
     session: Session,
@@ -195,6 +220,9 @@ impl ZbugsApp {
                 creator: None,
                 assignee: None,
                 labels: Vec::new(),
+                by_created: false,
+                ascending: false,
+                project: zero_project(),
             },
             |s| s.filters.clone(),
         );
@@ -238,34 +266,8 @@ impl ZbugsApp {
         let (list, count) = Self::queries(&session, &filters, limit, cx);
         let auth = session.auth.as_ref();
         let projects = Live::new(&session.zero, ALL_PROJECTS.call(&(), auth), &ttl(), cx);
-        let users = |filter, cx: &mut Context<Self>| {
-            let args = UsersForProjectArgs {
-                disabled: false,
-                login: None,
-                project_name: ZERO_PROJECT_NAME.into(),
-                filter: Some(filter),
-            };
-            Live::new(
-                &session.zero,
-                USERS_FOR_PROJECT.call(&args, auth),
-                &ttl(),
-                cx,
-            )
-        };
-        let creators = users(UsersFilter::Creators, cx);
-        let assignees = users(UsersFilter::Assignees, cx);
-        let crew = users(UsersFilter::Crew, cx);
-        let labels = Live::new(
-            &session.zero,
-            LABELS.call(
-                &ProjectArgs {
-                    project_name: ZERO_PROJECT_NAME.into(),
-                },
-                auth,
-            ),
-            &ttl(),
-            cx,
-        );
+        let (creators, assignees, crew, labels) =
+            Self::project_lives(&session, &filters.project, cx);
         let me = session
             .auth
             .as_ref()
@@ -465,6 +467,51 @@ impl ZbugsApp {
         .detach();
     }
 
+    /// Asks for a label's name, then creates it in the issue's project and
+    /// adds it to the issue (`label.createAndAddToIssue`, crew only).
+    fn open_new_label(&mut self, issue_id: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_form(
+            "New label",
+            vec![("Label name", String::new(), false)],
+            move |this, values, _, cx| {
+                let name = values.into_iter().next().unwrap_or_default();
+                this.create_label(issue_id.clone(), name, cx)
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// Creates label `name` and adds it to the issue. Returns whether it
+    /// went ahead; an empty name, or one the project has, doesn't.
+    fn create_label(&mut self, issue_id: String, name: String, cx: &mut Context<Self>) -> bool {
+        if name.is_empty() {
+            self.error = Some("A label needs a name.".into());
+            cx.notify();
+            return false;
+        }
+        let exists = self
+            .labels
+            .snapshot()
+            .value
+            .iter()
+            .flatten()
+            .any(|l| l.name.eq_ignore_ascii_case(&name));
+        if exists {
+            self.error = Some(format!("There's already a label called {name}."));
+            cx.notify();
+            return false;
+        }
+        let args = CreateAndAddLabelArgs {
+            issue_id,
+            label_id: make_id(),
+            label_name: name,
+            project_id: None,
+        };
+        self.mutate(CREATE_AND_ADD_LABEL.with(&args), cx);
+        true
+    }
+
     fn open_login(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open_form(
             "Log in with a token",
@@ -594,6 +641,56 @@ impl ZbugsApp {
         }
     }
 
+    /// The creators, assignees, crew, and labels of `project`.
+    fn project_lives(session: &Session, project: &str, cx: &mut Context<Self>) -> ProjectLives {
+        let auth = session.auth.as_ref();
+        let mut users = |filter| {
+            let args = UsersForProjectArgs {
+                disabled: false,
+                login: None,
+                project_name: project.into(),
+                filter: Some(filter),
+            };
+            Live::new(
+                &session.zero,
+                USERS_FOR_PROJECT.call(&args, auth),
+                &ttl(),
+                cx,
+            )
+        };
+        let creators = users(UsersFilter::Creators);
+        let assignees = users(UsersFilter::Assignees);
+        let crew = users(UsersFilter::Crew);
+        let args = ProjectArgs {
+            project_name: project.into(),
+        };
+        let labels = Live::new(&session.zero, LABELS.call(&args, auth), &ttl(), cx);
+        (creators, assignees, crew, labels)
+    }
+
+    /// Switches to another project's issues: a new list, as the web app's
+    /// project picker goes to, without the user and label filters or a
+    /// selection.
+    fn set_project(&mut self, name: String, cx: &mut Context<Self>) {
+        if name == self.filters.project {
+            return;
+        }
+        (self.creators, self.assignees, self.crew, self.labels) =
+            Self::project_lives(&self.session, &name, cx);
+        self.selected = None;
+        self.detail = None;
+        self.comment_page = None;
+        self.refilter(
+            |f| {
+                f.project = name;
+                f.creator = None;
+                f.assignee = None;
+                f.labels.clear();
+            },
+            cx,
+        );
+    }
+
     fn list_context(f: &Filters) -> ListContextParams {
         ListContextParams {
             open: match f.status {
@@ -601,13 +698,21 @@ impl ZbugsApp {
                 Status::Closed => Some(false),
                 Status::All => None,
             },
-            project_name: Some(ZERO_PROJECT_NAME.into()),
+            project_name: Some(f.project.clone()),
             assignee: f.assignee.clone(),
             creator: f.creator.clone(),
             labels: (!f.labels.is_empty()).then(|| f.labels.clone()),
             text_filter: (!f.text.is_empty()).then(|| f.text.clone()),
-            sort_field: SortField::Modified,
-            sort_direction: SortDirection::Desc,
+            sort_field: if f.by_created {
+                SortField::Created
+            } else {
+                SortField::Modified
+            },
+            sort_direction: if f.ascending {
+                SortDirection::Asc
+            } else {
+                SortDirection::Desc
+            },
         }
     }
 
@@ -894,6 +999,20 @@ impl ZbugsApp {
         cx.notify();
     }
 
+    /// Makes an issue internal (crew only) or public, as the crew can on
+    /// the web app.
+    fn set_visibility(&mut self, issue_id: String, internal: bool, cx: &mut Context<Self>) {
+        let args = UpdateIssueArgs {
+            visibility: Some(if internal {
+                IssueVisibility::Internal
+            } else {
+                IssueVisibility::Public
+            }),
+            ..UpdateIssueArgs::new(issue_id, now_ms())
+        };
+        self.mutate(UPDATE_ISSUE.with(&args), cx);
+    }
+
     fn set_subscribed(&mut self, issue_id: String, subscribe: bool, cx: &mut Context<Self>) {
         let args = NotificationUpdateArgs {
             issue_id,
@@ -1049,7 +1168,7 @@ impl ZbugsApp {
 
     /// The id of the project new issues go in.
     fn project_id(&self) -> Option<String> {
-        let name = ZERO_PROJECT_NAME.to_lowercase();
+        let name = self.filters.project.to_lowercase();
         self.projects
             .snapshot()
             .value
@@ -1158,7 +1277,10 @@ impl ZbugsApp {
             }
             None => {
                 let Some(project_id) = self.project_id() else {
-                    self.error = Some("The Zero project hasn't synced yet.".into());
+                    self.error = Some(format!(
+                        "The {} project hasn't synced yet.",
+                        self.filters.project
+                    ));
                     cx.notify();
                     return false;
                 };
@@ -1179,6 +1301,28 @@ impl ZbugsApp {
     }
 
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let current = self.filters.project.to_lowercase();
+        let mut projects = self.projects.snapshot().value.clone().unwrap_or_default();
+        projects.sort_by(|a, b| a.lower_case_name.cmp(&b.lower_case_name));
+        let project = self.picker(
+            Button::new("project")
+                .label(self.filters.project.clone())
+                .tooltip("Project"),
+            projects
+                .into_iter()
+                .map(|p| Choice {
+                    checked: p.lower_case_name == current,
+                    label: p.name.clone(),
+                    value: Some(p.name),
+                })
+                .collect(),
+            Rc::new(|this, name, _, cx| {
+                if let Some(name) = name {
+                    this.set_project(name, cx);
+                }
+            }),
+            cx,
+        );
         let status_button = |id: &'static str, label: &'static str, status: Status| {
             Button::new(id)
                 .label(label)
@@ -1205,6 +1349,7 @@ impl ZbugsApp {
             .child(
                 h_flex()
                     .gap_1()
+                    .child(project)
                     .child(status_button("status-open", "Open", Status::Open))
                     .child(status_button("status-closed", "Closed", Status::Closed))
                     .child(status_button("status-all", "All", Status::All))
@@ -1264,8 +1409,10 @@ impl ZbugsApp {
                     menu = menu.item(
                         PopupMenuItem::new(choice.label.clone())
                             .checked(choice.checked)
-                            .on_click(move |_, _, cx| {
-                                let _ = app.update(cx, |this, cx| on_pick(this, value.clone(), cx));
+                            .on_click(move |_, window, cx| {
+                                let _ = app.update(cx, |this, cx| {
+                                    on_pick(this, value.clone(), window, cx)
+                                });
                             }),
                     );
                     if clears {
@@ -1304,7 +1451,7 @@ impl ZbugsApp {
                 )
                 .selected(f.creator.is_some()),
             Self::user_choices(&self.creators, "Anyone", f.creator.as_deref()),
-            Rc::new(|this, login, cx| this.refilter(|f| f.creator = login, cx)),
+            Rc::new(|this, login, _, cx| this.refilter(|f| f.creator = login, cx)),
             cx,
         );
         let assignee = self.picker(
@@ -1316,7 +1463,7 @@ impl ZbugsApp {
                 )
                 .selected(f.assignee.is_some()),
             Self::user_choices(&self.assignees, "Anyone", f.assignee.as_deref()),
-            Rc::new(|this, login, cx| this.refilter(|f| f.assignee = login, cx)),
+            Rc::new(|this, login, _, cx| this.refilter(|f| f.assignee = login, cx)),
             cx,
         );
         let mut names = self
@@ -1347,15 +1494,38 @@ impl ZbugsApp {
                 })
                 .selected(!f.labels.is_empty()),
             label_choices,
-            Rc::new(|this, name, cx| this.toggle_label_filter(name, cx)),
+            Rc::new(|this, name, _, cx| this.toggle_label_filter(name, cx)),
             cx,
         );
+        let sort_field = Button::new("sort-field")
+            .small()
+            .ghost()
+            .label(if f.by_created { "Created" } else { "Modified" })
+            .tooltip("Sort by modified or created")
+            .on_click(
+                cx.listener(|this, _, _, cx| this.refilter(|f| f.by_created = !f.by_created, cx)),
+            );
+        let sort_direction = Button::new("sort-direction")
+            .small()
+            .ghost()
+            .label(if f.ascending { "↑" } else { "↓" })
+            .tooltip(if f.ascending {
+                "Oldest first"
+            } else {
+                "Newest first"
+            })
+            .on_click(
+                cx.listener(|this, _, _, cx| this.refilter(|f| f.ascending = !f.ascending, cx)),
+            );
         h_flex()
             .gap_1()
             .flex_wrap()
             .child(creator)
             .child(assignee)
             .child(labels)
+            .child(div().flex_1())
+            .child(sort_field)
+            .child(sort_direction)
     }
 
     fn render_connection(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1410,6 +1580,9 @@ impl ZbugsApp {
             .key_context("IssueList")
             .on_action(cx.listener(|this, _: &SelectNext, _, cx| this.move_selection(1, cx)))
             .on_action(cx.listener(|this, _: &SelectPrevious, _, cx| this.move_selection(-1, cx)))
+            .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
+                this.search.update(cx, |state, cx| state.focus(window, cx))
+            }))
             .w_full()
             .flex_1()
             .child(list)
@@ -1555,7 +1728,7 @@ impl ZbugsApp {
         let add = self.picker(
             Button::new(SharedString::from(format!("react-{subject_id}"))).label("☺︎ +"),
             choices,
-            Rc::new(move |this, unicode, cx| {
+            Rc::new(move |this, unicode, _, cx| {
                 if let Some(unicode) = unicode {
                     this.toggle_emoji(subject, &id, &all, &unicode, cx);
                 }
@@ -1636,12 +1809,12 @@ impl ZbugsApp {
                 })
                 .disabled(!logged_in),
             assignee_choices,
-            Rc::new(move |this, user_id, cx| this.set_assignee(id.clone(), user_id, cx)),
+            Rc::new(move |this, user_id, _, cx| this.set_assignee(id.clone(), user_id, cx)),
             cx,
         );
         let mut all_labels = self.labels.snapshot().value.clone().unwrap_or_default();
         all_labels.sort_by_key(|l| l.name.to_lowercase());
-        let label_choices = all_labels
+        let mut label_choices: Vec<Choice> = all_labels
             .into_iter()
             .map(|l| Choice {
                 checked: issue.labels.iter().flatten().any(|has| has.id == l.id),
@@ -1649,6 +1822,14 @@ impl ZbugsApp {
                 value: Some(l.id),
             })
             .collect();
+        // The crew can make a new label, as in the web app's label picker.
+        if self.session.auth.as_ref().is_some_and(|a| a.is_crew()) {
+            label_choices.push(Choice {
+                label: "New label…".into(),
+                value: Some(NEW_LABEL.into()),
+                checked: false,
+            });
+        }
         let subscribed = issue
             .notification_state
             .as_ref()
@@ -1675,7 +1856,7 @@ impl ZbugsApp {
                     checked: !subscribed,
                 },
             ],
-            Rc::new(move |this, value, cx| {
+            Rc::new(move |this, value, _, cx| {
                 let subscribe = value.as_deref() == Some("subscribe");
                 if subscribe != subscribed {
                     this.set_subscribed(notify_id.clone(), subscribe, cx);
@@ -1683,17 +1864,48 @@ impl ZbugsApp {
             }),
             cx,
         );
+        let crew = self.session.auth.as_ref().is_some_and(|a| a.is_crew());
+        let internal = issue.visibility == IssueVisibility::Internal;
+        let visibility_id = issue.id.clone();
+        let visibility = crew.then(|| {
+            self.picker(
+                Button::new("detail-visibility")
+                    .label(if internal { "Internal" } else { "Public" })
+                    .tooltip("Visibility"),
+                vec![
+                    Choice {
+                        label: "Public".into(),
+                        value: Some("public".into()),
+                        checked: !internal,
+                    },
+                    Choice {
+                        label: "Internal".into(),
+                        value: Some("internal".into()),
+                        checked: internal,
+                    },
+                ],
+                Rc::new(move |this, value, _, cx| {
+                    let to_internal = value.as_deref() == Some("internal");
+                    if to_internal != internal {
+                        this.set_visibility(visibility_id.clone(), to_internal, cx);
+                    }
+                }),
+                cx,
+            )
+        });
         let labeled = issue.clone();
         let labels = self.picker(
             Button::new("detail-labels")
                 .label("Labels…")
                 .disabled(!logged_in),
             label_choices,
-            Rc::new(move |this, label_id, cx| {
-                if let Some(label_id) = label_id {
-                    this.toggle_label(&labeled, label_id, cx);
-                }
-            }),
+            Rc::new(
+                move |this, label_id, window, cx| match label_id.as_deref() {
+                    Some(NEW_LABEL) => this.open_new_label(labeled.id.clone(), window, cx),
+                    Some(_) => this.toggle_label(&labeled, label_id.unwrap_or_default(), cx),
+                    None => {}
+                },
+            ),
             cx,
         );
         v_flex()
@@ -1764,6 +1976,7 @@ impl ZbugsApp {
                     .child(assignee)
                     .child(labels)
                     .child(notifications)
+                    .children(visibility)
                     .children(issue.labels.iter().flatten().map(|l| {
                         div()
                             .px_1()
