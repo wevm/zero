@@ -26,6 +26,58 @@
 //! which keeps synced rows and pending mutations across restarts, is behind
 //! the `sqlite` feature, and an app can bring its own store with
 //! [`ZeroStorage::Custom`](client::ZeroStorage::Custom).
+//!
+//! # Getting started
+//!
+//! A client is made from the app's schema (generated from its TypeScript
+//! schema by `zero-rust codegen`), its mutators, and a scheduler and socket
+//! factory for its event loop. Views stay current: when `mutate` returns,
+//! they show its writes. This one runs without a server, on the manual
+//! clock tests use; an app passes a `cache_url` and the
+//! [`tokio_transport`](crate#features) types instead.
+//!
+//! ```
+//! use zero_client::ast::System;
+//! use zero_client::client::{Mutator, Zero, ZeroOptions};
+//! use zero_client::json::{self, Object, Value};
+//! use zero_client::query::AnyQuery;
+//! use zero_client::schema::Schema;
+//! use zero_client::testing::ManualScheduler;
+//! use zero_client::ttl::Ttl;
+//! use std::sync::Arc;
+//!
+//! let schema = Arc::new(Schema::from_json(&json::parse(
+//!     r#"{"tables": {"issue": {"name": "issue", "primaryKey": ["id"],
+//!         "columns": {"id": {"type": "string"}, "title": {"type": "string"}}}}}"#,
+//! )?)?);
+//!
+//! // Runs on the client now, and on the server's API when it syncs.
+//! let create = Mutator::new("issue.create", |tx, args, _ctx: &()| {
+//!     let mut row = Object::new();
+//!     row.insert("id", args.and_then(|a| a.get("id")).cloned().unwrap_or_default());
+//!     row.insert("title", Value::from("Hello"));
+//!     tx.table("issue").insert(&row)?;
+//!     Ok(None)
+//! });
+//!
+//! let scheduler = ManualScheduler::new(1_700_000_000_000.0);
+//! let zero = Zero::new(schema.clone(), (), vec![create], ZeroOptions::default(), scheduler, None)?;
+//!
+//! let issues = AnyQuery::new(schema, "issue", System::Client);
+//! let view = zero.materialize(&issues, &Ttl::default())?;
+//! let mut args = Object::new();
+//! args.insert("id", Value::from("i1"));
+//! zero.mutate("issue.create", Some(Value::from(args)));
+//!
+//! let rows = view.data();
+//! assert_eq!(rows.entries().len(), 1);
+//! assert_eq!(rows.entries()[0].row.get("title"), Some(&Value::from("Hello")));
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! With generated types, the query is `zql::issue()`, and a view's data
+//! reads as row structs with `query.read(&view.data())`; see the
+//! [README](https://github.com/wevm/zero/blob/main/rust/README.md#generated-types).
 
 pub mod ast;
 pub mod builder;
