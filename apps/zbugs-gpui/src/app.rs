@@ -10,12 +10,14 @@ use crate::picker::{self, Choice};
 use crate::session::{Session, app_dir, now_ms, save_setting};
 use futures::StreamExt;
 use futures::channel::mpsc;
+use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::base::actions::Confirm;
 use gpui_kit::component::button::*;
 use gpui_kit::component::dialog::DialogFooter;
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
+use gpui_kit::component::switch::Switch;
 use gpui_kit::component::text::TextView;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::*;
@@ -43,7 +45,13 @@ use zero_client::ttl::Ttl;
 
 /// Rows the list asks for at a time, as zbugs' list pages.
 const PAGE: i64 = 100;
-const ROW_HEIGHT: f32 = 52.;
+const ROW_HEIGHT: f32 = 56.;
+/// The columns' toolbars, together the window's toolbar.
+const TOOLBAR_HEIGHT: f32 = 52.;
+/// The room the window's traffic lights take at the toolbar's start.
+const TRAFFIC_LIGHTS: f32 = 84.;
+const SIDEBAR_WIDTH: f32 = 250.;
+const LIST_WIDTH: f32 = 380.;
 /// Comments `issueDetail` loads, and how many more "Show older comments"
 /// adds.
 const COMMENT_PAGE: i64 = 50;
@@ -216,6 +224,41 @@ struct Seen {
     emoji: BTreeSet<String>,
 }
 
+/// An issue's state, as zbugs-swift shows it: a green circle when open, a
+/// purple check when closed.
+fn state_icon(open: bool, cx: &App) -> Icon {
+    let (icon, color) = if open {
+        (Lucide::Circle, cx.theme().green)
+    } else {
+        (Lucide::CircleCheck, closed_color())
+    };
+    Icon::new(icon).small().text_color(color)
+}
+
+/// zbugs-swift's purple for a closed issue.
+fn closed_color() -> Hsla {
+    hsla(271. / 360., 0.6, 0.6, 1.)
+}
+
+fn label_chip(name: &str, cx: &App) -> impl IntoElement {
+    div()
+        .flex_none()
+        .px_1p5()
+        .rounded_full()
+        .bg(cx.theme().secondary)
+        .text_color(cx.theme().secondary_foreground)
+        .child(name.to_owned())
+}
+
+/// Controls in a toolbar: pressing them doesn't move the window.
+fn controls() -> Div {
+    h_flex()
+        .flex_none()
+        .gap_0p5()
+        .items_center()
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+}
+
 /// `user`'s avatar, round, as zbugs' `AvatarImage`; GitHub's at 64
 /// pixels, as `avatarURLWithSize` asks for.
 fn avatar(user: &User, size: Pixels) -> impl IntoElement {
@@ -331,6 +374,10 @@ pub struct ZbugsApp {
     /// The window's title, as zbugs' page titles (`window_title`).
     title: String,
     seen: Option<Seen>,
+    /// Whether the filters' sidebar shows.
+    sidebar: bool,
+    /// Where a press on a toolbar began, until it moves the window.
+    pressed: Option<Point<Pixels>>,
     _unsubscribe: Box<dyn Fn()>,
     _tasks: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -391,7 +438,12 @@ impl ZbugsApp {
             // On every change, drawn or not: a window that isn't drawing
             // still marks the issue it shows viewed.
             cx.observe_self(|this, cx| this.mark_viewed(cx)),
+            // Light or dark, as the system is.
+            cx.observe_window_appearance(window, |_, window, cx| {
+                Theme::sync_system_appearance(Some(window), cx)
+            }),
         ];
+        Theme::sync_system_appearance(Some(window), cx);
 
         // The connection badge.
         let connection = Rc::new(RefCell::new(session.zero.connection().state()));
@@ -452,6 +504,8 @@ impl ZbugsApp {
             view_timer: None,
             title: String::new(),
             seen: None,
+            sidebar: true,
+            pressed: None,
             _unsubscribe: unsubscribe,
             _tasks: vec![watch],
             _subscriptions: subscriptions,
@@ -476,7 +530,9 @@ impl ZbugsApp {
 
     /// Starts over on another login or other servers.
     fn replace_session(&mut self, session: Session, window: &mut Window, cx: &mut Context<Self>) {
+        let sidebar = self.sidebar;
         *self = ZbugsApp::new(session, window, cx);
+        self.sidebar = sidebar;
         cx.notify();
     }
 
@@ -720,15 +776,17 @@ impl ZbugsApp {
         Button::new("account")
             .small()
             .ghost()
-            .label(match (&login, logged_in) {
-                (Some(login), _) => login.clone(),
-                (None, true) => "Account".into(),
-                (None, false) => "Log in".into(),
-            })
+            .icon(Lucide::CircleUser)
+            .tooltip("Account")
             .dropdown_menu(move |menu: PopupMenu, _, _| {
                 let (a, b, c) = (app.clone(), app.clone(), app.clone());
                 let menu = if logged_in {
-                    menu.item(
+                    menu.label(match &login {
+                        Some(login) => format!("Logged in as {login}"),
+                        None => "Logged in".into(),
+                    })
+                    .separator()
+                    .item(
                         PopupMenuItem::new("Log out").on_click(move |_, window, cx| {
                             let _ = a.update(cx, |this, cx| this.log_in(None, window, cx));
                         }),
@@ -1654,14 +1712,65 @@ impl ZbugsApp {
         true
     }
 
-    fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let current = self.filters.project.to_lowercase();
+    /// A column's toolbar, together the window's toolbar as in a macOS app
+    /// with a unified one: dragging it moves the window, and a double
+    /// click zooms it, past its `controls`.
+    fn toolbar(&self, id: &'static str, cx: &mut Context<Self>) -> Stateful<Div> {
+        h_flex()
+            .id(id)
+            .flex_none()
+            .h(px(TOOLBAR_HEIGHT))
+            .px_3()
+            .gap_2()
+            .items_center()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, e: &MouseDownEvent, _, _| this.pressed = Some(e.position)),
+            )
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, _, _| this.pressed = None),
+            )
+            .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, window, _| {
+                let Some(at) = this.pressed else { return };
+                let moved = e.position - at;
+                if e.pressed_button != Some(MouseButton::Left) {
+                    this.pressed = None;
+                } else if moved.x.abs() > px(3.) || moved.y.abs() > px(3.) {
+                    this.pressed = None;
+                    window.start_window_move();
+                }
+            }))
+            .on_double_click(|_, window, _| window.titlebar_double_click())
+    }
+
+    fn sidebar_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        Button::new("toggle-sidebar")
+            .small()
+            .ghost()
+            .icon(Lucide::PanelLeft)
+            .tooltip(if self.sidebar {
+                "Hide sidebar"
+            } else {
+                "Show sidebar"
+            })
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.sidebar = !this.sidebar;
+                cx.notify();
+            }))
+    }
+
+    /// The filters, as zbugs-swift's sidebar: its rows (status, sort,
+    /// order, and the user's own), then the web app's others.
+    fn render_sidebar(&self, lights: Pixels, cx: &mut Context<Self>) -> impl IntoElement {
+        let f = &self.filters;
+        let current = f.project.to_lowercase();
         let mut projects = self.projects.snapshot().value.clone().unwrap_or_default();
         projects.sort_by(|a, b| a.lower_case_name.cmp(&b.lower_case_name));
         let project = self.picker(
             Button::new("project")
-                .label(self.filters.project.clone())
-                .tooltip("Project"),
+                .label(f.project.clone())
+                .dropdown_caret(true),
             projects
                 .into_iter()
                 .map(|p| Choice {
@@ -1678,16 +1787,217 @@ impl ZbugsApp {
             }),
             cx,
         );
-        let status_button = |id: &'static str, label: &'static str, status: Status| {
-            Button::new(id)
-                .label(label)
-                .small()
-                .ghost()
-                .selected(self.filters.status == status)
-                .on_click(
-                    cx.listener(move |this, _, _, cx| this.refilter(|f| f.status = status, cx)),
-                )
+        let choice = |label: &str, value: &str, checked: bool| Choice {
+            avatar: None,
+            label: label.into(),
+            value: Some(value.into()),
+            checked,
         };
+        let status = self.picker(
+            Button::new("status")
+                .label(match f.status {
+                    Status::Open => "Open",
+                    Status::Closed => "Closed",
+                    Status::All => "All",
+                })
+                .dropdown_caret(true),
+            vec![
+                choice("Open", "open", f.status == Status::Open),
+                choice("Closed", "closed", f.status == Status::Closed),
+                choice("All", "all", f.status == Status::All),
+            ],
+            Rc::new(|this, value, _, cx| {
+                let status = match value.as_deref() {
+                    Some("closed") => Status::Closed,
+                    Some("all") => Status::All,
+                    _ => Status::Open,
+                };
+                this.refilter(|f| f.status = status, cx)
+            }),
+            cx,
+        );
+        let sort = self.picker(
+            Button::new("sort")
+                .label(if f.by_created { "Created" } else { "Modified" })
+                .dropdown_caret(true),
+            vec![
+                choice("Modified", "modified", !f.by_created),
+                choice("Created", "created", f.by_created),
+            ],
+            Rc::new(|this, value, _, cx| {
+                let by_created = value.as_deref() == Some("created");
+                this.refilter(|f| f.by_created = by_created, cx)
+            }),
+            cx,
+        );
+        let order = self.picker(
+            Button::new("order")
+                .label(if f.ascending {
+                    "Oldest First"
+                } else {
+                    "Newest First"
+                })
+                .dropdown_caret(true),
+            vec![
+                choice("Newest First", "newest", !f.ascending),
+                choice("Oldest First", "oldest", f.ascending),
+            ],
+            Rc::new(|this, value, _, cx| {
+                let ascending = value.as_deref() == Some("oldest");
+                this.refilter(|f| f.ascending = ascending, cx)
+            }),
+            cx,
+        );
+        // The user's own issues, with their login: the creator and
+        // assignee filters' values.
+        let login = self
+            .me
+            .as_ref()
+            .and_then(|me| me.snapshot().value.clone().flatten())
+            .map(|u| u.login);
+        let mine = |id: &'static str, on: bool, assigned: bool, cx: &mut Context<Self>| {
+            let login = login.clone();
+            Switch::new(id)
+                .checked(on)
+                .on_click(cx.listener(move |this, on: &bool, _, cx| {
+                    let login = on.then(|| login.clone()).flatten();
+                    this.refilter(
+                        |f| match assigned {
+                            true => f.assignee = login,
+                            false => f.creator = login,
+                        },
+                        cx,
+                    )
+                }))
+                .into_any_element()
+        };
+        let by_me = login.as_ref().map(|l| {
+            let on = f.creator.as_ref() == Some(l);
+            mine("created-by-me", on, false, cx)
+        });
+        let to_me = login.as_ref().map(|l| {
+            let on = f.assignee.as_ref() == Some(l);
+            mine("assigned-to-me", on, true, cx)
+        });
+        let creator = self.searchable(
+            "filter-creator",
+            false,
+            Button::new("filter-creator")
+                .label(f.creator.clone().unwrap_or_else(|| "Anyone".into()))
+                .dropdown_caret(true),
+            Self::user_choices(&self.creators, "Anyone", f.creator.as_deref()),
+            Rc::new(|this, login, _, cx| this.refilter(|f| f.creator = login, cx)),
+            cx,
+        );
+        let assignee = self.searchable(
+            "filter-assignee",
+            false,
+            Button::new("filter-assignee")
+                .label(f.assignee.clone().unwrap_or_else(|| "Anyone".into()))
+                .dropdown_caret(true),
+            Self::user_choices(&self.assignees, "Anyone", f.assignee.as_deref()),
+            Rc::new(|this, login, _, cx| this.refilter(|f| f.assignee = login, cx)),
+            cx,
+        );
+        let mut names = self
+            .labels
+            .snapshot()
+            .value
+            .iter()
+            .flatten()
+            .map(|l| l.name.clone())
+            .collect::<Vec<_>>();
+        names.sort_by_key(|n| n.to_lowercase());
+        let mut label_choices = vec![Choice {
+            avatar: None,
+            label: "Any label".into(),
+            value: None,
+            checked: f.labels.is_empty(),
+        }];
+        label_choices.extend(names.into_iter().map(|name| Choice {
+            avatar: None,
+            checked: f.labels.contains(&name),
+            label: name.clone(),
+            value: Some(name),
+        }));
+        let labels = self.searchable(
+            "filter-labels",
+            true,
+            Button::new("filter-labels")
+                .label(match f.labels.as_slice() {
+                    [] => "Any".into(),
+                    [one] => one.clone(),
+                    many => format!("{} labels", many.len()),
+                })
+                .dropdown_caret(true),
+            label_choices,
+            Rc::new(|this, name, _, cx| this.toggle_label_filter(name, cx)),
+            cx,
+        );
+        // Rows of a label and its control, in a rounded group, as a
+        // grouped form's.
+        let group = |rows: Vec<(&'static str, AnyElement)>, cx: &mut Context<Self>| {
+            v_flex()
+                .mx_3()
+                .rounded_lg()
+                .border_1()
+                .border_color(cx.theme().border)
+                .bg(cx.theme().background)
+                .children(rows.into_iter().enumerate().map(|(i, (label, control))| {
+                    h_flex()
+                        .h_9()
+                        .pl_3()
+                        .pr_1()
+                        .gap_2()
+                        .items_center()
+                        .justify_between()
+                        .when(i > 0, |d| d.border_t_1().border_color(cx.theme().border))
+                        .child(div().text_sm().truncate().child(label))
+                        .child(div().flex_none().pr_1().child(control))
+                }))
+        };
+        let mut rows = vec![("Status", status), ("Sort", sort), ("Order", order)];
+        rows.extend(by_me.map(|c| ("Created by Me", c)));
+        rows.extend(to_me.map(|c| ("Assigned to Me", c)));
+        let first = group(rows, cx);
+        let more = group(
+            vec![
+                ("Project", project),
+                ("Creator", creator),
+                ("Assignee", assignee),
+                ("Labels", labels),
+            ],
+            cx,
+        );
+        v_flex()
+            .flex_none()
+            .w(px(SIDEBAR_WIDTH))
+            .h_full()
+            .bg(cx.theme().sidebar)
+            .border_r_1()
+            .border_color(cx.theme().sidebar_border)
+            .child(
+                self.toolbar("sidebar-toolbar", cx)
+                    .pl(lights)
+                    .child(div().flex_1())
+                    .child(controls().child(self.sidebar_toggle(cx))),
+            )
+            .child(
+                v_flex()
+                    .id("filters")
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .py_2()
+                    .gap_4()
+                    .child(first)
+                    .child(more),
+            )
+    }
+
+    /// The list's toolbar, as zbugs-swift's: its title, the count, the
+    /// connection, and buttons to write an issue, pick issues to delete,
+    /// and log in or out.
+    fn render_list_toolbar(&self, lights: Pixels, cx: &mut Context<Self>) -> impl IntoElement {
         let count = {
             let s = self.count.snapshot();
             match (s.value, self.list.snapshot().value.as_ref()) {
@@ -1696,48 +2006,59 @@ impl ZbugsApp {
                 _ => String::new(),
             }
         };
-        v_flex()
-            .gap_2()
-            .p_2()
+        let logged_in = self.session.auth.is_some();
+        self.toolbar("list-toolbar", cx)
             .border_b_1()
             .border_color(cx.theme().border)
+            .when(!self.sidebar, |d| {
+                d.pl(lights)
+                    .child(controls().child(self.sidebar_toggle(cx)))
+            })
             .child(
-                h_flex()
-                    .gap_1()
-                    .child(project)
-                    .child(status_button("status-open", "Open", Status::Open))
-                    .child(status_button("status-closed", "Closed", Status::Closed))
-                    .child(status_button("status-all", "All", Status::All))
-                    .child(div().flex_1())
-                    .child(
-                        div()
-                            .id("issue-count")
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(count),
-                    )
-                    .child(self.render_connection(cx))
-                    .child(self.render_account(cx)),
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(match self.filters.status {
+                        Status::Open => "Open Issues",
+                        Status::Closed => "Closed Issues",
+                        Status::All => "All Issues",
+                    }),
             )
-            .child(self.render_filters(cx))
+            .child(div().flex_1())
             .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .child(Input::new(&self.search).small().cleanable(true)),
-                    )
+                div()
+                    .id("issue-count")
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(count),
+            )
+            .child(self.render_connection(cx))
+            .child(
+                controls()
                     .child(
                         Button::new("new-issue")
                             .small()
-                            .primary()
-                            .label("New issue")
-                            .disabled(self.session.auth.is_none())
+                            .ghost()
+                            .icon(Lucide::SquarePen)
+                            .tooltip("New issue")
+                            .disabled(!logged_in)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.open_editor(None, window, cx)
                             })),
-                    ),
+                    )
+                    .when(logged_in, |d| {
+                        d.child(
+                            Button::new("start-checking")
+                                .small()
+                                .ghost()
+                                .icon(Lucide::ListChecks)
+                                .selected(self.checked.is_some())
+                                .tooltip("Select issues to delete")
+                                .on_click(cx.listener(|this, _, _, cx| this.toggle_checking(cx))),
+                        )
+                    })
+                    .child(self.render_account(cx)),
             )
     }
 
@@ -1821,13 +2142,19 @@ impl ZbugsApp {
         choices
     }
 
-    fn render_filters(&self, cx: &mut Context<Self>) -> AnyElement {
-        if let Some(checked) = &self.checked {
-            let count = checked.len();
-            return h_flex()
+    /// While picking issues to delete, the bar to delete them or stop.
+    fn render_bulk_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let count = self.checked.as_ref()?.len();
+        Some(
+            h_flex()
+                .flex_none()
                 .gap_1()
+                .px_2()
+                .py_1()
                 .items_center()
-                .child(div().px_2().text_sm().child(format!("{count} selected")))
+                .border_b_1()
+                .border_color(cx.theme().border)
+                .child(div().px_1().text_sm().child(format!("{count} selected")))
                 .child(div().flex_1())
                 .child(
                     Button::new("delete-checked")
@@ -1855,132 +2182,35 @@ impl ZbugsApp {
                         .label("Cancel")
                         .on_click(cx.listener(|this, _, _, cx| this.toggle_checking(cx))),
                 )
-                .into_any_element();
-        }
-        let f = &self.filters;
-        let creator = self.searchable(
-            "filter-creator",
-            false,
-            Button::new("filter-creator")
-                .label(
-                    f.creator
-                        .as_ref()
-                        .map_or("Creator".into(), |l| format!("Creator: {l}")),
-                )
-                .selected(f.creator.is_some()),
-            Self::user_choices(&self.creators, "Anyone", f.creator.as_deref()),
-            Rc::new(|this, login, _, cx| this.refilter(|f| f.creator = login, cx)),
-            cx,
-        );
-        let assignee = self.searchable(
-            "filter-assignee",
-            false,
-            Button::new("filter-assignee")
-                .label(
-                    f.assignee
-                        .as_ref()
-                        .map_or("Assignee".into(), |l| format!("Assignee: {l}")),
-                )
-                .selected(f.assignee.is_some()),
-            Self::user_choices(&self.assignees, "Anyone", f.assignee.as_deref()),
-            Rc::new(|this, login, _, cx| this.refilter(|f| f.assignee = login, cx)),
-            cx,
-        );
-        let mut names = self
-            .labels
-            .snapshot()
-            .value
-            .iter()
-            .flatten()
-            .map(|l| l.name.clone())
-            .collect::<Vec<_>>();
-        names.sort_by_key(|n| n.to_lowercase());
-        let mut label_choices = vec![Choice {
-            avatar: None,
-            label: "Any label".into(),
-            value: None,
-            checked: f.labels.is_empty(),
-        }];
-        label_choices.extend(names.into_iter().map(|name| Choice {
-            avatar: None,
-            checked: f.labels.contains(&name),
-            label: name.clone(),
-            value: Some(name),
-        }));
-        let labels = self.searchable(
-            "filter-labels",
-            true,
-            Button::new("filter-labels")
-                .label(match f.labels.as_slice() {
-                    [] => "Labels".into(),
-                    [one] => format!("Label: {one}"),
-                    many => format!("Labels: {}", many.len()),
-                })
-                .selected(!f.labels.is_empty()),
-            label_choices,
-            Rc::new(|this, name, _, cx| this.toggle_label_filter(name, cx)),
-            cx,
-        );
-        let sort_field = Button::new("sort-field")
-            .small()
-            .ghost()
-            .label(if f.by_created { "Created" } else { "Modified" })
-            .tooltip("Sort by modified or created")
-            .on_click(
-                cx.listener(|this, _, _, cx| this.refilter(|f| f.by_created = !f.by_created, cx)),
-            );
-        let sort_direction = Button::new("sort-direction")
-            .small()
-            .ghost()
-            .label(if f.ascending { "↑" } else { "↓" })
-            .tooltip(if f.ascending {
-                "Oldest first"
-            } else {
-                "Newest first"
-            })
-            .on_click(
-                cx.listener(|this, _, _, cx| this.refilter(|f| f.ascending = !f.ascending, cx)),
-            );
-        h_flex()
-            .gap_1()
-            .flex_wrap()
-            .child(creator)
-            .child(assignee)
-            .child(labels)
-            .child(div().flex_1())
-            .child(sort_field)
-            .child(sort_direction)
-            .when(self.session.auth.is_some(), |d| {
-                d.child(
-                    Button::new("start-checking")
-                        .small()
-                        .ghost()
-                        .label("Select")
-                        .tooltip("Select issues to delete")
-                        .on_click(cx.listener(|this, _, _, cx| this.toggle_checking(cx))),
-                )
-            })
-            .into_any_element()
+                .into_any_element(),
+        )
     }
 
     fn render_connection(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let state = self.connection.borrow().clone();
-        let (color, label) = match &state {
-            ConnectionState::Connected => (cx.theme().success, "Connected".to_owned()),
+        let (color, label, reason) = match &state {
+            ConnectionState::Connected => (cx.theme().success, "Connected", None),
             ConnectionState::Connecting { .. } | ConnectionState::Initializing => {
-                (cx.theme().warning, "Connecting".to_owned())
+                (cx.theme().warning, "Connecting", None)
             }
-            ConnectionState::NeedsAuth(_) => (cx.theme().danger, "Needs login".to_owned()),
-            ConnectionState::Disconnected { reason }
-            | ConnectionState::Error { reason }
-            | ConnectionState::Closed { reason } => (cx.theme().danger, reason.clone()),
+            ConnectionState::NeedsAuth(_) => (cx.theme().danger, "Log In Again", None),
+            ConnectionState::Disconnected { reason } | ConnectionState::Closed { reason } => {
+                (cx.theme().danger, "Offline", Some(reason.clone()))
+            }
+            ConnectionState::Error { reason } => (cx.theme().danger, "Error", Some(reason.clone())),
         };
-        div()
+        h_flex()
             .id("connection")
-            .size_2()
-            .rounded_full()
-            .bg(color)
-            .tooltip(move |window, cx| Tooltip::new(label.clone()).build(window, cx))
+            .flex_none()
+            .gap_1()
+            .items_center()
+            .text_xs()
+            .text_color(cx.theme().muted_foreground)
+            .child(div().size_2().rounded_full().bg(color))
+            .child(label)
+            .when_some(reason, |d, reason| {
+                d.tooltip(move |window, cx| Tooltip::new(reason.clone()).build(window, cx))
+            })
     }
 
     fn render_list(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2036,17 +2266,6 @@ impl ZbugsApp {
         let selected = self.selected.as_deref() == Some(issue.id.as_str());
         let unread = self.session.auth.is_some() && is_unread(issue);
         let id = issue.id.clone();
-        let creator = issue
-            .creator
-            .as_ref()
-            .map_or(String::new(), |u| u.login.clone());
-        let labels = issue
-            .labels
-            .iter()
-            .flatten()
-            .map(|l| l.name.clone())
-            .collect::<Vec<_>>()
-            .join(", ");
         // While picking issues to delete, a click checks the issue
         // instead, if the user can delete it.
         let check = self.checked.as_ref().map(|checked| {
@@ -2056,33 +2275,40 @@ impl ZbugsApp {
             )
         });
         let row = issue.clone();
+        let subtitle = [
+            issue.short_id.map(|n| format!("#{n}")),
+            issue.creator.as_ref().map(|u| u.login.clone()),
+            Some(relative_time(
+                if self.filters.by_created {
+                    issue.created
+                } else {
+                    issue.modified
+                },
+                now_ms(),
+            )),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ");
         let content = v_flex()
             .flex_1()
             .min_w_0()
+            .gap_0p5()
             .when(check.is_some_and(|(_, can)| !can), |d| d.opacity(0.5))
             .child(
                 h_flex()
                     .gap_2()
-                    .child(
-                        div()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(issue.short_id.map_or(String::new(), |n| format!("#{n}"))),
-                    )
+                    .items_center()
+                    .child(state_icon(issue.open, cx))
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
                             .truncate()
+                            .font_weight(FontWeight::SEMIBOLD)
                             .child(issue.title.clone()),
                     )
-                    .when(!issue.open, |d| {
-                        d.child(
-                            div()
-                                .text_xs()
-                                .text_color(cx.theme().muted_foreground)
-                                .child("Closed"),
-                        )
-                    })
                     .when(unread, |d| {
                         d.child(
                             div()
@@ -2100,31 +2326,26 @@ impl ZbugsApp {
             )
             .child(
                 h_flex()
-                    .gap_2()
+                    .pl(px(22.))
+                    .gap_1p5()
+                    .overflow_hidden()
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
-                    .child(creator)
-                    .child(div().flex_1().min_w_0().truncate().child(labels))
-                    .child(div().flex_none().child(relative_time(
-                        if self.filters.by_created {
-                            issue.created
-                        } else {
-                            issue.modified
-                        },
-                        now_ms(),
-                    ))),
+                    .child(div().flex_none().child(subtitle))
+                    .children(
+                        issue
+                            .labels
+                            .iter()
+                            .flatten()
+                            .map(|l| label_chip(&l.name, cx)),
+                    ),
             );
-        h_flex()
+        div()
             .id(SharedString::from(format!("issue-{}", issue.id)))
             .w_full()
             .h(px(ROW_HEIGHT))
-            .px_3()
-            .gap_3()
-            .overflow_hidden()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .when(selected, |d| d.bg(cx.theme().accent))
-            .hover(|d| d.bg(cx.theme().accent))
+            .px_2()
+            .py_0p5()
             .on_click(cx.listener(move |this, _, window, cx| {
                 if this.checked.is_some() {
                     this.toggle_checked(&row, cx);
@@ -2133,31 +2354,41 @@ impl ZbugsApp {
                 }
                 window.focus(&this.list_focus, cx);
             }))
-            .when_some(check, |d, (checked, can)| {
-                d.child(
-                    div()
-                        .flex_none()
-                        .size_4()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded_sm()
-                        .border_1()
-                        .text_xs()
-                        .when(!can, |d| d.opacity(0.4))
-                        .border_color(if checked {
-                            cx.theme().primary
-                        } else {
-                            cx.theme().border
-                        })
-                        .when(checked, |d| {
-                            d.bg(cx.theme().primary)
-                                .text_color(cx.theme().primary_foreground)
-                                .child("✓")
-                        }),
-                )
-            })
-            .child(content)
+            .child(
+                h_flex()
+                    .size_full()
+                    .px_2()
+                    .gap_2()
+                    .rounded_md()
+                    .overflow_hidden()
+                    .when(selected, |d| d.bg(cx.theme().list_active))
+                    .when(!selected, |d| d.hover(|d| d.bg(cx.theme().list_hover)))
+                    .when_some(check, |d, (checked, can)| {
+                        d.child(
+                            div()
+                                .flex_none()
+                                .size_4()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded_sm()
+                                .border_1()
+                                .text_xs()
+                                .when(!can, |d| d.opacity(0.4))
+                                .border_color(if checked {
+                                    cx.theme().primary
+                                } else {
+                                    cx.theme().border
+                                })
+                                .when(checked, |d| {
+                                    d.bg(cx.theme().primary)
+                                        .text_color(cx.theme().primary_foreground)
+                                        .child("✓")
+                                }),
+                        )
+                    })
+                    .child(content),
+            )
     }
 
     /// The reactions on an issue or comment, one pill per emoji, and a
@@ -2276,6 +2507,73 @@ impl ZbugsApp {
             .into_any_element()
     }
 
+    /// The detail's toolbar, as zbugs-swift's: the issue's actions, and the
+    /// search at the window's end.
+    fn render_detail_toolbar(
+        &self,
+        issue: Option<&Issue>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let actions = issue.filter(|_| self.session.auth.is_some()).map(|issue| {
+            let (toggle, edit, id) = (issue.clone(), issue.clone(), issue.id.clone());
+            controls()
+                .child(
+                    Button::new("toggle-open")
+                        .small()
+                        .ghost()
+                        .icon(if issue.open {
+                            Lucide::CircleCheck
+                        } else {
+                            Lucide::Undo2
+                        })
+                        .tooltip(if issue.open { "Close issue" } else { "Reopen" })
+                        .on_click(cx.listener(move |this, _, _, cx| this.toggle_open(&toggle, cx))),
+                )
+                .child(
+                    Button::new("edit-issue")
+                        .small()
+                        .ghost()
+                        .icon(Lucide::Pencil)
+                        .tooltip("Edit")
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.open_editor(Some(edit.clone()), window, cx)
+                        })),
+                )
+                .when(self.can_change(&issue.creator_id), |d| {
+                    d.child(
+                        Button::new("delete-issue")
+                            .small()
+                            .ghost()
+                            .icon(Lucide::Trash)
+                            .tooltip("Delete")
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                let id = id.clone();
+                                this.confirm_delete(
+                                    "Delete this issue?",
+                                    move |this, cx| this.delete_issue(&id, cx),
+                                    window,
+                                    cx,
+                                )
+                            })),
+                    )
+                })
+        });
+        self.toolbar("detail-toolbar", cx)
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .children(actions)
+            .child(div().flex_1())
+            .child(
+                controls().w(px(240.)).child(
+                    Input::new(&self.search).small().cleanable(true).prefix(
+                        Icon::new(Lucide::Search)
+                            .small()
+                            .text_color(cx.theme().muted_foreground),
+                    ),
+                ),
+            )
+    }
+
     fn render_detail(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let empty = |text: &'static str, cx: &mut Context<Self>| {
             div()
@@ -2317,8 +2615,6 @@ impl ZbugsApp {
         let who = |u: &Option<Box<zbugs_model::schema::User>>| {
             u.as_ref().map_or("nobody".to_owned(), |u| u.login.clone())
         };
-        let toggle = issue.clone();
-        let edit = issue.clone();
         let assignee_id = issue.assignee_id.clone();
         let mut assignee_choices = vec![Choice {
             avatar: None,
@@ -2461,197 +2757,191 @@ impl ZbugsApp {
             .on_action(cx.listener(|this, _: &SelectPrevious, _, cx| this.move_selection(-1, cx)))
             .size_full()
             .overflow_y_scroll()
-            .p_6()
-            .gap_4()
             .child(
-                h_flex()
-                    .gap_3()
-                    .items_start()
+                v_flex()
+                    .w_full()
+                    .max_w(px(760.))
+                    .mx_auto()
+                    .p_6()
+                    .gap_4()
                     .child(
                         div()
-                            .flex_1()
-                            .min_w_0()
                             .text_xl()
-                            .font_weight(FontWeight::SEMIBOLD)
+                            .font_weight(FontWeight::BOLD)
                             .child(issue.title.clone()),
                     )
                     .child(
-                        Button::new("edit-issue")
-                            .small()
-                            .outline()
-                            .label("Edit")
-                            .disabled(!logged_in)
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.open_editor(Some(edit.clone()), window, cx)
-                            })),
-                    )
-                    .child(
-                        Button::new("toggle-open")
-                            .small()
-                            .label(if issue.open { "Close issue" } else { "Reopen" })
-                            .disabled(!logged_in)
-                            .on_click(
-                                cx.listener(move |this, _, _, cx| this.toggle_open(&toggle, cx)),
-                            ),
-                    )
-                    .when(self.can_change(&issue.creator_id), |row| {
-                        let id = issue.id.clone();
-                        row.child(
-                            Button::new("delete-issue")
-                                .small()
-                                .outline()
-                                .label("Delete")
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    let id = id.clone();
-                                    this.confirm_delete(
-                                        "Delete this issue?",
-                                        move |this, cx| this.delete_issue(&id, cx),
-                                        window,
-                                        cx,
-                                    )
-                                })),
-                        )
-                    }),
-            )
-            .child(
-                h_flex()
-                    .flex_wrap()
-                    .gap_3()
-                    .text_sm()
-                    .text_color(cx.theme().muted_foreground)
-                    .children(issue.short_id.map(|n| format!("#{n}")))
-                    .child(if issue.open { "Open" } else { "Closed" })
-                    .child(
                         h_flex()
-                            .gap_1()
-                            .child("by")
-                            .children(issue.creator.as_deref().map(|u| avatar(u, px(18.))))
-                            .child(who(&issue.creator)),
-                    )
-                    .child(format!(
-                        "updated {}",
-                        relative_time(issue.modified, now_ms())
-                    ))
-                    .child(assignee)
-                    .child(labels)
-                    .child(notifications)
-                    .children(visibility)
-                    .children(issue.labels.iter().flatten().map(|l| {
-                        div()
-                            .px_1()
-                            .rounded_sm()
-                            .bg(cx.theme().secondary)
-                            .child(l.name.clone())
-                    })),
-            )
-            .child(markdown(
-                format!("description-{}", issue.id),
-                &issue.description,
-                window,
-                cx,
-            ))
-            .child(self.render_reactions(
-                Subject::Issue,
-                &issue.id,
-                issue.emoji.as_deref().unwrap_or_default(),
-                cx,
-            ))
-            .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(format!(
-                        "Comments ({}{})",
-                        comments.len(),
-                        if more { "+" } else { "" }
-                    )),
-            )
-            .when(more, |d| {
-                d.child(
-                    Button::new("older-comments")
-                        .small()
-                        .ghost()
-                        .label("Show older comments")
-                        .on_click(cx.listener(|this, _, _, cx| this.show_older_comments(cx))),
-                )
-            })
-            .children(comments.into_iter().map(|c| {
-                let reactions = self.render_reactions(
-                    Subject::Comment,
-                    &c.id,
-                    c.emoji.as_deref().unwrap_or_default(),
-                    cx,
-                );
-                let (edit, remove) = (c.clone(), c.id.clone());
-                v_flex()
-                    .gap_1()
-                    .p_3()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(cx.theme().border)
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .text_xs()
+                            .flex_wrap()
+                            .gap_2()
+                            .items_center()
+                            .text_sm()
                             .text_color(cx.theme().muted_foreground)
-                            .children(c.creator.as_deref().map(|u| avatar(u, px(18.))))
-                            .child(who(&c.creator))
-                            .child(div().flex_1().child(relative_time(c.created, now_ms())))
-                            .when(self.can_change(&c.creator_id), |row| {
-                                row.child(
-                                    Button::new(SharedString::from(format!("edit-{}", c.id)))
-                                        .xsmall()
-                                        .ghost()
-                                        .label("Edit")
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.open_comment_editor(edit.clone(), window, cx)
-                                        })),
-                                )
-                                .child(
-                                    Button::new(SharedString::from(format!("delete-{}", c.id)))
-                                        .xsmall()
-                                        .ghost()
-                                        .label("Delete")
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            let id = remove.clone();
-                                            this.confirm_delete(
-                                                "Delete this comment?",
-                                                move |this, cx| this.delete_comment(&id, cx),
-                                                window,
-                                                cx,
-                                            )
-                                        })),
-                                )
-                            }),
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .items_center()
+                                    .text_color(if issue.open {
+                                        cx.theme().green
+                                    } else {
+                                        closed_color()
+                                    })
+                                    .child(state_icon(issue.open, cx))
+                                    .child(if issue.open { "Open" } else { "Closed" }),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .items_center()
+                                    .child("by")
+                                    .children(issue.creator.as_deref().map(|u| avatar(u, px(18.))))
+                                    .child(who(&issue.creator)),
+                            )
+                            .children(issue.short_id.map(|n| format!("· #{n}")))
+                            .child(format!(
+                                "· updated {}",
+                                relative_time(issue.modified, now_ms())
+                            )),
                     )
-                    .child(markdown(format!("comment-{}", c.id), &c.body, window, cx))
-                    .child(reactions)
-            }))
-            .child(
-                h_flex()
-                    .gap_2()
-                    .items_end()
+                    .child(
+                        h_flex()
+                            .flex_wrap()
+                            .gap_1()
+                            .items_center()
+                            .text_sm()
+                            .child(assignee)
+                            .child(labels)
+                            .child(notifications)
+                            .children(visibility),
+                    )
+                    .when(issue.labels.iter().flatten().next().is_some(), |d| {
+                        d.child(
+                            h_flex().flex_wrap().gap_1().text_xs().children(
+                                issue
+                                    .labels
+                                    .iter()
+                                    .flatten()
+                                    .map(|l| label_chip(&l.name, cx)),
+                            ),
+                        )
+                    })
+                    .child(markdown(
+                        format!("description-{}", issue.id),
+                        &issue.description,
+                        window,
+                        cx,
+                    ))
+                    .child(self.render_reactions(
+                        Subject::Issue,
+                        &issue.id,
+                        issue.emoji.as_deref().unwrap_or_default(),
+                        cx,
+                    ))
                     .child(
                         div()
-                            .flex_1()
-                            .key_context("CommentBox")
-                            .on_action(cx.listener(|this, _: &Confirm, window, cx| {
-                                this.post_comment(window, cx)
-                            }))
-                            .child(Textarea::new(&self.comment)),
+                            .text_sm()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(format!(
+                                "Comments ({}{})",
+                                comments.len(),
+                                if more { "+" } else { "" }
+                            )),
                     )
+                    .when(more, |d| {
+                        d.child(
+                            Button::new("older-comments")
+                                .small()
+                                .ghost()
+                                .label("Show older comments")
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.show_older_comments(cx)),
+                                ),
+                        )
+                    })
+                    .children(comments.into_iter().map(|c| {
+                        let reactions = self.render_reactions(
+                            Subject::Comment,
+                            &c.id,
+                            c.emoji.as_deref().unwrap_or_default(),
+                            cx,
+                        );
+                        let (edit, remove) = (c.clone(), c.id.clone());
+                        v_flex()
+                            .gap_1()
+                            .p_3()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(cx.theme().border)
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .children(c.creator.as_deref().map(|u| avatar(u, px(18.))))
+                                    .child(who(&c.creator))
+                                    .child(div().flex_1().child(relative_time(c.created, now_ms())))
+                                    .when(self.can_change(&c.creator_id), |row| {
+                                        row.child(
+                                            Button::new(SharedString::from(format!(
+                                                "edit-{}",
+                                                c.id
+                                            )))
+                                            .xsmall()
+                                            .ghost()
+                                            .label("Edit")
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                this.open_comment_editor(edit.clone(), window, cx)
+                                            })),
+                                        )
+                                        .child(
+                                            Button::new(SharedString::from(format!(
+                                                "delete-{}",
+                                                c.id
+                                            )))
+                                            .xsmall()
+                                            .ghost()
+                                            .label("Delete")
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                let id = remove.clone();
+                                                this.confirm_delete(
+                                                    "Delete this comment?",
+                                                    move |this, cx| this.delete_comment(&id, cx),
+                                                    window,
+                                                    cx,
+                                                )
+                                            })),
+                                        )
+                                    }),
+                            )
+                            .child(markdown(format!("comment-{}", c.id), &c.body, window, cx))
+                            .child(reactions)
+                    }))
                     .child(
-                        Button::new("post-comment")
-                            .primary()
-                            .label("Comment")
-                            .tooltip(if cx.platform_info().is_mac() {
-                                "⌘↩"
-                            } else {
-                                "Ctrl+Enter"
-                            })
-                            .disabled(!logged_in)
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.post_comment(window, cx)),
+                        h_flex()
+                            .gap_2()
+                            .items_end()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .key_context("CommentBox")
+                                    .on_action(cx.listener(|this, _: &Confirm, window, cx| {
+                                        this.post_comment(window, cx)
+                                    }))
+                                    .child(Textarea::new(&self.comment)),
+                            )
+                            .child(
+                                Button::new("post-comment")
+                                    .primary()
+                                    .label("Comment")
+                                    .tooltip(if cx.platform_info().is_mac() {
+                                        "⌘↩"
+                                    } else {
+                                        "Ctrl+Enter"
+                                    })
+                                    .disabled(!logged_in)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.post_comment(window, cx)
+                                    })),
                             ),
                     ),
             )
@@ -2681,27 +2971,46 @@ impl Render for ZbugsApp {
             window.set_window_title(&title);
             self.title = title;
         }
+        // The traffic lights sit at the first column's start.
+        let lights = if window.is_fullscreen() {
+            px(12.)
+        } else {
+            px(TRAFFIC_LIGHTS)
+        };
+        let issue = self
+            .detail
+            .as_ref()
+            .and_then(|d| d.snapshot().value.clone().flatten());
         h_flex()
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
+            .when(self.sidebar, |d| d.child(self.render_sidebar(lights, cx)))
             .child(
                 v_flex()
                     .flex_none()
-                    .w(px(420.))
+                    // Past the traffic lights, when they're its.
+                    .w(px(LIST_WIDTH) + if self.sidebar { px(0.) } else { lights })
                     .h_full()
                     .border_r_1()
                     .border_color(cx.theme().border)
-                    .child(self.render_toolbar(cx))
+                    .child(self.render_list_toolbar(lights, cx))
+                    .children(self.render_bulk_bar(cx))
                     .child(self.render_list(cx)),
             )
             .child(
-                div()
+                v_flex()
                     .flex_1()
                     .min_w_0()
                     .h_full()
-                    .overflow_hidden()
-                    .child(self.render_detail(window, cx)),
+                    .child(self.render_detail_toolbar(issue.as_ref(), cx))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_hidden()
+                            .child(self.render_detail(window, cx)),
+                    ),
             )
     }
 }
