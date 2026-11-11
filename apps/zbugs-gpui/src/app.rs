@@ -8,6 +8,7 @@ use futures::channel::mpsc;
 use gpui_kit::component::button::*;
 use gpui_kit::component::dialog::DialogFooter;
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::text::TextView;
 use gpui_kit::component::tooltip::Tooltip;
@@ -18,9 +19,13 @@ use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
 use zbugs_model::args::*;
-use zbugs_model::mutators::{ADD_COMMENT, CREATE_ISSUE, MutateRequest, UPDATE_ISSUE};
-use zbugs_model::queries::{ALL_PROJECTS, ISSUE_DETAIL, ISSUE_LIST_COUNT, ISSUE_LIST_V2};
-use zbugs_model::schema::{Comment, Issue, Project};
+use zbugs_model::mutators::{
+    ADD_COMMENT, ADD_LABEL, CREATE_ISSUE, MutateRequest, REMOVE_LABEL, UPDATE_ISSUE,
+};
+use zbugs_model::queries::{
+    ALL_PROJECTS, ISSUE_DETAIL, ISSUE_LIST_COUNT, ISSUE_LIST_V2, LABELS, USERS_FOR_PROJECT,
+};
+use zbugs_model::schema::{Comment, Issue, Label, Project, User};
 use zbugs_model::{ZERO_PROJECT_NAME, make_id};
 use zero_client::client::{ConnectionState, MutationOutcome};
 use zero_client::ttl::Ttl;
@@ -36,14 +41,39 @@ pub enum Status {
     All,
 }
 
-pub struct ZbugsApp {
-    session: Session,
+/// What the list shows, as zbugs' list context.
+#[derive(Clone, PartialEq)]
+struct Filters {
     status: Status,
     text: String,
+    /// Logins.
+    creator: Option<String>,
+    assignee: Option<String>,
+    /// Label names; an issue needs all of them.
+    labels: Vec<String>,
+}
+
+/// One entry of a picker menu: `value` is what picking it passes on,
+/// `None` for the entry that clears the choice.
+struct Choice {
+    label: String,
+    value: Option<String>,
+    checked: bool,
+}
+
+type OnPick = Rc<dyn Fn(&mut ZbugsApp, Option<String>, &mut Context<ZbugsApp>)>;
+
+pub struct ZbugsApp {
+    session: Session,
+    filters: Filters,
     limit: i64,
     list: Live<Vec<Issue>>,
     count: Live<i64>,
     projects: Live<Vec<Project>>,
+    creators: Live<Vec<User>>,
+    assignees: Live<Vec<User>>,
+    crew: Live<Vec<User>>,
+    labels: Live<Vec<Label>>,
     selected: Option<String>,
     detail: Option<Live<Option<Issue>>>,
     search: Entity<InputState>,
@@ -67,8 +97,8 @@ impl ZbugsApp {
         let subscriptions = vec![
             cx.subscribe_in(&search, window, |this, state, event, _, cx| {
                 if matches!(event, InputEvent::Change) {
-                    this.text = state.read(cx).value().to_string();
-                    this.refilter(cx);
+                    let text = state.read(cx).value().to_string();
+                    this.refilter(|f| f.text = text, cx);
                 }
             }),
             cx.subscribe_in(&comment, window, |this, _, event, window, cx| {
@@ -94,22 +124,55 @@ impl ZbugsApp {
             }
         });
 
-        let status = Status::Open;
-        let (list, count) = Self::queries(&session, status, "", PAGE, cx);
-        let projects = Live::new(
+        let filters = Filters {
+            status: Status::Open,
+            text: String::new(),
+            creator: None,
+            assignee: None,
+            labels: Vec::new(),
+        };
+        let (list, count) = Self::queries(&session, &filters, PAGE, cx);
+        let auth = session.auth.as_ref();
+        let projects = Live::new(&session.zero, ALL_PROJECTS.call(&(), auth), &ttl(), cx);
+        let users = |filter, cx: &mut Context<Self>| {
+            let args = UsersForProjectArgs {
+                disabled: false,
+                login: None,
+                project_name: ZERO_PROJECT_NAME.into(),
+                filter: Some(filter),
+            };
+            Live::new(
+                &session.zero,
+                USERS_FOR_PROJECT.call(&args, auth),
+                &ttl(),
+                cx,
+            )
+        };
+        let creators = users(UsersFilter::Creators, cx);
+        let assignees = users(UsersFilter::Assignees, cx);
+        let crew = users(UsersFilter::Crew, cx);
+        let labels = Live::new(
             &session.zero,
-            ALL_PROJECTS.call(&(), session.auth.as_ref()),
+            LABELS.call(
+                &ProjectArgs {
+                    project_name: ZERO_PROJECT_NAME.into(),
+                },
+                auth,
+            ),
             &ttl(),
             cx,
         );
         ZbugsApp {
             session,
-            status,
-            text: String::new(),
+            filters,
             limit: PAGE,
             list,
             count,
             projects,
+            creators,
+            assignees,
+            crew,
+            labels,
             selected: None,
             detail: None,
             search,
@@ -123,18 +186,18 @@ impl ZbugsApp {
         }
     }
 
-    fn list_context(status: Status, text: &str) -> ListContextParams {
+    fn list_context(f: &Filters) -> ListContextParams {
         ListContextParams {
-            open: match status {
+            open: match f.status {
                 Status::Open => Some(true),
                 Status::Closed => Some(false),
                 Status::All => None,
             },
             project_name: Some(ZERO_PROJECT_NAME.into()),
-            assignee: None,
-            creator: None,
-            labels: None,
-            text_filter: (!text.is_empty()).then(|| text.to_owned()),
+            assignee: f.assignee.clone(),
+            creator: f.creator.clone(),
+            labels: (!f.labels.is_empty()).then(|| f.labels.clone()),
+            text_filter: (!f.text.is_empty()).then(|| f.text.clone()),
             sort_field: SortField::Modified,
             sort_direction: SortDirection::Desc,
         }
@@ -142,13 +205,12 @@ impl ZbugsApp {
 
     fn queries(
         session: &Session,
-        status: Status,
-        text: &str,
+        filters: &Filters,
         limit: i64,
         cx: &mut Context<Self>,
     ) -> (Live<Vec<Issue>>, Live<i64>) {
         let auth = session.auth.as_ref();
-        let list_context = Self::list_context(status, text);
+        let list_context = Self::list_context(filters);
         let list = ISSUE_LIST_V2.call(
             &IssueListV2Args {
                 list_context: list_context.clone(),
@@ -166,10 +228,17 @@ impl ZbugsApp {
         )
     }
 
-    /// The filters changed: the list starts over at its top.
-    fn refilter(&mut self, cx: &mut Context<Self>) {
+    /// Changes the filters; when they changed, the list starts over at its
+    /// top.
+    fn refilter(&mut self, change: impl FnOnce(&mut Filters), cx: &mut Context<Self>) {
+        let mut filters = self.filters.clone();
+        change(&mut filters);
+        if filters == self.filters {
+            return;
+        }
+        self.filters = filters;
         self.limit = PAGE;
-        let (list, count) = Self::queries(&self.session, self.status, &self.text, self.limit, cx);
+        let (list, count) = Self::queries(&self.session, &self.filters, self.limit, cx);
         self.list = list;
         self.count = count;
         self.scroll.scroll_to_item(0, ScrollStrategy::Top);
@@ -184,16 +253,25 @@ impl ZbugsApp {
             return;
         }
         self.limit += PAGE;
-        let (list, _) = Self::queries(&self.session, self.status, &self.text, self.limit, cx);
+        let (list, _) = Self::queries(&self.session, &self.filters, self.limit, cx);
         self.list = list;
         cx.notify();
     }
 
-    fn set_status(&mut self, status: Status, cx: &mut Context<Self>) {
-        if self.status != status {
-            self.status = status;
-            self.refilter(cx);
-        }
+    fn toggle_label_filter(&mut self, name: Option<String>, cx: &mut Context<Self>) {
+        self.refilter(
+            |f| match name {
+                None => f.labels.clear(),
+                Some(name) => {
+                    if let Some(ix) = f.labels.iter().position(|l| *l == name) {
+                        f.labels.remove(ix);
+                    } else {
+                        f.labels.push(name);
+                    }
+                }
+            },
+            cx,
+        );
     }
 
     fn select(&mut self, id: String, cx: &mut Context<Self>) {
@@ -239,6 +317,30 @@ impl ZbugsApp {
             ..UpdateIssueArgs::new(issue.id.clone(), now_ms())
         };
         self.mutate(UPDATE_ISSUE.with(&args), cx);
+    }
+
+    fn set_assignee(&mut self, issue_id: String, user_id: Option<String>, cx: &mut Context<Self>) {
+        let args = UpdateIssueArgs {
+            assignee_id: Some(user_id),
+            ..UpdateIssueArgs::new(issue_id, now_ms())
+        };
+        self.mutate(UPDATE_ISSUE.with(&args), cx);
+    }
+
+    /// Adds the label to the issue, or takes it off when it has it.
+    fn toggle_label(&mut self, issue: &Issue, label_id: String, cx: &mut Context<Self>) {
+        let has = issue.labels.iter().flatten().any(|l| l.id == label_id);
+        let issue_id = issue.id.clone();
+        let request = if has {
+            REMOVE_LABEL.with(&RemoveLabelArgs { issue_id, label_id })
+        } else {
+            ADD_LABEL.with(&IssueLabelArgs {
+                issue_id,
+                label_id,
+                project_id: None,
+            })
+        };
+        self.mutate(request, cx);
     }
 
     fn post_comment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -397,8 +499,10 @@ impl ZbugsApp {
                 .label(label)
                 .small()
                 .ghost()
-                .selected(self.status == status)
-                .on_click(cx.listener(move |this, _, _, cx| this.set_status(status, cx)))
+                .selected(self.filters.status == status)
+                .on_click(
+                    cx.listener(move |this, _, _, cx| this.refilter(|f| f.status = status, cx)),
+                )
         };
         let count = {
             let s = self.count.snapshot();
@@ -429,6 +533,7 @@ impl ZbugsApp {
                     )
                     .child(self.render_connection(cx)),
             )
+            .child(self.render_filters(cx))
             .child(
                 h_flex()
                     .gap_2()
@@ -448,6 +553,122 @@ impl ZbugsApp {
                             })),
                     ),
             )
+    }
+
+    /// A button that opens a menu of `choices`; picking one calls
+    /// `on_pick` with its value.
+    fn picker(
+        &self,
+        id: &'static str,
+        label: String,
+        active: bool,
+        choices: Vec<Choice>,
+        on_pick: OnPick,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let app = cx.entity().downgrade();
+        let choices = Rc::new(choices);
+        Button::new(id)
+            .label(label)
+            .small()
+            .ghost()
+            .selected(active)
+            .dropdown_menu(move |menu: PopupMenu, _, _| {
+                let mut menu = menu.scrollable(true).max_h(px(360.)).min_w(px(200.));
+                for choice in choices.iter() {
+                    let (app, value, on_pick) =
+                        (app.clone(), choice.value.clone(), on_pick.clone());
+                    let clears = value.is_none();
+                    menu = menu.item(
+                        PopupMenuItem::new(choice.label.clone())
+                            .checked(choice.checked)
+                            .on_click(move |_, _, cx| {
+                                let _ = app.update(cx, |this, cx| on_pick(this, value.clone(), cx));
+                            }),
+                    );
+                    if clears {
+                        menu = menu.separator();
+                    }
+                }
+                menu
+            })
+    }
+
+    fn user_choices(users: &Live<Vec<User>>, none: &str, current: Option<&str>) -> Vec<Choice> {
+        let mut choices = vec![Choice {
+            label: none.to_owned(),
+            value: None,
+            checked: current.is_none(),
+        }];
+        let mut users = users.snapshot().value.clone().unwrap_or_default();
+        users.sort_by_key(|u| u.login.to_lowercase());
+        choices.extend(users.into_iter().map(|u| Choice {
+            checked: current == Some(u.login.as_str()),
+            label: u.login.clone(),
+            value: Some(u.login),
+        }));
+        choices
+    }
+
+    fn render_filters(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let f = &self.filters;
+        let creator = self.picker(
+            "filter-creator",
+            f.creator
+                .as_ref()
+                .map_or("Creator".into(), |l| format!("Creator: {l}")),
+            f.creator.is_some(),
+            Self::user_choices(&self.creators, "Anyone", f.creator.as_deref()),
+            Rc::new(|this, login, cx| this.refilter(|f| f.creator = login, cx)),
+            cx,
+        );
+        let assignee = self.picker(
+            "filter-assignee",
+            f.assignee
+                .as_ref()
+                .map_or("Assignee".into(), |l| format!("Assignee: {l}")),
+            f.assignee.is_some(),
+            Self::user_choices(&self.assignees, "Anyone", f.assignee.as_deref()),
+            Rc::new(|this, login, cx| this.refilter(|f| f.assignee = login, cx)),
+            cx,
+        );
+        let mut names = self
+            .labels
+            .snapshot()
+            .value
+            .iter()
+            .flatten()
+            .map(|l| l.name.clone())
+            .collect::<Vec<_>>();
+        names.sort_by_key(|n| n.to_lowercase());
+        let mut label_choices = vec![Choice {
+            label: "Any label".into(),
+            value: None,
+            checked: f.labels.is_empty(),
+        }];
+        label_choices.extend(names.into_iter().map(|name| Choice {
+            checked: f.labels.contains(&name),
+            label: name.clone(),
+            value: Some(name),
+        }));
+        let labels = self.picker(
+            "filter-labels",
+            match f.labels.as_slice() {
+                [] => "Labels".into(),
+                [one] => format!("Label: {one}"),
+                many => format!("Labels: {}", many.len()),
+            },
+            !f.labels.is_empty(),
+            label_choices,
+            Rc::new(|this, name, cx| this.toggle_label_filter(name, cx)),
+            cx,
+        );
+        h_flex()
+            .gap_1()
+            .flex_wrap()
+            .child(creator)
+            .child(assignee)
+            .child(labels)
     }
 
     fn render_connection(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -594,6 +815,54 @@ impl ZbugsApp {
         };
         let toggle = issue.clone();
         let edit = issue.clone();
+        let assignee_id = issue.assignee_id.clone();
+        let mut assignee_choices = vec![Choice {
+            label: "Unassigned".into(),
+            value: None,
+            checked: assignee_id.is_none(),
+        }];
+        let mut crew = self.crew.snapshot().value.clone().unwrap_or_default();
+        crew.sort_by_key(|u| u.login.to_lowercase());
+        assignee_choices.extend(crew.into_iter().map(|u| Choice {
+            checked: assignee_id.as_deref() == Some(u.id.as_str()),
+            label: u.login,
+            value: Some(u.id),
+        }));
+        let id = issue.id.clone();
+        let assignee = self.picker(
+            "detail-assignee",
+            match &issue.assignee {
+                Some(u) => format!("Assigned to {}", u.login),
+                None => "Unassigned".into(),
+            },
+            false,
+            assignee_choices,
+            Rc::new(move |this, user_id, cx| this.set_assignee(id.clone(), user_id, cx)),
+            cx,
+        );
+        let mut all_labels = self.labels.snapshot().value.clone().unwrap_or_default();
+        all_labels.sort_by_key(|l| l.name.to_lowercase());
+        let label_choices = all_labels
+            .into_iter()
+            .map(|l| Choice {
+                checked: issue.labels.iter().flatten().any(|has| has.id == l.id),
+                label: l.name,
+                value: Some(l.id),
+            })
+            .collect();
+        let labeled = issue.clone();
+        let labels = self.picker(
+            "detail-labels",
+            "Labels…".into(),
+            false,
+            label_choices,
+            Rc::new(move |this, label_id, cx| {
+                if let Some(label_id) = label_id {
+                    this.toggle_label(&labeled, label_id, cx);
+                }
+            }),
+            cx,
+        );
         v_flex()
             .id("detail")
             .size_full()
@@ -639,7 +908,8 @@ impl ZbugsApp {
                     .children(issue.short_id.map(|n| format!("#{n}")))
                     .child(if issue.open { "Open" } else { "Closed" })
                     .child(format!("by {}", who(&issue.creator)))
-                    .child(format!("assigned to {}", who(&issue.assignee)))
+                    .child(assignee)
+                    .child(labels)
                     .children(issue.labels.iter().flatten().map(|l| {
                         div()
                             .px_1()
