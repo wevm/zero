@@ -14,7 +14,7 @@ use zbugs_model::schema::{Comment, Issue, IssueVisibility, Label};
 use zero_client::client::ConnectionState;
 use zero_client::ivm::ResultType;
 
-use crate::{App, Picker, REACTIONS, Sheet, Status};
+use crate::{App, Confirm, Picker, REACTIONS, Sheet, Status};
 
 /// The rows' estimated height, for the virtual list.
 const ROW: f32 = 58.0;
@@ -428,7 +428,7 @@ fn detail(s: &App, k: &Kit, layer: &mut Vec<El>) -> El {
                 .color(k.c.text_muted),
         );
     }
-    let editable = s.can_edit(issue);
+    let editable = s.can_edit(&issue.creator_id);
     if let (Some(u), false) = (&issue.assignee, editable) {
         status = status.child(
             text(format!("· assigned to {}", u.login))
@@ -440,7 +440,8 @@ fn detail(s: &App, k: &Kit, layer: &mut Vec<El>) -> El {
         status = status.child(text("· Internal").font(k.ty.small).color(k.c.warning.fg));
     }
     let mut actions = row().gap(8.0);
-    if s.can_edit(issue) {
+    if editable {
+        let id = issue.id.clone();
         actions = actions
             .child(
                 Button::new(if issue.open { "Close Issue" } else { "Reopen" })
@@ -455,6 +456,13 @@ fn detail(s: &App, k: &Kit, layer: &mut Vec<El>) -> El {
                     .on_press(|s: &mut App| s.open_sheet(Sheet::EditIssue))
                     .build(k)
                     .key("edit"),
+            )
+            .child(
+                Button::new("Delete")
+                    .variant(ButtonVariant::Danger)
+                    .on_press(move |s: &mut App| s.confirm = Some(Confirm::DeleteIssue(id.clone())))
+                    .build(k)
+                    .key("delete-issue"),
             );
     }
     let mut column = col()
@@ -487,7 +495,7 @@ fn detail(s: &App, k: &Kit, layer: &mut Vec<El>) -> El {
     }
     let issue_labels = issue.labels.as_deref().unwrap_or_default();
     // Labels are the crew's, as on the web.
-    let label_menu = editable && s.auth.as_ref().is_some_and(|a| a.is_crew());
+    let label_menu = editable && s.is_crew();
     if !issue_labels.is_empty() || label_menu {
         let mut r = row().gap(8.0).center_y().child(labels(issue_labels, k));
         if label_menu {
@@ -537,25 +545,80 @@ fn detail(s: &App, k: &Kit, layer: &mut Vec<El>) -> El {
 }
 
 fn comment(s: &App, c: &Comment, k: &Kit, layer: &mut Vec<El>) -> El {
-    col()
+    let editing = s.editing_comment.as_deref() == Some(c.id.as_str());
+    let mut header = row()
+        .w_full()
+        .gap(8.0)
+        .center_y()
+        .child(
+            text(c.creator.as_ref().map_or("…", |u| u.login.as_str()))
+                .font(k.ty.small_medium)
+                .color(k.c.text_base),
+        )
+        .child(text(ago(c.created)).font(k.ty.small).color(k.c.text_faint))
+        .child(el().grow(1.0));
+    if s.can_edit(&c.creator_id) && !editing {
+        let (edit, delete) = (c.id.clone(), c.id.clone());
+        header = header
+            .child(
+                Button::new("Edit")
+                    .variant(ButtonVariant::GhostMuted)
+                    .on_press(move |s: &mut App| s.edit_comment(&edit))
+                    .build(k)
+                    .key("edit-comment"),
+            )
+            .child(
+                Button::new("Delete")
+                    .variant(ButtonVariant::GhostMuted)
+                    .on_press(move |s: &mut App| {
+                        s.confirm = Some(Confirm::DeleteComment(delete.clone()))
+                    })
+                    .build(k)
+                    .key("delete-comment"),
+            );
+    }
+    let frame = col()
         .key(c.id.clone())
         .w_full()
         .padding(12.0)
         .gap(6.0)
         .radius(8.0)
         .fill(k.c.layer_01)
+        .child(header);
+    if !editing {
+        return frame
+            .child(Markdown::new(c.body.clone()).build(k))
+            .child(reactions(s, &c.id, k, layer));
+    }
+    frame
+        .child(
+            TextArea::new(&s.comment_edit)
+                .auto_grow(3, 12)
+                .on_edit(|s: &mut App| &mut s.comment_edit)
+                .on_submit(|s: &mut App, _| s.save_comment())
+                .build(k)
+                .w_full()
+                .key("comment-edit-field"),
+        )
         .child(
             row()
+                .w_full()
                 .gap(8.0)
+                .child(el().grow(1.0))
                 .child(
-                    text(c.creator.as_ref().map_or("…", |u| u.login.as_str()))
-                        .font(k.ty.small_medium)
-                        .color(k.c.text_base),
+                    Button::new("Cancel")
+                        .variant(ButtonVariant::Ghost)
+                        .on_press(|s: &mut App| s.editing_comment = None)
+                        .build(k)
+                        .key("cancel-comment-edit"),
                 )
-                .child(text(ago(c.created)).font(k.ty.small).color(k.c.text_faint)),
+                .child(
+                    Button::new("Save")
+                        .on_press(|s: &mut App| s.save_comment())
+                        .build(k)
+                        .key("save-comment-edit"),
+                ),
         )
-        .child(Markdown::new(c.body.clone()).build(k))
-        .child(reactions(s, &c.id, k, layer))
 }
 
 /// Who the issue is assigned to, for those who can change it.
@@ -593,7 +656,9 @@ fn label_picker(s: &App, issue_labels: &[Label], k: &Kit, layer: &mut Vec<El>) -
         )
         .min_width(200.0)
         .open(open)
-        .on_close(|s: &mut App| s.picker = None);
+        .on_close(|s: &mut App| s.picker = None)
+        .item(MenuItem::new("New Label…").on_select(|s: &mut App| s.open_sheet(Sheet::NewLabel)))
+        .separator();
     for l in &s.labels {
         let id = l.id.clone();
         menu = menu.item(
@@ -783,6 +848,25 @@ fn sheets(s: &App, k: &Kit, layer: &mut Vec<El>) {
                 .child(form(fields))
                 .build(k, layer);
         }
+        Some(Sheet::NewLabel) => {
+            let mut fields = vec![
+                TextInput::new(&s.label_edit)
+                    .placeholder("Name")
+                    .on_edit(|s: &mut App| &mut s.label_edit)
+                    .on_submit(|s: &mut App, _| s.save_label())
+                    .build(k)
+                    .key("label-field"),
+            ];
+            fields.extend(error(s));
+            fields.push(buttons("Create", App::save_label));
+            Dialog::new("label-sheet", "New Label")
+                .width(400.0)
+                .fit()
+                .open(true)
+                .on_close(close)
+                .child(form(fields))
+                .build(k, layer);
+        }
         Some(Sheet::Login) => {
             let waiting = s.github_login.is_some();
             let mut fields = vec![
@@ -844,6 +928,49 @@ fn sheets(s: &App, k: &Kit, layer: &mut Vec<El>) {
                 .build(k, layer);
         }
         None => {}
+    }
+    if let Some(confirm) = &s.confirm {
+        let (title, message) = match confirm {
+            Confirm::DeleteIssue(_) => (
+                "Delete Issue",
+                "Deleting the issue also deletes its comments. It can't be undone.",
+            ),
+            Confirm::DeleteComment(_) => ("Delete Comment", "It can't be undone."),
+        };
+        Dialog::new("confirm", title)
+            .width(400.0)
+            .fit()
+            .open(true)
+            .on_close(|s: &mut App| s.confirm = None)
+            .child(
+                col()
+                    .w_full()
+                    .px(16.0)
+                    .pb(16.0)
+                    .gap(10.0)
+                    .child(dialog_text(k, message))
+                    .child(
+                        row()
+                            .w_full()
+                            .gap(8.0)
+                            .child(el().grow(1.0))
+                            .child(
+                                Button::new("Cancel")
+                                    .variant(ButtonVariant::Ghost)
+                                    .on_press(|s: &mut App| s.confirm = None)
+                                    .build(k)
+                                    .key("cancel"),
+                            )
+                            .child(
+                                Button::new("Delete")
+                                    .variant(ButtonVariant::Danger)
+                                    .on_press(|s: &mut App| s.confirmed())
+                                    .build(k)
+                                    .key("confirm-delete"),
+                            ),
+                    ),
+            )
+            .build(k, layer);
     }
     if let Some(message) = &s.error {
         Dialog::new("error", "Couldn't Save")

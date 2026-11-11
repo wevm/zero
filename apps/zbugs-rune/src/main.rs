@@ -14,14 +14,15 @@ use rune::{AppSpec, TextEdit, Tx};
 use settings::Settings;
 use sync::{Session, Setup, SyncThread};
 use zbugs_model::args::{
-    AddCommentArgs, AddEmojiArgs, CommentsPageArgs, CreateIssueArgs, IdField, IssueDetailArgs,
-    IssueKey, IssueLabelArgs, IssueListCountArgs, IssueListV2Args, LabelsOrderByNameArgs,
-    ListContextParams, PageDirection, ProjectArgs, RemoveLabelArgs, SortDirection, SortField,
-    UpdateIssueArgs, UsersFilter, UsersForProjectArgs,
+    AddCommentArgs, AddEmojiArgs, CommentsPageArgs, CreateAndAddLabelArgs, CreateIssueArgs,
+    EditCommentArgs, IdField, IssueDetailArgs, IssueKey, IssueLabelArgs, IssueListCountArgs,
+    IssueListV2Args, LabelsOrderByNameArgs, ListContextParams, PageDirection, ProjectArgs,
+    RemoveLabelArgs, SortDirection, SortField, UpdateIssueArgs, UsersFilter, UsersForProjectArgs,
 };
 use zbugs_model::mutators::{
-    ADD_COMMENT, ADD_EMOJI_TO_COMMENT, ADD_EMOJI_TO_ISSUE, ADD_LABEL, CREATE_ISSUE, REMOVE_EMOJI,
-    REMOVE_LABEL, UPDATE_ISSUE,
+    ADD_COMMENT, ADD_EMOJI_TO_COMMENT, ADD_EMOJI_TO_ISSUE, ADD_LABEL, CREATE_AND_ADD_LABEL,
+    CREATE_ISSUE, DELETE_ISSUE, EDIT_COMMENT, REMOVE_COMMENT, REMOVE_EMOJI, REMOVE_LABEL,
+    UPDATE_ISSUE,
 };
 use zbugs_model::schema::{Comment, Emoji, Issue, Label, Project, User};
 use zbugs_model::{AuthData, Context, MutateRequest, ZERO_PROJECT_NAME, make_id, queries};
@@ -94,10 +95,18 @@ pub enum Picker {
     Emoji(String),
 }
 
+/// A deletion waiting for the user to confirm it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Confirm {
+    DeleteIssue(String),
+    DeleteComment(String),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sheet {
     NewIssue,
     EditIssue,
+    NewLabel,
     Login,
     Servers,
 }
@@ -130,6 +139,10 @@ pub struct App {
     pub comments: Vec<Comment>,
     comments_limit: i64,
     pub comment: TextEdit,
+    /// The comment being edited in place, and its text.
+    pub editing_comment: Option<String>,
+    pub comment_edit: TextEdit,
+    pub confirm: Option<Confirm>,
     pub picker: Option<Picker>,
     /// Who an issue can be assigned to, by login.
     pub crew: Vec<User>,
@@ -141,6 +154,7 @@ pub struct App {
     pub title_edit: TextEdit,
     pub description_edit: TextEdit,
     pub token_edit: TextEdit,
+    pub label_edit: TextEdit,
     pub cache_edit: TextEdit,
     pub api_edit: TextEdit,
     pub sheet_error: Option<String>,
@@ -209,6 +223,9 @@ impl App {
             comments: Vec::new(),
             comments_limit: COMMENTS_PAGE,
             comment: TextEdit::new(""),
+            editing_comment: None,
+            comment_edit: TextEdit::new(""),
+            confirm: None,
             picker: None,
             crew: Vec::new(),
             labels: Vec::new(),
@@ -217,6 +234,7 @@ impl App {
             title_edit: TextEdit::new(""),
             description_edit: TextEdit::new(""),
             token_edit: TextEdit::new(""),
+            label_edit: TextEdit::new(""),
             cache_edit: TextEdit::new(""),
             api_edit: TextEdit::new(""),
             sheet_error: None,
@@ -353,6 +371,7 @@ impl App {
         self.detail = None;
         self.detail_result = ResultType::Unknown;
         self.picker = None;
+        self.editing_comment = None;
         self.comments.clear();
         self.comments_limit = COMMENTS_PAGE;
         self.comment = TextEdit::new("");
@@ -360,6 +379,21 @@ impl App {
         self.selected = Some(id.clone());
         self.saved.selection = Some(id.clone());
         self.settings.selection = Some(id);
+        self.saved.save();
+    }
+
+    /// Shows no issue.
+    fn deselect(&mut self) {
+        self.selected = None;
+        self.detail = None;
+        self.detail_result = ResultType::Unknown;
+        self.picker = None;
+        self.editing_comment = None;
+        self.comments.clear();
+        self.sync.unwatch("detail");
+        self.sync.unwatch("comments");
+        self.saved.selection = None;
+        self.settings.selection = None;
         self.saved.save();
     }
 
@@ -435,10 +469,76 @@ impl App {
         );
     }
 
-    pub fn can_edit(&self, issue: &Issue) -> bool {
+    /// Whether the user can change what `creator_id` made: the crew can
+    /// change anything, others only their own.
+    pub fn can_edit(&self, creator_id: &str) -> bool {
         self.auth
             .as_ref()
-            .is_some_and(|a| a.is_crew() || a.sub == issue.creator_id)
+            .is_some_and(|a| a.is_crew() || a.sub == creator_id)
+    }
+
+    pub fn is_crew(&self) -> bool {
+        self.auth.as_ref().is_some_and(AuthData::is_crew)
+    }
+
+    /// Edits the comment in place.
+    pub fn edit_comment(&mut self, id: &str) {
+        let Some(c) = self.comments.iter().find(|c| c.id == id) else {
+            return;
+        };
+        self.comment_edit = TextEdit::new(c.body.clone());
+        self.comment_edit.focused = true;
+        self.editing_comment = Some(id.to_owned());
+    }
+
+    pub fn save_comment(&mut self) {
+        let Some(id) = self.editing_comment.take() else {
+            return;
+        };
+        let body = self.comment_edit.text.trim().to_owned();
+        if !body.is_empty() {
+            self.mutate(EDIT_COMMENT.with(&EditCommentArgs { id, body }));
+        }
+    }
+
+    /// Runs the deletion the user confirmed.
+    pub fn confirmed(&mut self) {
+        match self.confirm.take() {
+            Some(Confirm::DeleteIssue(id)) => {
+                self.mutate(DELETE_ISSUE.with(&id));
+                if self.selected.as_ref() == Some(&id) {
+                    self.deselect();
+                }
+            }
+            Some(Confirm::DeleteComment(id)) => {
+                if self.editing_comment.as_ref() == Some(&id) {
+                    self.editing_comment = None;
+                }
+                self.mutate(REMOVE_COMMENT.with(&id));
+            }
+            None => {}
+        }
+    }
+
+    /// Creates a label in the issue's project and adds it to the issue.
+    pub fn save_label(&mut self) {
+        let name = self.label_edit.text.trim().to_owned();
+        if name.is_empty() {
+            self.sheet_error = Some("A label needs a name.".into());
+            return;
+        }
+        if self.labels.iter().any(|l| l.name == name) {
+            self.sheet_error = Some(format!("There's already a label named {name}."));
+            return;
+        }
+        let Some(issue) = &self.detail else { return };
+        self.mutate(CREATE_AND_ADD_LABEL.with(&CreateAndAddLabelArgs {
+            issue_id: issue.id.clone(),
+            label_id: make_id(),
+            label_name: name,
+            project_id: None,
+        }));
+        self.sheet = None;
     }
 
     pub fn toggle_open(&mut self) {
@@ -564,6 +664,11 @@ impl App {
                 let Some(issue) = &self.detail else { return };
                 self.title_edit = TextEdit::new(issue.title.clone());
                 self.description_edit = TextEdit::new(issue.description.clone());
+            }
+            Sheet::NewLabel => {
+                self.picker = None;
+                self.label_edit = TextEdit::new("");
+                self.label_edit.focused = true;
             }
             Sheet::Login => self.token_edit = TextEdit::new(""),
             Sheet::Servers => {

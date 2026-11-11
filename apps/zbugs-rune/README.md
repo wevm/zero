@@ -2,7 +2,8 @@
 
 [zbugs](../zbugs) as a native desktop app in Rust, on the Zero Rust client
 (`rust/zero-client`) and the [Rune](https://github.com/anomalyco/rune) UI
-framework. macOS first; Linux and Windows are next.
+framework. macOS first; it also builds and renders on Linux (CI checks
+both), and Windows is next.
 
 - The schema, queries, and mutators are [`zbugs-model`](../zbugs-model)'s,
   shared with the GPUI app.
@@ -14,7 +15,8 @@ framework. macOS first; Linux and Windows are next.
 - `src/view.rs` has the screens, with `rune-kit`'s controls: the filters,
   the issue list (virtual rows, paged as it scrolls), the issue with its
   Markdown, comments, and reactions, its assignee and labels, and sheets
-  to create and edit an issue, log in, and set the servers.
+  to create, edit, and delete an issue, edit and delete comments, create
+  a label, log in, and set the servers.
 - `src/login.rs` logs in through GitHub in the browser: the API server
   redirects back to a listener the app opens on 127.0.0.1 for that one
   login (a loopback redirect, RFC 8252 §7.3).
