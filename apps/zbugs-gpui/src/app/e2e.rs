@@ -4,9 +4,10 @@
 //! step shows up, or 1 with the step that didn't.
 //!
 //! - `ZBUGS_E2E=online`: lists issues, creates and deletes one, creates
-//!   another, unsubscribes from it, comments, edits and deletes comments,
-//!   reacts, labels it (with a label it makes too), assigns it, makes it
-//!   internal, sorts the list, filters, closes it, and waits until it's
+//!   two more and deletes them together, creates another, goes to the
+//!   next issue and back with j and k, unsubscribes from it, comments,
+//!   edits and deletes comments, reacts, labels it (with a label it makes
+//!   too), assigns it, makes it internal, sorts the list, filters, closes it, and waits until it's
 //!   marked viewed, and for the server to confirm each mutation. CI then
 //!   checks the rows in Postgres.
 //! - `ZBUGS_E2E=offline`, with the backend stopped: the window reopens on
@@ -98,6 +99,18 @@ fn act<R>(
     .map_err(|e| e.to_string())
 }
 
+/// Types `key` after the next frame, as a user would.
+async fn press(window: AnyWindowHandle, cx: &mut AsyncApp, key: &'static str) -> Step {
+    cx.background_executor()
+        .timer(Duration::from_millis(100))
+        .await;
+    let keystroke = Keystroke::parse(key).map_err(|e| e.to_string())?;
+    cx.update_window(window, |_, window, cx| {
+        window.dispatch_keystroke(keystroke, cx);
+    })
+    .map_err(|e| e.to_string())
+}
+
 /// Waits for the server to confirm every mutation so far.
 async fn settled(app: &Entity<ZbugsApp>, cx: &mut AsyncApp) -> Step {
     let (done, settled) = oneshot::channel();
@@ -128,21 +141,50 @@ async fn online(window: AnyWindowHandle, app: &Entity<ZbugsApp>, cx: &mut AsyncA
     let open = app.read_with(cx, |app, _| app.count.snapshot().value.unwrap_or(0));
     shot("1-list");
 
-    // An issue created and deleted again: it leaves the list and the
-    // selection.
+    // Issues created and deleted again, one from the issue and two
+    // checked on the list: they leave the list and the selection.
+    let mut doomed = Vec::new();
+    for _ in 0..3 {
+        act(window, app, cx, |app, _, cx| {
+            until_ready(app.save_issue(None, DELETED.into(), String::new(), cx))
+        })??;
+        let id = app
+            .read_with(cx, |app, _| app.selected.clone())
+            .ok_or("creating an issue didn't select it")?;
+        until(app, cx, "the issue to delete, from the server", |app| {
+            issue(app).is_some_and(|i| i.id == id && i.short_id.is_some())
+                && rows(app).iter().any(|i| i.id == id)
+        })
+        .await?;
+        doomed.push(id);
+    }
     act(window, app, cx, |app, _, cx| {
-        until_ready(app.save_issue(None, DELETED.into(), String::new(), cx))
-    })??;
-    let doomed = app
-        .read_with(cx, |app, _| app.selected.clone())
-        .ok_or("creating an issue didn't select it")?;
-    until(app, cx, "the issue to delete, from the server", |app| {
-        issue(app).is_some_and(|i| i.title == DELETED && i.short_id.is_some())
+        app.select(doomed[0].clone(), cx);
+        app.delete_issue(&doomed[0], cx)
+    })?;
+    until(app, cx, "the deleted issue to leave the list", |app| {
+        app.selected.is_none() && !rows(app).iter().any(|i| i.id == doomed[0])
     })
     .await?;
-    act(window, app, cx, |app, _, cx| app.delete_issue(&doomed, cx))?;
-    until(app, cx, "the deleted issue to leave the list", |app| {
-        app.selected.is_none() && !rows(app).iter().any(|i| i.id == doomed)
+    act(window, app, cx, |app, _, cx| {
+        app.select(doomed[2].clone(), cx);
+        app.toggle_checking(cx);
+        for row in rows(app) {
+            if doomed[1..].contains(&row.id) {
+                app.toggle_checked(&row, cx);
+            }
+        }
+    })?;
+    until(app, cx, "two issues checked", |app| {
+        app.checked.as_ref().is_some_and(|c| c.len() == 2)
+    })
+    .await?;
+    shot("2-checked");
+    act(window, app, cx, |app, _, cx| app.delete_checked(cx))?;
+    until(app, cx, "the checked issues to leave the list", |app| {
+        app.checked.is_none()
+            && app.selected.is_none()
+            && !rows(app).iter().any(|i| doomed.contains(&i.id))
     })
     .await?;
     settled(app, cx).await?;
@@ -163,6 +205,32 @@ async fn online(window: AnyWindowHandle, app: &Entity<ZbugsApp>, cx: &mut AsyncA
             && app.count.snapshot().value == Some(open + 1)
     })
     .await?;
+
+    // j and k on the issue go to the next issue and back, but type in
+    // the comment field.
+    act(window, app, cx, |app, window, cx| {
+        window.focus(&app.detail_focus, cx)
+    })?;
+    press(window, cx, "j").await?;
+    until(app, cx, "j on the issue to select the next one", |app| {
+        app.selected.as_ref().is_some_and(|s| *s != id)
+    })
+    .await?;
+    press(window, cx, "k").await?;
+    until(app, cx, "k on the issue to select it again", |app| {
+        app.selected.as_ref() == Some(&id)
+    })
+    .await?;
+    act(window, app, cx, |app, window, cx| {
+        app.comment.update(cx, |state, cx| state.focus(window, cx))
+    })?;
+    press(window, cx, "j").await?;
+    let (typed, selected) = app.read_with(cx, |app, cx| {
+        (app.comment.read(cx).value(), app.selected.clone())
+    });
+    if typed != "j" || selected.as_ref() != Some(&id) {
+        return Err(format!("j in the comment field typed {typed:?}"));
+    }
 
     // Its creator is subscribed to it; unsubscribed here.
     until(app, cx, "the creator's subscription", |app| {
