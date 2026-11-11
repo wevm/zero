@@ -60,3 +60,75 @@ jobs:
         run: cargo clippy --all-targets --locked -- -D warnings
       - name: Build
         run: cargo build --locked
+      # The end-to-end run (src/app/e2e.rs) against zbugs' backend, on the
+      # ports the app connects to by default.
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.11.0
+      # zero-cache runs from source, which needs Node 24 (`using`).
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+          package-manager-cache: false
+      - run: pnpm install --frozen-lockfile
+        working-directory: .
+      - name: Start Postgres
+        run: |
+          brew install postgresql@17
+          pg="$(brew --prefix postgresql@17)/bin"
+          echo "$pg" >> "$GITHUB_PATH"
+          "$pg/initdb" -D "$RUNNER_TEMP/pg" -U postgres --auth=trust
+          "$pg/pg_ctl" -D "$RUNNER_TEMP/pg" -l "$RUNNER_TEMP/pg.log" \
+            -o "-c wal_level=logical -p 5432" start
+          until "$pg/pg_isready" -q -h 127.0.0.1; do sleep 1; done
+      - name: Start zbugs' backend
+        working-directory: .
+        env:
+          ZBUGS_PG: postgresql://postgres@127.0.0.1:5432/postgres
+          ZBUGS_DB: zbugs_gpui
+        run: |
+          node apps/zbugs-swift/server/server.ts > "$RUNNER_TEMP/zbugs.log" 2>&1 &
+          for _ in $(seq 1 300); do
+            grep -q '^ready ' "$RUNNER_TEMP/zbugs.log" && exit 0
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/zbugs.log"
+          exit 1
+      - name: End-to-end run
+        run: |
+          cargo build --locked --features e2e
+          export ZBUGS_APP_DIR="$RUNNER_TEMP/app"
+          export ZBUGS_E2E_SHOTS="$RUNNER_TEMP/screenshots"
+          ZBUGS_TOKEN="$(grep '^token ' "$RUNNER_TEMP/zbugs.log" | cut -d' ' -f2)"
+          export ZBUGS_TOKEN
+          ZBUGS_E2E=online ./target/debug/zbugs-gpui
+          # What the online run did, as the server stored it: closed,
+          # assigned to its creator, labelled bug, with a comment and a
+          # reaction.
+          row="$(psql postgresql://postgres@127.0.0.1:5432/zbugs_gpui -tAc "
+            SELECT i.open, i.\"assigneeID\" = i.\"creatorID\",
+              (SELECT count(*) FROM \"issueLabel\" il JOIN label l ON l.id = il.\"labelID\"
+                WHERE il.\"issueID\" = i.id AND l.name = 'bug'),
+              (SELECT count(*) FROM comment c WHERE c.\"issueID\" = i.id),
+              (SELECT count(*) FROM emoji e WHERE e.\"subjectID\" = i.id)
+            FROM issue i WHERE i.title = 'Created by the zbugs-gpui end-to-end run'")"
+          echo "issue row: $row"
+          [ "$row" = 'f|t|1|1|1' ]
+          # Offline: with the backend stopped, the window reopens from the
+          # local store. Same URLs, as the store's name comes from them.
+          pkill -f apps/zbugs-swift/server/server.ts
+          for _ in $(seq 1 30); do
+            curl -s -o /dev/null http://127.0.0.1:4848/ || break
+            sleep 1
+          done
+          ZBUGS_E2E=offline ./target/debug/zbugs-gpui
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: zbugs-gpui-screenshots
+          path: ${{ runner.temp }}/screenshots
+      - name: Server logs
+        if: failure()
+        run: |
+          cat "$RUNNER_TEMP/zbugs.log" || true
+          cat "$RUNNER_TEMP/pg.log" || true
