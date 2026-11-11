@@ -1,5 +1,6 @@
 use crate::map::{self, OrderedMap};
 use std::fmt;
+use std::sync::Arc;
 
 /// A JSON value, the data model Zero syncs and stores.
 ///
@@ -155,9 +156,13 @@ impl<T: Into<Value>> From<Option<T>> for Value {
 /// Setting a key that is already there replaces its value and keeps its
 /// place, as assigning to an existing property does in JS. Two objects are
 /// equal when they have the same keys with equal values, in any order.
-#[derive(Clone, Default, PartialEq)]
+///
+/// Cloning an object is cheap: copies share their entries until one of them
+/// is changed, so a row read from the replica, its diff, and the IVM sources
+/// is one set of entries.
+#[derive(Clone, Default)]
 pub struct Object {
-    entries: OrderedMap<Value>,
+    entries: Arc<OrderedMap<Value>>,
     /// How many of the keys, at the front, are integer-like.
     integer_keys: usize,
 }
@@ -169,7 +174,7 @@ impl Object {
 
     pub fn with_capacity(capacity: usize) -> Self {
         Object {
-            entries: OrderedMap::with_capacity(capacity),
+            entries: Arc::new(OrderedMap::with_capacity(capacity)),
             integer_keys: 0,
         }
     }
@@ -187,7 +192,10 @@ impl Object {
     }
 
     pub fn get_mut(&mut self, key: &str) -> Option<&mut Value> {
-        self.entries.get_mut(key)
+        if !self.entries.contains_key(key) {
+            return None;
+        }
+        Arc::make_mut(&mut self.entries).get_mut(key)
     }
 
     pub fn contains_key(&self, key: &str) -> bool {
@@ -198,27 +206,30 @@ impl Object {
     /// after the others, or among the integer-like keys in numeric order.
     pub fn insert(&mut self, key: impl Into<String>, value: Value) -> Option<Value> {
         let key = key.into();
-        if let Some(slot) = self.entries.get_mut(&key) {
+        let entries = Arc::make_mut(&mut self.entries);
+        if let Some(slot) = entries.get_mut(&key) {
             return Some(std::mem::replace(slot, value));
         }
         if let Some(n) = array_index(&key) {
-            let at = self
-                .entries
+            let at = entries
                 .keys()
                 .take(self.integer_keys)
                 .position(|k| array_index(k).is_some_and(|m| m > n));
             let at = at.unwrap_or(self.integer_keys);
-            self.entries.insert_at(at, key, value);
+            entries.insert_at(at, key, value);
             self.integer_keys += 1;
         } else {
-            self.entries.insert(key, value);
+            entries.insert(key, value);
         }
         None
     }
 
     /// Removes `key`, returning its value. The other keys keep their order.
     pub fn remove(&mut self, key: &str) -> Option<Value> {
-        let (i, value) = self.entries.remove_full(key)?;
+        if !self.entries.contains_key(key) {
+            return None;
+        }
+        let (i, value) = Arc::make_mut(&mut self.entries).remove_full(key)?;
         if i < self.integer_keys {
             self.integer_keys -= 1;
         }
@@ -244,6 +255,12 @@ impl Object {
     }
 }
 
+impl PartialEq for Object {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.entries, &other.entries) || self.entries == other.entries
+    }
+}
+
 impl fmt::Debug for Object {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_map().entries(self.entries.iter()).finish()
@@ -262,7 +279,7 @@ impl IntoIterator for Object {
     type Item = (String, Value);
     type IntoIter = map::IntoIter<Value>;
     fn into_iter(self) -> Self::IntoIter {
-        self.entries.into_iter()
+        Arc::unwrap_or_clone(self.entries).into_iter()
     }
 }
 
@@ -333,5 +350,32 @@ mod tests {
             keys,
             ["0", "3", "10", "4294967294", "b", "a", "01", "4294967295"]
         );
+    }
+
+    #[test]
+    fn a_change_to_a_copy_leaves_the_original() {
+        let mut original = Object::new();
+        original.insert("a", Value::from(1.0));
+        original.insert("b", Value::from(2.0));
+        let changes: [fn(&mut Object); 4] = [
+            |o| _ = o.insert("a", Value::from(9.0)),
+            |o| _ = o.insert("1", Value::Null),
+            |o| _ = o.remove("b"),
+            |o| *o.get_mut("a").unwrap() = Value::Null,
+        ];
+        for change in changes {
+            let mut copy = original.clone();
+            change(&mut copy);
+            assert_ne!(copy, original);
+            let keys: Vec<_> = original.iter().collect();
+            assert_eq!(
+                keys,
+                [
+                    (&"a".to_owned(), &Value::from(1.0)),
+                    (&"b".to_owned(), &Value::from(2.0))
+                ]
+            );
+            assert_eq!(original.integer_keys, 0);
+        }
     }
 }
