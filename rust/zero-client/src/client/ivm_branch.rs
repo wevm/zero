@@ -22,6 +22,26 @@ use std::sync::Arc;
 /// aggregate table, shared by a branch and its forks.
 type Optimism = Rc<RefCell<HashMap<String, HashMap<String, OptimisticAggregate>>>>;
 
+/// The layout of each table's rows: a row of each, whose keys the next rows
+/// with the same columns in the same order share (`Object::share_keys`), so
+/// a table's rows keep one list of column names. A row with other columns,
+/// or in another order, becomes the layout.
+#[derive(Default)]
+pub(crate) struct Layouts(RefCell<HashMap<String, Object>>);
+
+impl Layouts {
+    /// Puts `row`, a row of `table`, in the table's layout.
+    pub(crate) fn share(&self, table: &str, row: &mut Object) {
+        let mut layouts = self.0.borrow_mut();
+        match layouts.get(table) {
+            Some(layout) if row.share_keys(layout) => {}
+            _ => {
+                layouts.insert(table.to_owned(), row.clone());
+            }
+        }
+    }
+}
+
 /// The IVM sources of one state of the replica. The main branch feeds the
 /// app's views; mutators run against forks, so a rebase can replay them
 /// over a newer server snapshot without touching the views.
@@ -29,6 +49,8 @@ pub(crate) struct IvmBranch {
     sources: RefCell<HashMap<String, Option<Rc<MemorySource>>>>,
     schema: Arc<Schema>,
     optimism: Optimism,
+    /// Shared by a branch and its forks.
+    pub(crate) layouts: Rc<Layouts>,
     /// Only the main branch registers optimistic aggregates and releases
     /// aggregate sources (see `aggregate_source`).
     is_fork: bool,
@@ -48,6 +70,7 @@ impl IvmBranch {
             sources: RefCell::default(),
             schema,
             optimism: Rc::default(),
+            layouts: Rc::default(),
             is_fork: false,
         })
     }
@@ -158,6 +181,7 @@ impl IvmBranch {
             sources: RefCell::new(sources),
             schema: self.schema.clone(),
             optimism: self.optimism.clone(),
+            layouts: self.layouts.clone(),
             is_fork: true,
         })
     }
