@@ -5,6 +5,7 @@
 //! it; their handlers change it and ask the sync thread for other rows or
 //! to run a mutator.
 
+mod images;
 mod login;
 mod settings;
 mod sync;
@@ -129,6 +130,8 @@ pub enum Sheet {
 
 pub struct App {
     ui: rune::AppHandle<App>,
+    /// Avatars, and images in issues and comments.
+    pub images: images::Images,
     sync: SyncThread<App, Context>,
     /// The settings in use, and those saved (without the environment's).
     settings: Settings,
@@ -241,6 +244,7 @@ impl App {
             |s, state| s.connection = state,
         );
         let mut app = App {
+            images: images::Images::new(ui.clone()),
             ui,
             sync,
             auth: None,
@@ -1107,6 +1111,8 @@ fn main() {
     let spec = AppSpec {
         min_size: Some((900.0, 520.0)),
         on_key: Some(on_key),
+        setup: Some(|s, waker| s.images.start(waker)),
+        poll: Some(|s, _, _| s.images.poll()),
         ..AppSpec::new("Zero Bugs", (1180.0, 760.0), placeholder, view::view)
     };
     let app = rune::App::new(spec);

@@ -25,6 +25,8 @@ tokio = { version = "1", default-features = false, features = [
   "sync",
   "time",
 ] }
+# Fetches avatars and the images in issues and comments, over rustls.
+ureq = { version = "3", default-features = false, features = ["rustls"] }
 # The login token goes in the Keychain, the Credential Manager, or the
 # Secret Service (over zbus, so Linux needs no libdbus).
 keyring = "4"

@@ -14,6 +14,7 @@ use zbugs_model::schema::{Comment, Issue, IssueVisibility, Label, User};
 use zero_client::client::ConnectionState;
 use zero_client::ivm::ResultType;
 
+use crate::images;
 use crate::{App, Confirm, NOTIFICATIONS, Picker, REACTIONS, Sheet, Status, VISIBILITY};
 
 /// The rows' estimated height, for the virtual list.
@@ -45,6 +46,22 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
         .child(detail(s, k, &mut layer).pt(cx.titlebar_inset()));
     sheets(s, k, &mut layer);
     rune_kit::root(body, layer)
+}
+
+/// Markdown with its images, as the web app shows them.
+fn markdown(s: &App, body: &str) -> Markdown {
+    let images = s.images.clone();
+    Markdown::new(body.to_owned()).images(move |src| images.get(src))
+}
+
+/// The user's avatar, a circle `size` across; blank until it arrives.
+fn avatar(s: &App, user: Option<&User>, size: f32, k: &Kit) -> El {
+    let circle = el().w(size).h(size).radius(size / 2.0).a11y_hidden();
+    let image = user.and_then(|u| s.images.get(&images::avatar_url(&u.avatar)));
+    match image {
+        Some(image) => circle.pixels(image.pixels()),
+        None => circle.fill(k.c.layer_03),
+    }
 }
 
 fn label_text(k: &Kit, t: impl Into<String>) -> El {
@@ -169,15 +186,21 @@ fn sidebar(s: &App, k: &Kit, layer: &mut Vec<El>) -> El {
         Some(auth) => col()
             .gap(6.0)
             .child(
-                text(format!(
-                    "{} ({})",
-                    s.me.as_ref()
-                        .map_or(auth.sub.as_str(), |u| u.login.as_str()),
-                    auth.role.as_str()
-                ))
-                .font(k.ty.small)
-                .color(k.c.text_muted)
-                .truncate(),
+                row()
+                    .gap(8.0)
+                    .center_y()
+                    .child(avatar(s, s.me.as_ref(), 22.0, k))
+                    .child(
+                        text(format!(
+                            "{} ({})",
+                            s.me.as_ref()
+                                .map_or(auth.sub.as_str(), |u| u.login.as_str()),
+                            auth.role.as_str()
+                        ))
+                        .font(k.ty.small)
+                        .color(k.c.text_muted)
+                        .truncate(),
+                    ),
             )
             .child(
                 Button::new("Log Out")
@@ -626,9 +649,12 @@ fn detail(s: &App, k: &Kit, layer: &mut Vec<El>) -> El {
     );
     if let Some(u) = &issue.creator {
         status = status.child(
-            text(format!("by {}", u.login))
-                .font(k.ty.small)
-                .color(k.c.text_muted),
+            row()
+                .gap(6.0)
+                .center_y()
+                .child(text("by").font(k.ty.small).color(k.c.text_muted))
+                .child(avatar(s, Some(u), 18.0, k))
+                .child(text(u.login.clone()).font(k.ty.small).color(k.c.text_muted)),
         );
     }
     let editable = s.can_edit(&issue.creator_id);
@@ -738,11 +764,7 @@ fn detail(s: &App, k: &Kit, layer: &mut Vec<El>) -> El {
         column = column.child(r);
     }
     if !issue.description.is_empty() {
-        column = column.child(
-            Markdown::new(issue.description.clone())
-                .build(k)
-                .key("description"),
-        );
+        column = column.child(markdown(s, &issue.description).build(k).key("description"));
     }
     column = column
         .child(reactions(s, &issue.id, k, layer))
@@ -784,6 +806,7 @@ fn comment(s: &App, c: &Comment, k: &Kit, layer: &mut Vec<El>) -> El {
         .w_full()
         .gap(8.0)
         .center_y()
+        .child(avatar(s, c.creator.as_deref(), 20.0, k))
         .child(
             text(c.creator.as_ref().map_or("…", |u| u.login.as_str()))
                 .font(k.ty.small_medium)
@@ -821,7 +844,7 @@ fn comment(s: &App, c: &Comment, k: &Kit, layer: &mut Vec<El>) -> El {
         .child(header);
     if !editing {
         return frame
-            .child(Markdown::new(c.body.clone()).build(k))
+            .child(markdown(s, &c.body).build(k))
             .child(reactions(s, &c.id, k, layer));
     }
     frame
