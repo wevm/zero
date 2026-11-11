@@ -14,12 +14,16 @@ use rune::{AppSpec, TextEdit, Tx};
 use settings::Settings;
 use sync::{Session, Setup, SyncThread};
 use zbugs_model::args::{
-    AddCommentArgs, CommentsPageArgs, CreateIssueArgs, IdField, IssueDetailArgs, IssueKey,
-    IssueListCountArgs, IssueListV2Args, ListContextParams, PageDirection, ProjectArgs,
-    SortDirection, SortField, UpdateIssueArgs,
+    AddCommentArgs, AddEmojiArgs, CommentsPageArgs, CreateIssueArgs, IdField, IssueDetailArgs,
+    IssueKey, IssueLabelArgs, IssueListCountArgs, IssueListV2Args, LabelsOrderByNameArgs,
+    ListContextParams, PageDirection, ProjectArgs, RemoveLabelArgs, SortDirection, SortField,
+    UpdateIssueArgs, UsersFilter, UsersForProjectArgs,
 };
-use zbugs_model::mutators::{ADD_COMMENT, CREATE_ISSUE, UPDATE_ISSUE};
-use zbugs_model::schema::{Comment, Issue, Project, User};
+use zbugs_model::mutators::{
+    ADD_COMMENT, ADD_EMOJI_TO_COMMENT, ADD_EMOJI_TO_ISSUE, ADD_LABEL, CREATE_ISSUE, REMOVE_EMOJI,
+    REMOVE_LABEL, UPDATE_ISSUE,
+};
+use zbugs_model::schema::{Comment, Emoji, Issue, Label, Project, User};
 use zbugs_model::{AuthData, Context, MutateRequest, ZERO_PROJECT_NAME, make_id, queries};
 use zero_client::client::ConnectionState;
 use zero_client::ivm::ResultType;
@@ -68,6 +72,28 @@ pub struct Filter {
     pub assigned_to_me: bool,
 }
 
+/// The reactions the emoji menu offers, with their CLDR names, which the
+/// web app shows on hover.
+pub const REACTIONS: [(&str, &str); 8] = [
+    ("👍", "thumbs up"),
+    ("👎", "thumbs down"),
+    ("😄", "grinning face with smiling eyes"),
+    ("🎉", "party popper"),
+    ("😕", "confused face"),
+    ("❤️", "red heart"),
+    ("🚀", "rocket"),
+    ("👀", "eyes"),
+];
+
+/// A dropdown on the issue page.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Picker {
+    Assignee,
+    Labels,
+    /// Reactions to the issue (its ID) or to one of its comments.
+    Emoji(String),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sheet {
     NewIssue,
@@ -104,6 +130,12 @@ pub struct App {
     pub comments: Vec<Comment>,
     comments_limit: i64,
     pub comment: TextEdit,
+    pub picker: Option<Picker>,
+    /// Who an issue can be assigned to, by login.
+    pub crew: Vec<User>,
+    /// The labels of the selected issue's project, by name.
+    pub labels: Vec<Label>,
+    labels_project: Option<String>,
 
     pub sheet: Option<Sheet>,
     pub title_edit: TextEdit,
@@ -177,6 +209,10 @@ impl App {
             comments: Vec::new(),
             comments_limit: COMMENTS_PAGE,
             comment: TextEdit::new(""),
+            picker: None,
+            crew: Vec::new(),
+            labels: Vec::new(),
+            labels_project: None,
             sheet: None,
             title_edit: TextEdit::new(""),
             description_edit: TextEdit::new(""),
@@ -225,6 +261,21 @@ impl App {
             "projects",
             |auth: &Context| queries::ALL_PROJECTS.call(&(), auth.as_ref()),
             |s, rows, _, _| s.projects = rows,
+        );
+        let crew = UsersForProjectArgs {
+            disabled: false,
+            login: None,
+            project_name: ZERO_PROJECT_NAME.to_owned(),
+            filter: Some(UsersFilter::Crew),
+        };
+        self.sync.watch(
+            "crew",
+            move |auth: &Context| queries::USERS_FOR_PROJECT.call(&crew, auth.as_ref()),
+            |s, mut rows: Vec<User>, _, _| {
+                // As the web app's picker sorts them.
+                rows.sort_by(|a, b| a.login.cmp(&b.login));
+                s.crew = rows;
+            },
         );
         if let Some(sub) = self.auth.as_ref().map(|a| a.sub.clone()) {
             self.sync.watch(
@@ -301,6 +352,7 @@ impl App {
         }
         self.detail = None;
         self.detail_result = ResultType::Unknown;
+        self.picker = None;
         self.comments.clear();
         self.comments_limit = COMMENTS_PAGE;
         self.comment = TextEdit::new("");
@@ -319,12 +371,32 @@ impl App {
         self.sync.watch(
             "detail",
             move |auth: &Context| queries::ISSUE_DETAIL.call(&args, auth.as_ref()),
-            |s, issue, result_type, _| {
+            |s, issue: Option<Issue>, result_type, _| {
+                if let Some(project) = issue.as_ref().and_then(|i| i.project.as_ref()) {
+                    s.watch_labels(&project.name);
+                }
                 s.detail = issue;
                 s.detail_result = result_type;
             },
         );
         self.watch_comments(id);
+    }
+
+    /// The labels the label menu offers: the selected issue's project's.
+    fn watch_labels(&mut self, project_name: &str) {
+        if self.labels_project.as_deref() == Some(project_name) {
+            return;
+        }
+        self.labels_project = Some(project_name.to_owned());
+        let args = LabelsOrderByNameArgs {
+            project_name: project_name.to_owned(),
+            order_by: SortDirection::Asc,
+        };
+        self.sync.watch(
+            "labels",
+            move |auth: &Context| queries::LABELS_ORDER_BY_NAME.call(&args, auth.as_ref()),
+            |s, rows, _, _| s.labels = rows,
+        );
     }
 
     fn watch_comments(&mut self, id: &str) {
@@ -376,6 +448,93 @@ impl App {
             ..UpdateIssueArgs::new(issue.id.clone(), now_ms())
         };
         self.mutate(UPDATE_ISSUE.with(&args));
+    }
+
+    /// Opens `picker`, or closes it when it's open.
+    pub fn toggle_picker(&mut self, picker: Picker) {
+        self.picker = (self.picker.as_ref() != Some(&picker)).then_some(picker);
+    }
+
+    /// Assigns the issue to the crew member with `login`, or to nobody.
+    pub fn assign(&mut self, login: &str) {
+        self.picker = None;
+        let Some(issue) = &self.detail else { return };
+        let assignee = self.crew.iter().find(|u| u.login == login);
+        let args = UpdateIssueArgs {
+            assignee_id: Some(assignee.map(|u| u.id.clone())),
+            ..UpdateIssueArgs::new(issue.id.clone(), now_ms())
+        };
+        self.mutate(UPDATE_ISSUE.with(&args));
+    }
+
+    /// Adds the label to the issue, or removes it. The menu stays open for
+    /// the next one.
+    pub fn toggle_label(&mut self, label_id: &str) {
+        let Some(issue) = &self.detail else { return };
+        let has = issue.labels.iter().flatten().any(|l| l.id == label_id);
+        let (issue_id, label_id) = (issue.id.clone(), label_id.to_owned());
+        self.mutate(if has {
+            REMOVE_LABEL.with(&RemoveLabelArgs { issue_id, label_id })
+        } else {
+            ADD_LABEL.with(&IssueLabelArgs {
+                issue_id,
+                label_id,
+                project_id: None,
+            })
+        });
+    }
+
+    /// The reactions to the issue or to one of its comments.
+    pub fn reactions(&self, subject_id: &str) -> &[Emoji] {
+        let emoji = match &self.detail {
+            Some(issue) if issue.id == subject_id => issue.emoji.as_deref(),
+            _ => self
+                .comments
+                .iter()
+                .find(|c| c.id == subject_id)
+                .and_then(|c| c.emoji.as_deref()),
+        };
+        emoji.unwrap_or_default()
+    }
+
+    /// Adds the user's `value` reaction to the subject, or takes it back.
+    pub fn toggle_reaction(&mut self, subject_id: &str, value: &str) {
+        self.picker = None;
+        let Some(sub) = self.auth.as_ref().map(|a| a.sub.clone()) else {
+            return;
+        };
+        let mine = self
+            .reactions(subject_id)
+            .iter()
+            .find(|e| e.creator_id == sub && e.value == value);
+        if let Some(e) = mine {
+            let id = e.id.clone();
+            self.mutate(REMOVE_EMOJI.with(&id));
+            return;
+        }
+        let annotation = REACTIONS
+            .iter()
+            .find(|(v, _)| *v == value)
+            .map(|(_, a)| *a)
+            .or_else(|| {
+                let e = self.reactions(subject_id).iter().find(|e| e.value == value);
+                e.map(|e| e.annotation.as_str())
+            })
+            .unwrap_or_default()
+            .to_owned();
+        let on_issue = self.detail.as_ref().is_some_and(|i| i.id == subject_id);
+        let args = AddEmojiArgs {
+            id: make_id(),
+            unicode: value.to_owned(),
+            annotation,
+            subject_id: subject_id.to_owned(),
+            created: now_ms(),
+        };
+        self.mutate(if on_issue {
+            ADD_EMOJI_TO_ISSUE.with(&args)
+        } else {
+            ADD_EMOJI_TO_COMMENT.with(&args)
+        });
     }
 
     pub fn add_comment(&mut self) {

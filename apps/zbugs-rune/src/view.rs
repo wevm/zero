@@ -6,14 +6,15 @@ use std::sync::OnceLock;
 
 use rune::{Cx, El, GrowthSpec, ScrollSpec, col, el, row, text};
 use rune_kit::{
-    Button, ButtonVariant, Checkbox, Dialog, Kit, Markdown, SegmentedControl, TextArea, TextInput,
+    Button, ButtonVariant, Checkbox, Dialog, Kit, Markdown, Menu, MenuItem, SegmentedControl,
+    Select, TextArea, TextInput,
 };
 use zbugs_model::args::{SortDirection, SortField};
 use zbugs_model::schema::{Comment, Issue, IssueVisibility, Label};
 use zero_client::client::ConnectionState;
 use zero_client::ivm::ResultType;
 
-use crate::{App, Sheet, Status};
+use crate::{App, Picker, REACTIONS, Sheet, Status};
 
 /// The rows' estimated height, for the virtual list.
 const ROW: f32 = 58.0;
@@ -41,7 +42,7 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
         .child(divider())
         .child(issue_list(s, k).pt(cx.titlebar_inset()))
         .child(divider())
-        .child(detail(s, k).pt(cx.titlebar_inset()));
+        .child(detail(s, k, &mut layer).pt(cx.titlebar_inset()));
     sheets(s, k, &mut layer);
     rune_kit::root(body, layer)
 }
@@ -399,7 +400,7 @@ fn ago(ms: f64) -> String {
     }
 }
 
-fn detail(s: &App, k: &Kit) -> El {
+fn detail(s: &App, k: &Kit, layer: &mut Vec<El>) -> El {
     let frame = col().key("detail").grow(1.0).h_full().min_w(0.0);
     let Some(issue) = &s.detail else {
         let message = match (&s.selected, s.detail_result) {
@@ -427,7 +428,8 @@ fn detail(s: &App, k: &Kit) -> El {
                 .color(k.c.text_muted),
         );
     }
-    if let Some(u) = &issue.assignee {
+    let editable = s.can_edit(issue);
+    if let (Some(u), false) = (&issue.assignee, editable) {
         status = status.child(
             text(format!("· assigned to {}", u.login))
                 .font(k.ty.small)
@@ -480,8 +482,18 @@ fn detail(s: &App, k: &Kit) -> El {
                 .selectable(true),
         )
         .child(status);
-    if let Some(l) = issue.labels.as_deref().filter(|l| !l.is_empty()) {
-        column = column.child(labels(l, k));
+    if editable {
+        column = column.child(assignee_picker(s, issue, k, layer));
+    }
+    let issue_labels = issue.labels.as_deref().unwrap_or_default();
+    // Labels are the crew's, as on the web.
+    let label_menu = editable && s.auth.as_ref().is_some_and(|a| a.is_crew());
+    if !issue_labels.is_empty() || label_menu {
+        let mut r = row().gap(8.0).center_y().child(labels(issue_labels, k));
+        if label_menu {
+            r = r.child(label_picker(s, issue_labels, k, layer));
+        }
+        column = column.child(r);
     }
     if !issue.description.is_empty() {
         column = column.child(
@@ -491,6 +503,7 @@ fn detail(s: &App, k: &Kit) -> El {
         );
     }
     column = column
+        .child(reactions(s, &issue.id, k, layer))
         .child(el().w_full().h(1.0).fill(k.c.border_muted))
         .child(
             text(match s.comments.len() {
@@ -502,7 +515,7 @@ fn detail(s: &App, k: &Kit) -> El {
             .color(k.c.text_faint),
         );
     for c in &s.comments {
-        column = column.child(comment(c, k));
+        column = column.child(comment(s, c, k, layer));
     }
     column = column.child(composer(s, k));
     frame.child(
@@ -523,7 +536,7 @@ fn detail(s: &App, k: &Kit) -> El {
     )
 }
 
-fn comment(c: &Comment, k: &Kit) -> El {
+fn comment(s: &App, c: &Comment, k: &Kit, layer: &mut Vec<El>) -> El {
     col()
         .key(c.id.clone())
         .w_full()
@@ -542,6 +555,135 @@ fn comment(c: &Comment, k: &Kit) -> El {
                 .child(text(ago(c.created)).font(k.ty.small).color(k.c.text_faint)),
         )
         .child(Markdown::new(c.body.clone()).build(k))
+        .child(reactions(s, &c.id, k, layer))
+}
+
+/// Who the issue is assigned to, for those who can change it.
+fn assignee_picker(s: &App, issue: &Issue, k: &Kit, layer: &mut Vec<El>) -> El {
+    const NOBODY: &str = "Nobody";
+    let mut options = vec![NOBODY];
+    options.extend(s.crew.iter().map(|u| u.login.as_str()));
+    let current = issue.assignee.as_ref().map_or(NOBODY, |u| u.login.as_str());
+    row()
+        .gap(8.0)
+        .center_y()
+        .child(label_text(k, "Assignee"))
+        .child(
+            Select::new("assignee", &options)
+                .width(200.0)
+                .current(Some(current))
+                .open(s.picker == Some(Picker::Assignee))
+                .on_toggle(|s: &mut App| s.toggle_picker(Picker::Assignee))
+                .on_close(|s: &mut App| s.picker = None)
+                .on_choose(|s: &mut App, login: &str, _| s.assign(login))
+                .build(k, layer),
+        )
+}
+
+/// The project's labels, checked when the issue has them.
+fn label_picker(s: &App, issue_labels: &[Label], k: &Kit, layer: &mut Vec<El>) -> El {
+    let open = s.picker == Some(Picker::Labels);
+    let mut menu = Menu::new("labels")
+        .trigger(
+            Button::new("Labels…")
+                .variant(ButtonVariant::Ghost)
+                .expanded(open)
+                .on_press(|s: &mut App| s.toggle_picker(Picker::Labels))
+                .build(k),
+        )
+        .min_width(200.0)
+        .open(open)
+        .on_close(|s: &mut App| s.picker = None);
+    for l in &s.labels {
+        let id = l.id.clone();
+        menu = menu.item(
+            MenuItem::new(l.name.clone())
+                .checked(issue_labels.iter().any(|x| x.id == l.id))
+                .on_select(move |s: &mut App| s.toggle_label(&id)),
+        );
+    }
+    menu.build(k, layer)
+}
+
+/// The reactions to an issue or a comment, one pill per emoji with its
+/// count, and a menu to add one. Pressing a pill adds or takes back the
+/// user's own.
+fn reactions(s: &App, subject_id: &str, k: &Kit, layer: &mut Vec<El>) -> El {
+    let me = s.auth.as_ref().map(|a| a.sub.as_str());
+    // In the order each emoji first came.
+    let mut groups: Vec<(&str, usize, bool)> = Vec::new();
+    for e in s.reactions(subject_id) {
+        let mine = Some(e.creator_id.as_str()) == me;
+        match groups.iter_mut().find(|g| g.0 == e.value) {
+            Some(g) => {
+                g.1 += 1;
+                g.2 |= mine;
+            }
+            None => groups.push((&e.value, 1, mine)),
+        }
+    }
+    let mut r = row()
+        .key(format!("reactions-{subject_id}"))
+        .gap(6.0)
+        .center_y();
+    for (value, count, mine) in groups {
+        let (subject, v) = (subject_id.to_owned(), value.to_owned());
+        let mut pill = row()
+            .key(format!("reaction-{value}"))
+            .role("button")
+            .label(format!("{value} {count}"))
+            .gap(4.0)
+            .px(8.0)
+            .py(2.0)
+            .radius(12.0)
+            .center_y()
+            .border(
+                1.0,
+                if mine {
+                    k.c.border_focus
+                } else {
+                    k.c.border_muted
+                },
+            )
+            .child(text(value.to_owned()).font(k.ty.ui))
+            .child(
+                text(count.to_string())
+                    .font(k.ty.small_medium)
+                    .color(k.c.text_muted),
+            );
+        if mine {
+            pill = pill.fill(k.c.layer_02);
+        }
+        if me.is_some() {
+            pill = pill.on_press(move |s: &mut App| s.toggle_reaction(&subject, &v));
+        }
+        r = r.child(pill);
+    }
+    if me.is_none() {
+        return r;
+    }
+    let picker = Picker::Emoji(subject_id.to_owned());
+    let open = s.picker.as_ref() == Some(&picker);
+    let mut menu = Menu::new(format!("add-reaction-{subject_id}"))
+        .trigger(
+            Button::new("+ 🙂")
+                .variant(ButtonVariant::Ghost)
+                .expanded(open)
+                .on_press(move |s: &mut App| s.toggle_picker(picker.clone()))
+                .build(k)
+                .key("add-reaction"),
+        )
+        .min_width(280.0)
+        .open(open)
+        .on_close(|s: &mut App| s.picker = None);
+    for (value, name) in REACTIONS {
+        let subject = subject_id.to_owned();
+        menu = menu.item(
+            MenuItem::new(format!("{value}  {name}"))
+                .on_select(move |s: &mut App| s.toggle_reaction(&subject, value)),
+        );
+    }
+    r.child(menu.build(k, layer))
 }
 
 fn composer(s: &App, k: &Kit) -> El {

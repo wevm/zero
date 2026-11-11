@@ -13,8 +13,11 @@ framework. macOS first; Linux and Windows are next.
   read as the generated row types, through Rune's `AppHandle::update`.
 - `src/view.rs` has the screens, with `rune-kit`'s controls: the filters,
   the issue list (virtual rows, paged as it scrolls), the issue with its
-  Markdown and comments, and sheets to create and edit an issue, log in,
-  and set the servers.
+  Markdown, comments, and reactions, its assignee and labels, and sheets
+  to create and edit an issue, log in, and set the servers.
+- `src/login.rs` logs in through GitHub in the browser: the API server
+  redirects back to a listener the app opens on 127.0.0.1 for that one
+  login (a loopback redirect, RFC 8252 §7.3).
 - `src/settings.rs` keeps the servers, the token, and the selected issue in
   `~/Library/Application Support/zbugs-rune/settings.json` (mode 0600); the
   replica is SQLite, beside it in `replica/`.
@@ -41,7 +44,8 @@ cd apps/zbugs-rune
 cargo run --release
 ```
 
-Log in from the sidebar with the printed token; Servers… points the app
+Log in from the sidebar with the printed token, or through GitHub when the
+API server has a GitHub app (zbugs' own backend); Servers… points the app
 elsewhere. `ZBUGS_TOKEN`, `ZBUGS_CACHE_URL`, and `ZBUGS_API_URL` in the
 environment override the saved ones for that launch, and `ZBUGS_RUNE_DIR`
 moves the settings and the replica.
