@@ -328,6 +328,8 @@ pub struct ZbugsApp {
     error: Option<String>,
     /// Marks the selected issue viewed after a second (`mark_viewed`).
     view_timer: Option<(String, Task<()>)>,
+    /// The window's title, as zbugs' page titles (`window_title`).
+    title: String,
     seen: Option<Seen>,
     _unsubscribe: Box<dyn Fn()>,
     _tasks: Vec<Task<()>>,
@@ -446,6 +448,7 @@ impl ZbugsApp {
             connection,
             error: None,
             view_timer: None,
+            title: String::new(),
             seen: None,
             _unsubscribe: unsubscribe,
             _tasks: vec![watch],
@@ -1282,6 +1285,32 @@ impl ZbugsApp {
             comments: comments.iter().map(|c| c.id.clone()).collect(),
             emoji: emoji.iter().map(|e| e.id.clone()).collect(),
         });
+    }
+
+    /// "Zero Bugs → " and the shown issue's title, or the list's, as
+    /// zbugs' issue and list pages title themselves.
+    fn window_title(&self) -> String {
+        let issue = self
+            .detail
+            .as_ref()
+            .and_then(|d| d.snapshot().value.clone().flatten());
+        let f = &self.filters;
+        let shown = match issue {
+            Some(issue) => issue.title,
+            None if f.creator.is_some()
+                || f.assignee.is_some()
+                || !f.labels.is_empty()
+                || !f.text.is_empty() =>
+            {
+                "Filtered Issues".into()
+            }
+            None => match f.status {
+                Status::Open => "Open Issues".into(),
+                Status::Closed => "Closed Issues".into(),
+                Status::All => "All Issues".into(),
+            },
+        };
+        format!("Zero Bugs → {shown}")
     }
 
     /// Marks the selected issue viewed once it has been on screen for a
@@ -2645,6 +2674,11 @@ impl Render for ZbugsApp {
         }
         self.keep_scroll_anchor();
         self.notice_activity(window, cx);
+        let title = self.window_title();
+        if title != self.title {
+            window.set_window_title(&title);
+            self.title = title;
+        }
         h_flex()
             .size_full()
             .bg(cx.theme().background)
