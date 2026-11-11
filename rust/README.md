@@ -1,9 +1,10 @@
 # Zero for Rust
 
-A native Rust client for Zero, in progress. See [DESIGN.md](DESIGN.md) for
-the plan, the milestones, and the documented differences from JS, and
-[BENCHMARKS.md](BENCHMARKS.md) for how it compares with the JS and Swift
-clients.
+A native Rust client for Zero, at parity with the JS client. See
+[PARITY.md](PARITY.md) for what each part of the JS API is called here and
+the documented differences, [DESIGN.md](DESIGN.md) for the plan and the
+milestones, and [BENCHMARKS.md](BENCHMARKS.md) for how it compares with the
+JS and Swift clients.
 
 ```sh
 cd rust
@@ -91,3 +92,11 @@ let close = Mutator::new("issue.close", |tx, args, _ctx: &()| {
 ```
 
 See [DESIGN.md](DESIGN.md#codegen-m3).
+
+## Compatibility
+
+| zero-client | Sync protocol | `zero-cache`   | Conformance vectors from |
+| ----------- | ------------- | -------------- | ------------------------ |
+| 0.1         | 57            | 1.12+ (canary) | Zero 1.12 (`main`)       |
+
+A Zero 1.11 `zero-cache` rejects protocol 57 with `VersionNotSupported`.
