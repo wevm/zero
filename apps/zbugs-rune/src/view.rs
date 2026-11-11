@@ -10,7 +10,7 @@ use rune_kit::{
     SegmentedControl, Select, TextArea, TextInput,
 };
 use zbugs_model::args::{SortDirection, SortField};
-use zbugs_model::schema::{Comment, Issue, IssueVisibility, Label, User};
+use zbugs_model::schema::{Comment, Emoji, Issue, IssueVisibility, Label, User};
 use zero_client::client::ConnectionState;
 use zero_client::ivm::ResultType;
 
@@ -448,6 +448,15 @@ fn issue_list(s: &App, k: &Kit) -> El {
                 .on_action(|s: &mut App, _| {
                     s.search = rune::TextEdit::new("");
                     s.list_changed();
+                })
+                // Escape clears the search, as on the web.
+                .on_key(|s: &mut App, event, _| {
+                    if !matches!(event.key, rune::Key::Escape) || s.search.text.is_empty() {
+                        return false;
+                    }
+                    s.search = rune::TextEdit::new("");
+                    s.list_changed();
+                    true
                 })
                 .build(k)
                 .key("search"),
@@ -959,27 +968,26 @@ fn label_picker(s: &App, issue_labels: &[Label], k: &Kit, layer: &mut Vec<El>) -
 fn reactions(s: &App, subject_id: &str, k: &Kit, layer: &mut Vec<El>) -> El {
     let me = s.auth.as_ref().map(|a| a.sub.as_str());
     // In the order each emoji first came.
-    let mut groups: Vec<(&str, usize, bool)> = Vec::new();
+    let mut groups: Vec<(&str, Vec<&Emoji>)> = Vec::new();
     for e in s.reactions(subject_id) {
-        let mine = Some(e.creator_id.as_str()) == me;
         match groups.iter_mut().find(|g| g.0 == e.value) {
-            Some(g) => {
-                g.1 += 1;
-                g.2 |= mine;
-            }
-            None => groups.push((&e.value, 1, mine)),
+            Some(g) => g.1.push(e),
+            None => groups.push((&e.value, vec![e])),
         }
     }
     let mut r = row()
         .key(format!("reactions-{subject_id}"))
         .gap(6.0)
         .center_y();
-    for (value, count, mine) in groups {
+    for (value, emoji) in groups {
+        let count = emoji.len();
+        let mine = emoji.iter().any(|e| Some(e.creator_id.as_str()) == me);
         let (subject, v) = (subject_id.to_owned(), value.to_owned());
         let mut pill = row()
             .key(format!("reaction-{value}"))
             .role("button")
             .label(format!("{value} {count}"))
+            .help(reacted(&emoji, me))
             .gap(4.0)
             .px(8.0)
             .py(2.0)
@@ -1027,6 +1035,33 @@ fn reactions(s: &App, subject_id: &str, k: &Kit, layer: &mut Vec<El>) -> El {
         popover = popover.child(emoji_picker(s, subject_id, k));
     }
     r.child(popover.build(k, layer))
+}
+
+/// Who reacted with an emoji, as the web app's tooltip says it: "you, arv
+/// and holden reacted with rocket", naming ten and counting the rest past
+/// eleven.
+fn reacted(emoji: &[&Emoji], me: Option<&str>) -> String {
+    let names: Vec<&str> = emoji
+        .iter()
+        .filter_map(|e| {
+            let creator = e.creator.as_ref()?;
+            Some(if Some(e.creator_id.as_str()) == me {
+                "you"
+            } else {
+                creator.login.as_str()
+            })
+        })
+        .collect();
+    let names = match names.as_slice() {
+        [] => String::new(),
+        [one] => (*one).to_owned(),
+        _ if names.len() > 11 => {
+            format!("{} and {} others", names[..10].join(", "), names.len() - 10)
+        }
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    };
+    let annotation = emoji.first().map_or("", |e| e.annotation.as_str());
+    format!("{names} reacted with {annotation}")
 }
 
 /// The skin tones the picker offers, as the web picker's: the default,
@@ -1133,6 +1168,7 @@ fn composer(s: &App, k: &Kit) -> El {
                 .auto_grow(3, 8)
                 .disabled(s.auth.is_none())
                 .on_edit(|s: &mut App| &mut s.comment)
+                .on_submit(|s: &mut App, _| s.add_comment())
                 .build(k)
                 .w_full()
                 .key("comment-field"),
@@ -1193,6 +1229,7 @@ fn sheets(s: &App, k: &Kit, layer: &mut Vec<El>) {
                     .placeholder("Description (Markdown)")
                     .auto_grow(6, 14)
                     .on_edit(|s: &mut App| &mut s.description_edit)
+                    .on_submit(|s: &mut App, _| s.save_issue())
                     .build(k)
                     .key("description-field"),
             ];

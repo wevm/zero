@@ -1104,7 +1104,8 @@ fn apply_issues(s: &mut App, rows: Vec<Issue>, result_type: ResultType, tx: &mut
     }
 }
 
-/// Keys no control took: j and k step through the list, as on the web.
+/// Keys no control took: j and k step through the list, and / starts a
+/// search, as on the web.
 fn on_key(s: &mut App, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
     if s.sheet.is_some()
         || s.confirm.is_some()
@@ -1117,6 +1118,7 @@ fn on_key(s: &mut App, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
     match &event.key {
         rune::Key::Text(t) if t == "j" => s.step(1, tx),
         rune::Key::Text(t) if t == "k" => s.step(-1, tx),
+        rune::Key::Text(t) if t == "/" => s.search.focused = true,
         _ => return false,
     }
     true
