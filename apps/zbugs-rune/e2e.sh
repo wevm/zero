@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# zbugs-rune against zbugs' backend, end to end: the app runs headless on
+# the wall clock (`--realtime`), opens an open issue, comments on it, reacts
+# to it, labels it, and closes it, pressing its controls as a person would.
+# Then Postgres must have each change, and the app's last frame must show
+# the comment.
+#
+# It needs the backend running (apps/zbugs-swift/server/server.ts), its
+# crew token in ZBUGS_TOKEN, `psql` on the PATH, and ZBUGS_DB_URL for the
+# backend's database, such as postgresql://postgres@127.0.0.1:5432/zbugs_swift.
+# Run it from apps/zbugs-rune.
+set -euo pipefail
+
+: "${ZBUGS_TOKEN:?the backend's crew token}"
+: "${ZBUGS_DB_URL:?the backend's database URL}"
+sql() { psql "$ZBUGS_DB_URL" -v ON_ERROR_STOP=1 -qAtc "$1"; }
+
+out=$(mktemp -d)
+# A short one without comments, so its controls all fit in the window: taps
+# land on what shows.
+issue=$(sql "select id from issue i where open and not exists
+  (select 1 from comment c where c.\"issueID\" = i.id)
+  order by length(description), \"shortID\" limit 1")
+# The label menu lists the issue's project's labels by name, bytewise.
+first_label=$(sql "select l.name from label l join issue i on i.\"projectID\" = l.\"projectID\"
+  where i.id = '$issue' order by l.name collate \"C\" limit 1")
+sql "delete from \"issueLabel\" where \"issueID\" = '$issue'"
+sql "delete from emoji where \"subjectID\" = '$issue'"
+body="e2e-$(date +%s)"
+
+# The app opens at the selected issue and has its rows within 12 seconds,
+# with time to spare on a slow runner. Typing takes a frame or two a
+# character, hence the short comment and the wait before sending it.
+mkdir -p "$out/app"
+printf '{"selection":"%s"}' "$issue" > "$out/app/settings.json"
+cat > "$out/script.json" <<EOF
+{"events": [
+  {"t": 12.0, "type": "tap", "key": "comment-field"},
+  {"t": 12.2, "type": "type", "text": "$body"},
+  {"t": 14.0, "type": "tap", "key": "comment-button"},
+  {"t": 15.0, "type": "tap", "key": "add-reaction-$issue-trigger"},
+  {"t": 15.5, "type": "tap", "key": "add-reaction-$issue-item6"},
+  {"t": 16.5, "type": "tap", "key": "labels-trigger"},
+  {"t": 17.0, "type": "tap", "key": "labels-item0"},
+  {"t": 17.5, "type": "key", "name": "Escape"},
+  {"t": 18.0, "type": "tap", "key": "toggle-open"}
+]}
+EOF
+
+ZBUGS_RUNE_DIR="$out/app" cargo run --locked --quiet -- --realtime \
+  --script "$out/script.json" --at 22 --size 1180x760 \
+  --tree "$out/tree.json" --snap "${ZBUGS_E2E_SNAP:-$out/e2e.png}"
+
+fail=0
+check() {
+  if [ "$2" = "$3" ]; then echo "ok: $1"; else echo "FAILED: $1: got '$2', want '$3'"; fail=1; fi
+}
+check "the comment" \
+  "$(sql "select count(*) from comment where \"issueID\" = '$issue' and body = '$body'")" 1
+check "the reaction" \
+  "$(sql "select string_agg(value, ',') from emoji where \"subjectID\" = '$issue'")" "🚀"
+check "the label" "$(sql "select string_agg(l.name, ',') from \"issueLabel\" il
+  join label l on l.id = il.\"labelID\" where il.\"issueID\" = '$issue'")" "$first_label"
+check "closed" "$(sql "select open from issue where id = '$issue'")" f
+check "the comment on screen" "$(grep -q "$body" "$out/tree.json" && echo yes)" yes
+exit $fail
