@@ -34,6 +34,22 @@ impl DecodeError {
         self.path.insert(0, key.into());
         self
     }
+
+    /// The message valita gives (`getMessage` in
+    /// `packages/shared/src/valita.ts`), which names a missing property
+    /// before the path to the object that lacks it.
+    pub fn valita_message(&self) -> String {
+        if self.message == "Missing property"
+            && let Some((key, rest)) = self.path.split_last()
+        {
+            return if rest.is_empty() {
+                format!("Missing property {key}")
+            } else {
+                format!("Missing property {key} at {}", rest.join("."))
+            };
+        }
+        self.to_string()
+    }
 }
 
 impl fmt::Display for DecodeError {

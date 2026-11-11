@@ -77,7 +77,7 @@ fn ast(c: &Value, _: &Value) -> Result<Outcome, String> {
 /// The JS test schema (`zql/src/query/test/test-schemas.ts`) the
 /// `ast-features` and `sweep-query-hash` generators use, as JS wrote it
 /// into `ivm.json`'s shared fixtures.
-fn test_schema() -> Result<&'static Arc<Schema>, String> {
+pub(crate) fn test_schema() -> Result<&'static Arc<Schema>, String> {
     static SCHEMA: OnceLock<Result<Arc<Schema>, String>> = OnceLock::new();
     SCHEMA
         .get_or_init(|| {

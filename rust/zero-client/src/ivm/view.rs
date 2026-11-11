@@ -539,6 +539,11 @@ impl ArrayView {
         &self.format
     }
 
+    /// The schema of the rows.
+    pub fn schema(&self) -> &SourceSchema {
+        &self.schema
+    }
+
     /// The current rows.
     pub fn data(&self) -> ViewValue {
         let state = self.state.borrow();

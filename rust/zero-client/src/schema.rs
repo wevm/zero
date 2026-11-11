@@ -261,6 +261,21 @@ impl NameMapper {
         self.column_name(table, src)
     }
 
+    /// The mapped name of table `src`, or `None` for a table the schema
+    /// doesn't have.
+    pub fn table_name_if_known(&self, src: &str) -> Option<String> {
+        self.tables.get(src).map(|t| t.table_name.clone())
+    }
+
+    /// Renames the known columns of `table`; others keep their names.
+    pub fn columns(&self, table: &str, columns: &[String]) -> MapResult<Vec<String>> {
+        let dest = self.table(table)?;
+        Ok(columns
+            .iter()
+            .map(|c| dest.columns.get(c).unwrap_or(c).clone())
+            .collect())
+    }
+
     fn column_names(&self, table: &str, columns: &[String]) -> MapResult<Vec<String>> {
         columns.iter().map(|c| self.column_name(table, c)).collect()
     }

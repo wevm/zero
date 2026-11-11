@@ -16,6 +16,7 @@
 
 pub mod ast;
 pub mod builder;
+pub mod client;
 pub mod compare;
 pub mod decode;
 pub mod format;
@@ -30,5 +31,6 @@ pub mod query;
 pub mod schema;
 pub mod sort;
 pub mod strings;
+pub mod testing;
 pub mod ttl;
 pub mod typed;

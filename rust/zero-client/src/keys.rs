@@ -161,6 +161,19 @@ pub fn is_keyed_aggregate_table_name(name: &str) -> bool {
         || (is_aggregate_table_name(name) && name.ends_with(":#group"))
 }
 
+/// `sourceNameFromKey`: the source of an `e/` or `a/` row key. An `a/` key
+/// leaves out the `aggregate:` of the table's name.
+pub fn source_name(key: &str) -> String {
+    // Both prefixes are two characters long.
+    let rest = &key[ENTITIES_PREFIX.len()..];
+    let name = rest.split('/').next().unwrap_or(rest);
+    if key.starts_with(AGGREGATES_PREFIX) {
+        format!("{AGGREGATE_TABLE_PREFIX}{name}")
+    } else {
+        name.to_owned()
+    }
+}
+
 pub fn desired_queries_key(client_id: &str, hash: &str) -> String {
     format!("{DESIRED_QUERIES_PREFIX}{client_id}/{hash}")
 }

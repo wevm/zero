@@ -181,6 +181,35 @@ impl MemorySource {
         self.primary_index().data
     }
 
+    /// A source with the same rows that shares them until either is written
+    /// (`fork`). It has no connections and only the primary index.
+    pub fn fork(&self) -> Rc<Self> {
+        let fork = MemorySource::new(self.table.clone());
+        let data = self.data();
+        fork.state
+            .borrow_mut()
+            .indexes
+            .get_mut(&fork.primary_index_key)
+            .expect("primary index")
+            .data = data;
+        fork
+    }
+
+    /// Whether a pipeline reads the source.
+    pub fn has_connections(&self) -> bool {
+        !self.state.borrow().connections.is_empty()
+    }
+
+    /// Whether the source has a row with `row`'s primary key.
+    pub fn contains(&self, row: &Row) -> bool {
+        self.primary_index().search(row).is_ok()
+    }
+
+    /// Whether `a` and `b` have the same primary key.
+    pub fn same_key(&self, a: &Row, b: &Row) -> bool {
+        (self.primary_index().compare)(a, b) == Ordering::Equal
+    }
+
     /// For tests: the keys of the indexes built so far.
     pub fn index_keys(&self) -> Vec<String> {
         self.state.borrow().index_order.clone()

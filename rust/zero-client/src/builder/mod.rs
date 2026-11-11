@@ -1,8 +1,8 @@
 //! Builds IVM pipelines from ASTs (`packages/zql/src/builder/builder.ts`).
 //!
-//! This is the compute mode, where every operator runs on the client's own
-//! rows. The synced client's mode, which reads aggregates and groups from
-//! the rows the server streams for them, comes with the client engine.
+//! Two modes: compute, where every operator runs on the client's own rows,
+//! and the synced client's, which reads aggregates and groups from the rows
+//! the server streams for them (`aggregates_from_source`).
 
 mod pushdown;
 
@@ -14,9 +14,10 @@ use crate::ast::{
 };
 use crate::ivm::*;
 use crate::json::number;
-use crate::keys::AGGREGATE_TABLE_PREFIX;
+use crate::keys::{AGGREGATE_TABLE_PREFIX, aggregate_columns as cols};
 use crate::map::OrderedMap;
 use crate::schema::Column;
+use crate::strings;
 use std::collections::HashSet;
 use std::rc::{Rc, Weak};
 
@@ -40,6 +41,51 @@ pub trait BuilderDelegate {
     fn map_ast(&self, ast: &Ast) -> Ast {
         ast.clone()
     }
+    /// The synced client's mode: an aggregate or a grouping is read from the
+    /// synthetic source the server streams its rows to, rather than computed
+    /// from rows the client doesn't have.
+    fn aggregates_from_source(&self) -> bool {
+        false
+    }
+    /// The source of a relationship aggregate's or a grouped query's rows,
+    /// which the name doesn't describe, made with this shape if it's new.
+    /// `optimistic` lets the client move it when it writes a child row.
+    fn get_aggregate_source(
+        &self,
+        name: &str,
+        _columns: OrderedMap<Column>,
+        _primary_key: Vec<String>,
+        _optimistic: Option<OptimisticAggregate>,
+    ) -> Option<Rc<dyn Source>> {
+        self.get_source(name)
+    }
+    /// The names a synced aggregate row has `table`'s `columns` under: the
+    /// server's, which it computed them with.
+    fn aggregate_key_columns(&self, _table: &str, columns: &[String]) -> Vec<String> {
+        columns.to_vec()
+    }
+}
+
+/// `OptimisticAggregate`: how a mutation of a child row moves a synced
+/// aggregate's row. Registered when a query with a relationship aggregate or
+/// a grouping materializes.
+#[derive(Clone)]
+pub struct OptimisticAggregate {
+    /// The aggregate's table, `aggregate:<queryID>:<alias>` or `…:#group`.
+    pub aggregate_table: String,
+    /// The child table whose mutations move it.
+    pub table: String,
+    /// The correlation (or group) columns of a child row, by client name.
+    pub child_field: Vec<String>,
+    /// The same columns as the aggregate rows name them: server names.
+    pub key_field: Vec<String>,
+    pub aggregate: AggregateSpec,
+    /// The aggregate's `where` as a row predicate; `None` when every child
+    /// row counts.
+    pub predicate: Option<RowPredicate>,
+    /// The rows are a grouped query's groups, keyed by `_0_key`: a group is
+    /// added with its first row and removed with its last.
+    pub grouped: bool,
 }
 
 /// The limit put on EXISTS subqueries: one row is enough, a few more keep a
@@ -62,6 +108,11 @@ pub fn build_pipeline(
     let mut ast = delegate.map_ast(ast);
     if ast.group_by.is_some() && ast.aggregate.as_ref().is_some_and(|a| a.distinct.is_some()) {
         return err("a count of distinct values per group is not supported yet");
+    }
+    // A synced client reads a top-level aggregate's or a grouping's rows
+    // from their source: the table isn't synced, and ordering doesn't apply.
+    if (ast.aggregate.is_some() || ast.group_by.is_some()) && delegate.aggregates_from_source() {
+        return Builder { delegate, query_id }.build(&ast, "", None, false);
     }
     if ast.group_by.is_some() || ast.aggregate.as_ref().is_some_and(|a| a.distinct.is_some()) {
         // A grouping's input is sorted by its columns first, so the rows of
@@ -120,6 +171,28 @@ impl Builder<'_> {
     ) -> Result<Rc<dyn Input>> {
         if ast_in.group_by.is_some() && !name.is_empty() {
             return err("groupBy is only supported at the top level");
+        }
+        if ast_in.aggregate.is_some()
+            && ast_in.group_by.is_none()
+            && self.delegate.aggregates_from_source()
+        {
+            // The one precomputed row, from `aggregate:<queryID>`.
+            let table = top_level_aggregate_table_name(self.query_id);
+            let Some(source) = self.delegate.get_source(&table) else {
+                return err(format!("Aggregate source not found: {table}"));
+            };
+            let conn = source.connect(
+                Some(vec![OrderPart {
+                    field: cols::KEY.to_owned(),
+                    direction: Direction::Asc,
+                }]),
+                None,
+                None,
+            )?;
+            return Ok(conn);
+        }
+        if ast_in.group_by.is_some() && self.delegate.aggregates_from_source() {
+            return self.group_from_source(ast_in);
         }
         let Some(source) = self.delegate.get_source(&ast_in.table) else {
             return err(format!("Source not found: {}", ast_in.table));
@@ -519,6 +592,127 @@ impl Builder<'_> {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// The source mode of an aggregate relationship: reads the rows the
+    /// server computed from `aggregate:<queryID>:<alias path>`, provisioned
+    /// with the child's column types, and registers how a child row's
+    /// mutation moves them when the row alone can tell.
+    fn aggregate_from_source(
+        &self,
+        sq: &CorrelatedSubquery,
+        aggregate: &AggregateSpec,
+        child_key: &[String],
+        name: &str,
+    ) -> Result<Rc<dyn Input>> {
+        let table = aggregate_table_name(self.query_id, sq, name);
+        let Some(child_source) = self.delegate.get_source(&sq.subquery.table) else {
+            return err(format!("Source not found: {}", sq.subquery.table));
+        };
+        // A junction aggregate's field is on the destination, one hop past
+        // the junction rows that hold the key.
+        let mut input_columns = child_source.table_schema().columns.clone();
+        let junction = sq.subquery.related.as_ref().and_then(|r| r.first());
+        if let Some(dest) = junction {
+            let Some(dest_source) = self.delegate.get_source(&dest.subquery.table) else {
+                return err(format!("Source not found: {}", dest.subquery.table));
+            };
+            for (k, v) in dest_source.table_schema().columns.iter() {
+                input_columns.insert(k.clone(), v.clone());
+            }
+        }
+        let (client_columns, _) =
+            aggregate_source_schema(&input_columns, &sq.correlation.child_field, aggregate)?;
+        let columns = rename_columns(&client_columns, &sq.correlation.child_field, child_key);
+        // Optimism only for count, sum and avg of a direct, unbounded
+        // relationship whose `where` a child row alone decides: otherwise
+        // the server's value stands until it sends another.
+        let mut optimistic = None;
+        if junction.is_none()
+            && is_invertible(aggregate.fn_)
+            && sq.subquery.limit.is_none()
+            && sq.subquery.start.is_none()
+            && let Some(predicate) = per_row_predicate(sq.subquery.where_.as_ref())?
+        {
+            optimistic = Some(OptimisticAggregate {
+                aggregate_table: table.clone(),
+                table: sq.subquery.table.clone(),
+                child_field: sq.correlation.child_field.clone(),
+                key_field: child_key.to_vec(),
+                aggregate: aggregate.clone(),
+                predicate,
+                grouped: false,
+            });
+        }
+        let Some(source) =
+            self.delegate
+                .get_aggregate_source(&table, columns, child_key.to_vec(), optimistic)
+        else {
+            return err(format!("Aggregate source not found: {table}"));
+        };
+        let sort = child_key
+            .iter()
+            .map(|k| OrderPart {
+                field: k.clone(),
+                direction: Direction::Asc,
+            })
+            .collect();
+        Ok(source.connect(Some(sort), None, None)?)
+    }
+
+    /// `groupFromSource`: a synced client reads a grouped query's rows from
+    /// the source the server streams them to.
+    fn group_from_source(&self, ast: &Ast) -> Result<Rc<dyn Input>> {
+        let Some(table_source) = self.delegate.get_source(&ast.table) else {
+            return err(format!("Source not found: {}", ast.table));
+        };
+        let reducer = reducer_of(ast);
+        // The group columns and the aggregated field, under the server's
+        // names.
+        let mut columns = ast.group_by.clone().unwrap_or_default();
+        if let Some(field) = &reducer.field
+            && !columns.contains(field)
+        {
+            columns.push(field.clone());
+        }
+        let names = self.delegate.aggregate_key_columns(&ast.table, &columns);
+        let input_name = |column: &str| -> String {
+            let i = columns
+                .iter()
+                .position(|c| c == column)
+                .expect("a group column");
+            names[i].clone()
+        };
+        let table_columns = &table_source.table_schema().columns;
+        let mut input_columns = OrderedMap::new();
+        for column in &columns {
+            if let Some(c) = table_columns.get(column) {
+                input_columns.insert(input_name(column), c.clone());
+            }
+        }
+        let mut server_aggregate = reducer.clone();
+        server_aggregate.field = server_aggregate.field.as_deref().map(input_name);
+        let ordering: Vec<OrderPart> = group_ordering(ast)
+            .into_iter()
+            .map(|p| OrderPart {
+                field: input_name(&p.field),
+                direction: p.direction,
+            })
+            .collect();
+        let (source_columns, primary_key, sort) =
+            group_source_schema(&input_columns, &ordering, &server_aggregate)?;
+        let table = group_table_name(self.query_id);
+        let optimistic = group_optimistic_delta(ast, &reducer, &table, &input_name)?;
+        let Some(source) = self.delegate.get_aggregate_source(
+            &table,
+            sorted_columns(&source_columns),
+            primary_key,
+            optimistic,
+        ) else {
+            return err(format!("Group source not found: {table}"));
+        };
+        Ok(source.connect(Some(sort), None, None)?)
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn apply_correlated_subquery(
         &self,
         sq: &CorrelatedSubquery,
@@ -539,6 +733,40 @@ impl Builder<'_> {
             .alias
             .clone()
             .expect("Subquery must have an alias");
+        if let Some(aggregate) = &sq.aggregate
+            && self.delegate.aggregates_from_source()
+        {
+            // The precomputed rows, one per parent, keyed by the correlation
+            // columns under the server's names.
+            if aggregate.distinct.is_some() {
+                return err("a count of distinct values is not supported in a relationship yet");
+            }
+            let child_key = self
+                .delegate
+                .aggregate_key_columns(&sq.subquery.table, &sq.correlation.child_field);
+            // The server builds its operator with these names and rejects a
+            // collision; so does the client.
+            for column in &child_key {
+                assert_not_synthetic_column(column)?;
+            }
+            let child = self.aggregate_from_source(sq, aggregate, &child_key, name)?;
+            return Ok(Join::new(JoinArgs {
+                parent: end,
+                child,
+                parent_key: sq.correlation.parent_field.clone(),
+                child_key,
+                relationship_name: alias,
+                hidden: sq.hidden.unwrap_or(false),
+                system: sq.system.unwrap_or(System::Client),
+                parent_partition_key: if from_condition {
+                    None
+                } else {
+                    parent_partition_key.map(<[String]>::to_vec)
+                },
+                bound_provider,
+                exists,
+            }));
+        }
         let mut child = self.build(
             &sq.subquery,
             &child_pipeline_name(name, sq),
@@ -822,18 +1050,88 @@ pub fn group_view_input(
     delegate: &dyn BuilderDelegate,
 ) -> Result<Rc<dyn Input>> {
     let view_names = delegate.map_ast(ast).group_by.unwrap_or_default();
+    let names = if delegate.aggregates_from_source() {
+        delegate.aggregate_key_columns(&ast.table, ast.group_by.as_deref().unwrap_or_default())
+    } else {
+        view_names.clone()
+    };
     let columns = view_names
         .into_iter()
-        .map(|n| ProjectedColumn {
-            out: n.clone(),
-            from: n,
-        })
+        .zip(names)
+        .map(|(out, from)| ProjectedColumn { out, from })
         .collect();
     Ok(GroupProjection::new(
         input,
         columns,
         ast.aggregate.as_ref().map(|a| a.fn_.as_str().to_owned()),
     )?)
+}
+
+/// `renameColumns`: `columns`, sorted by name, with each of `from` named as
+/// the same position of `to`.
+fn rename_columns(
+    columns: &OrderedMap<Column>,
+    from: &[String],
+    to: &[String],
+) -> OrderedMap<Column> {
+    let mut sorted: Vec<(&String, &Column)> = columns.iter().collect();
+    sorted.sort_by(|a, b| strings::utf16(a.0, b.0));
+    sorted
+        .into_iter()
+        .map(|(name, c)| {
+            let name = from
+                .iter()
+                .position(|f| f == name)
+                .map_or_else(|| name.clone(), |i| to[i].clone());
+            (name, c.clone())
+        })
+        .collect()
+}
+
+/// `columns` sorted by name, as Swift's dictionary of them is.
+fn sorted_columns(columns: &OrderedMap<Column>) -> OrderedMap<Column> {
+    rename_columns(columns, &[], &[])
+}
+
+/// A `where` compiled to a predicate on a row alone: `Some(None)` when there
+/// is none, `None` when it has a subquery, which a row alone can't judge.
+fn per_row_predicate(condition: Option<&Condition>) -> Result<Option<Option<RowPredicate>>> {
+    let Some(condition) = condition else {
+        return Ok(Some(None));
+    };
+    let (filters, removed) = transform_filters(Some(condition));
+    match filters {
+        Some(filters) if !removed => Ok(Some(Some(create_predicate(&filters)?))),
+        _ => Ok(None),
+    }
+}
+
+/// `groupOptimisticDelta`: how a mutation of the table's rows moves a
+/// grouped query's rows, for count, sum and avg when the `where` can be
+/// judged from a row alone.
+fn group_optimistic_delta(
+    ast: &Ast,
+    reducer: &AggregateSpec,
+    table: &str,
+    input_name: &dyn Fn(&str) -> String,
+) -> Result<Option<OptimisticAggregate>> {
+    if !is_invertible(reducer.fn_) {
+        return Ok(None);
+    }
+    let Some(predicate) = per_row_predicate(ast.where_.as_ref())? else {
+        return Ok(None);
+    };
+    // In the group's order, which the server's GroupBy keys a row by.
+    let columns: Vec<String> = group_ordering(ast).into_iter().map(|p| p.field).collect();
+    Ok(Some(OptimisticAggregate {
+        aggregate_table: table.to_owned(),
+        table: ast.table.clone(),
+        key_field: columns.iter().map(|c| input_name(c)).collect(),
+        child_field: columns,
+        aggregate: reducer.clone(),
+        predicate,
+        grouped: true,
+    }))
 }
 
 /// JS's `encodeURIComponent`: every UTF-8 byte but the letters, digits and
