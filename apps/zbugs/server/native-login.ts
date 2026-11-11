@@ -58,3 +58,16 @@ function loopbackRedirect(redirect: string | undefined): URL | undefined {
   url.hash = '';
   return url;
 }
+
+/**
+ * Whether a request reached the API on the user's own machine, by the
+ * hostname Fastify reports. The API serves plain `http` there, so its GitHub
+ * callback and its cookie don't ask for `https`.
+ */
+export function isLocalHostname(hostname: string): boolean {
+  return (
+    hostname.includes('localhost') ||
+    hostname === '127.0.0.1' ||
+    hostname === '[::1]'
+  );
+}

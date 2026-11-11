@@ -20,7 +20,7 @@ import {getBearerToken} from '../../../packages/shared/src/headers.ts';
 import {must} from '../../../packages/shared/src/must.ts';
 import {dbProvider, sql} from '../server/db.ts';
 import {registerMachineRoutes} from '../server/machine-routes.ts';
-import {nativeAppRedirect} from '../server/native-login.ts';
+import {isLocalHostname, nativeAppRedirect} from '../server/native-login.ts';
 import {createServerMutators} from '../server/server-mutators.ts';
 import {jwtDataSchema, type JWTData} from '../shared/auth.ts';
 import {queries} from '../shared/queries.ts';
@@ -54,7 +54,7 @@ fastify.register(oauthPlugin, {
   },
   startRedirectPath: '/api/login/github',
   callbackUri: req =>
-    `${req.hostname.includes('localhost') ? 'http' : 'https'}://${req.hostname}${
+    `${isLocalHostname(req.hostname) ? 'http' : 'https'}://${req.hostname}${
       // oxlint-disable-next-line eqeqeq
       req.port != null ? ':' + req.port : ''
     }/api/login/github/callback${
@@ -130,7 +130,7 @@ fastify.get<{
     .cookie('jwt', jwt, {
       path: '/',
       expires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-      secure: !request.hostname.includes('localhost'),
+      secure: !isLocalHostname(request.hostname),
       sameSite: 'strict',
     })
     .redirect(
