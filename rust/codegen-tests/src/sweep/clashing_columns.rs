@@ -32,6 +32,8 @@ impl z::QueryElement for T {
 
 impl z::ZeroRow for T {
     const TABLE: &'static str = "t";
+    type Update = TUpdate;
+    type Key = TKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(3);
@@ -45,6 +47,53 @@ impl z::ZeroRow for T {
 impl z::OptionalQueryElement for T {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::t(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TUpdate {
+    pub id: String,
+    pub a_b_: Option<String>,
+    pub a_b: Option<String>,
+}
+
+impl TUpdate {
+    /// The primary key, with every other column left as it is.
+    pub fn new(id: String) -> Self {
+        TUpdate {
+            id,
+            a_b_: None,
+            a_b: None,
+        }
+    }
+}
+
+impl z::ColumnValues for TUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(3);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        if let Some(v) = &self.a_b_ {
+            row.insert("a-b", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = &self.a_b {
+            row.insert("a_b", z::ZeroValue::to_zero_value(v));
+        }
+        row
+    }
+}
+
+/// What `mutate::t(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TKey {
+    pub id: String,
+}
+
+impl z::ColumnValues for TKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
     }
 }
 
@@ -80,5 +129,13 @@ pub mod zql {
     /// The rows of `t`.
     pub fn t() -> super::z::Query<super::T> {
         super::z::Query::table(super::schema())
+    }
+}
+
+/// The CRUD operations of a mutator, one per table: `mutate::t(tx).insert(&row)`.
+pub mod mutate {
+    /// Inserts, upserts, updates, and deletes rows of `t`.
+    pub fn t(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::T> {
+        super::z::TypedTableMutator::new(tx)
     }
 }

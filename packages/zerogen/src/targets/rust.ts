@@ -1,8 +1,10 @@
 /**
  * Emits the Rust for a Zero schema, against `zero_client::typed`: a row
  * struct per table with a constant per column and relationship, the types
- * of its enumerations and typed JSON columns, the runtime schema, and a
- * `zql` module with a function per table that starts a query.
+ * of its enumerations and typed JSON columns, what an update and a delete of
+ * it take, the runtime schema, a `zql` module with a function per table
+ * that starts a query, and a `mutate` module with a function per table for
+ * a mutator's CRUD operations.
  *
  * Identifiers are ASCII: the names of the schema stay in strings, so a
  * column of any name works. A name that would clash once it is an
@@ -107,6 +109,8 @@ const reservedTypeNames = new Set([
   'FromIterator',
   'Column',
   'ColumnRef',
+  'ColumnUpdate',
+  'ColumnValues',
   'Condition',
   'Direction',
   'DistinctRow',
@@ -121,6 +125,8 @@ const reservedTypeNames = new Set([
   'RelationshipAggregates',
   'RowExpression',
   'Schema',
+  'Transaction',
+  'TypedTableMutator',
   'Value',
   'ViewEntry',
   'ViewValue',
@@ -300,6 +306,16 @@ class Emitter {
     return this.#named;
   }
 
+  /** `name`, else `name` with a number from 2: the first that is free. */
+  claimNumbered(name: string): string {
+    let out = name;
+    for (let i = 2; typeTaken(out, this.#names); i++) {
+      out = name + i;
+    }
+    this.#names.add(out);
+    return out;
+  }
+
   /** A free type name: the alias, else `path`, else that with a number. */
   #claim(preferred: string | undefined, path: string): string {
     const free = (name: string) => !typeTaken(name, this.#names);
@@ -400,6 +416,10 @@ export function generate(
     used.add(name);
     rowNames.set(t, name);
   }
+  // The functions of `zql` and `mutate`, one per table.
+  const fns = new Members().claimAll(
+    tableNames.map(t => ({name: t, id: snakeCase(t)})),
+  );
   const e = new Emitter(prefix, used);
 
   const out: string[] = [
@@ -413,7 +433,11 @@ export function generate(
     '',
   ];
 
-  const rowDecls: string[] = [];
+  const tables: {
+    t: string;
+    columns: Column[];
+    relationships: Rel[];
+  }[] = [];
   for (const t of tableNames) {
     const table = schema.tables[t];
     const row = rowNames.get(t)!;
@@ -466,6 +490,22 @@ export function generate(
       p.field = fields[i];
       p.constant = constants[i];
     }
+    tables.push({t, columns, relationships});
+  }
+
+  // What `update` and `delete` take, named after the row, once the
+  // columns' types have their names: a taken name gets a number from 2.
+  const updateNames = new Map<string, string>();
+  const keyNames = new Map<string, string>();
+  for (const t of tableNames) {
+    updateNames.set(t, e.claimNumbered(rowNames.get(t)! + 'Update'));
+    keyNames.set(t, e.claimNumbered(rowNames.get(t)! + 'Key'));
+  }
+
+  const rowDecls: string[] = [];
+  for (const {t, columns, relationships} of tables) {
+    const table = schema.tables[t];
+    const row = rowNames.get(t)!;
 
     const lines: string[] = [];
     const serverName = table.serverName
@@ -534,6 +574,8 @@ export function generate(
     lines.push('');
     lines.push(`impl z::ZeroRow for ${row} {`);
     lines.push(`    const TABLE: &'static str = ${str(t)};`);
+    lines.push(`    type Update = ${updateNames.get(t)!};`);
+    lines.push(`    type Key = ${keyNames.get(t)!};`);
     lines.push('');
     lines.push('    fn column_values(&self) -> z::Object {');
     lines.push(
@@ -549,6 +591,24 @@ export function generate(
     lines.push('}');
     lines.push('');
     lines.push(...optionalElement(row, 'optional_row'));
+    const keyColumns = table.primaryKey.map(k =>
+      columns.find(c => c.name === k)!,
+    );
+    const fn = ref(fns[tableNames.indexOf(t)]);
+    lines.push(
+      '',
+      ...columnsDecl(
+        updateNames.get(t)!,
+        `What \`mutate::${fn}(tx).update\` takes: the primary key, and the other columns to set. A column that is \`None\`, or \`ColumnUpdate::Unchanged\`, keeps its value.`,
+        columns.map(c => ({...c, key: keyColumns.includes(c)})),
+      ),
+      '',
+      ...columnsDecl(
+        keyNames.get(t)!,
+        `What \`mutate::${fn}(tx).delete\` takes: the primary key.`,
+        keyColumns.map(c => ({...c, key: true})),
+      ),
+    );
     rowDecls.push(lines.join('\n'));
   }
 
@@ -568,9 +628,6 @@ export function generate(
     `/// The queries of the schema, one per table: \`zql::${tableNames[0] ? ref(snakeCase(tableNames[0])) : 'table'}()\`.`,
   );
   out.push('pub mod zql {');
-  const fns = new Members().claimAll(
-    tableNames.map(t => ({name: t, id: snakeCase(t)})),
-  );
   for (const [i, t] of tableNames.entries()) {
     const row = rowNames.get(t)!;
     if (i > 0) out.push('');
@@ -581,7 +638,95 @@ export function generate(
   }
   out.push('}');
   out.push('');
+  out.push(
+    `/// The CRUD operations of a mutator, one per table: \`mutate::${tableNames[0] ? ref(fns[0]) : 'table'}(tx).insert(&row)\`.`,
+  );
+  out.push('pub mod mutate {');
+  for (const [i, t] of tableNames.entries()) {
+    const row = rowNames.get(t)!;
+    if (i > 0) out.push('');
+    out.push(
+      `    /// Inserts, upserts, updates, and deletes rows of \`${t}\`.`,
+    );
+    out.push(
+      `    pub fn ${ref(fns[i])}(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::${row}> {`,
+    );
+    out.push('        super::z::TypedTableMutator::new(tx)');
+    out.push('    }');
+  }
+  out.push('}');
+  out.push('');
   return out.join('\n');
+}
+
+/**
+ * A struct of some of a row's columns: the primary key's columns are
+ * required, and the others are left unless set. A column that can be null
+ * is a `ColumnUpdate`, so leaving it differs from setting it to null.
+ */
+function columnsDecl(
+  name: string,
+  doc: string,
+  columns: readonly (Column & {key: boolean})[],
+): string[] {
+  const nullable = (c: Column) => c.rustType.startsWith('Option<');
+  const type = (c: Column & {key: boolean}) =>
+    c.key
+      ? c.rustType
+      : nullable(c)
+        ? `z::ColumnUpdate<${c.rustType.slice('Option<'.length, -1)}>`
+        : `Option<${c.rustType}>`;
+  const keys = columns.filter(c => c.key);
+  const lines = [
+    `/// ${doc}`,
+    '#[derive(Clone, Debug, PartialEq)]',
+    `pub struct ${name} {`,
+  ];
+  for (const c of columns) {
+    lines.push(`    pub ${ref(c.field)}: ${type(c)},`);
+  }
+  lines.push('}');
+  if (keys.length < columns.length) {
+    lines.push('');
+    lines.push(`impl ${name} {`);
+    lines.push(
+      '    /// The primary key, with every other column left as it is.',
+    );
+    lines.push(
+      `    pub fn new(${keys.map(c => `${ref(c.field)}: ${c.rustType}`).join(', ')}) -> Self {`,
+    );
+    lines.push(`        ${name} {`);
+    for (const c of columns) {
+      lines.push(
+        c.key
+          ? `            ${ref(c.field)},`
+          : `            ${ref(c.field)}: ${nullable(c) ? 'z::ColumnUpdate::Unchanged' : 'None'},`,
+      );
+    }
+    lines.push('        }');
+    lines.push('    }');
+    lines.push('}');
+  }
+  lines.push('');
+  lines.push(`impl z::ColumnValues for ${name} {`);
+  lines.push('    fn column_values(&self) -> z::Object {');
+  lines.push(
+    `        let mut row = z::Object::with_capacity(${columns.length});`,
+  );
+  for (const c of columns) {
+    const f = `self.${ref(c.field)}`;
+    lines.push(
+      c.key
+        ? `        row.insert(${str(c.name)}, z::ZeroValue::to_zero_value(&${f}));`
+        : nullable(c)
+          ? `        if let Some(v) = ${f}.to_zero_value() {\n            row.insert(${str(c.name)}, v);\n        }`
+          : `        if let Some(v) = &${f} {\n            row.insert(${str(c.name)}, z::ZeroValue::to_zero_value(v));\n        }`,
+    );
+  }
+  lines.push('        row');
+  lines.push('    }');
+  lines.push('}');
+  return lines;
 }
 
 function optionalElement(type: string, read: string): string[] {

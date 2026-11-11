@@ -26,6 +26,8 @@ impl z::QueryElement for AB {
 
 impl z::ZeroRow for AB {
     const TABLE: &'static str = "a-b";
+    type Update = ABUpdate;
+    type Key = ABKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(1);
@@ -37,6 +39,34 @@ impl z::ZeroRow for AB {
 impl z::OptionalQueryElement for AB {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::a_b_(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ABUpdate {
+    pub id: String,
+}
+
+impl z::ColumnValues for ABUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
+    }
+}
+
+/// What `mutate::a_b_(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ABKey {
+    pub id: String,
+}
+
+impl z::ColumnValues for ABKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
     }
 }
 
@@ -60,6 +90,8 @@ impl z::QueryElement for ABRow {
 
 impl z::ZeroRow for ABRow {
     const TABLE: &'static str = "a_b";
+    type Update = ABRowUpdate;
+    type Key = ABRowKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(1);
@@ -71,6 +103,34 @@ impl z::ZeroRow for ABRow {
 impl z::OptionalQueryElement for ABRow {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::a_b(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ABRowUpdate {
+    pub id: String,
+}
+
+impl z::ColumnValues for ABRowUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
+    }
+}
+
+/// What `mutate::a_b(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ABRowKey {
+    pub id: String,
+}
+
+impl z::ColumnValues for ABRowKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
     }
 }
 
@@ -94,6 +154,8 @@ impl z::QueryElement for Init {
 
 impl z::ZeroRow for Init {
     const TABLE: &'static str = "init";
+    type Update = InitUpdate;
+    type Key = InitKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(1);
@@ -105,6 +167,34 @@ impl z::ZeroRow for Init {
 impl z::OptionalQueryElement for Init {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::init(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InitUpdate {
+    pub id: String,
+}
+
+impl z::ColumnValues for InitUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
+    }
+}
+
+/// What `mutate::init(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InitKey {
+    pub id: String,
+}
+
+impl z::ColumnValues for InitKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
     }
 }
 
@@ -166,5 +256,23 @@ pub mod zql {
     /// The rows of `init`.
     pub fn init() -> super::z::Query<super::Init> {
         super::z::Query::table(super::schema())
+    }
+}
+
+/// The CRUD operations of a mutator, one per table: `mutate::a_b_(tx).insert(&row)`.
+pub mod mutate {
+    /// Inserts, upserts, updates, and deletes rows of `a-b`.
+    pub fn a_b_(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::AB> {
+        super::z::TypedTableMutator::new(tx)
+    }
+
+    /// Inserts, upserts, updates, and deletes rows of `a_b`.
+    pub fn a_b(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::ABRow> {
+        super::z::TypedTableMutator::new(tx)
+    }
+
+    /// Inserts, upserts, updates, and deletes rows of `init`.
+    pub fn init(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::Init> {
+        super::z::TypedTableMutator::new(tx)
     }
 }

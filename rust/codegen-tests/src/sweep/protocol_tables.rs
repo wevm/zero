@@ -26,6 +26,8 @@ impl z::QueryElement for Sendable {
 
 impl z::ZeroRow for Sendable {
     const TABLE: &'static str = "sendable";
+    type Update = SendableUpdate;
+    type Key = SendableKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(1);
@@ -37,6 +39,34 @@ impl z::ZeroRow for Sendable {
 impl z::OptionalQueryElement for Sendable {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::sendable(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SendableUpdate {
+    pub id: String,
+}
+
+impl z::ColumnValues for SendableUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
+    }
+}
+
+/// What `mutate::sendable(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SendableKey {
+    pub id: String,
+}
+
+impl z::ColumnValues for SendableKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
     }
 }
 
@@ -60,6 +90,8 @@ impl z::QueryElement for Hashable {
 
 impl z::ZeroRow for Hashable {
     const TABLE: &'static str = "hashable";
+    type Update = HashableUpdate;
+    type Key = HashableKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(1);
@@ -71,6 +103,34 @@ impl z::ZeroRow for Hashable {
 impl z::OptionalQueryElement for Hashable {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::hashable(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HashableUpdate {
+    pub id: String,
+}
+
+impl z::ColumnValues for HashableUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
+    }
+}
+
+/// What `mutate::hashable(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HashableKey {
+    pub id: String,
+}
+
+impl z::ColumnValues for HashableKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
     }
 }
 
@@ -94,6 +154,8 @@ impl z::QueryElement for Codable {
 
 impl z::ZeroRow for Codable {
     const TABLE: &'static str = "codable";
+    type Update = CodableUpdate;
+    type Key = CodableKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(1);
@@ -105,6 +167,34 @@ impl z::ZeroRow for Codable {
 impl z::OptionalQueryElement for Codable {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::codable(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CodableUpdate {
+    pub id: String,
+}
+
+impl z::ColumnValues for CodableUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
+    }
+}
+
+/// What `mutate::codable(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CodableKey {
+    pub id: String,
+}
+
+impl z::ColumnValues for CodableKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
     }
 }
 
@@ -166,5 +256,23 @@ pub mod zql {
     /// The rows of `codable`.
     pub fn codable() -> super::z::Query<super::Codable> {
         super::z::Query::table(super::schema())
+    }
+}
+
+/// The CRUD operations of a mutator, one per table: `mutate::sendable(tx).insert(&row)`.
+pub mod mutate {
+    /// Inserts, upserts, updates, and deletes rows of `sendable`.
+    pub fn sendable(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::Sendable> {
+        super::z::TypedTableMutator::new(tx)
+    }
+
+    /// Inserts, upserts, updates, and deletes rows of `hashable`.
+    pub fn hashable(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::Hashable> {
+        super::z::TypedTableMutator::new(tx)
+    }
+
+    /// Inserts, upserts, updates, and deletes rows of `codable`.
+    pub fn codable(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::Codable> {
+        super::z::TypedTableMutator::new(tx)
     }
 }

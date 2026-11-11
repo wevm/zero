@@ -54,6 +54,8 @@ impl z::QueryElement for FxProject {
 
 impl z::ZeroRow for FxProject {
     const TABLE: &'static str = "project";
+    type Update = FxProjectUpdate;
+    type Key = FxProjectKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(7);
@@ -71,6 +73,73 @@ impl z::ZeroRow for FxProject {
 impl z::OptionalQueryElement for FxProject {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::project(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FxProjectUpdate {
+    pub id: String,
+    pub name: Option<String>,
+    pub default: Option<bool>,
+    pub status: Option<FxStatus>,
+    pub settings: Option<FxSettings>,
+    pub position: Option<i64>,
+    pub archived_status: z::ColumnUpdate<FxStatus>,
+}
+
+impl FxProjectUpdate {
+    /// The primary key, with every other column left as it is.
+    pub fn new(id: String) -> Self {
+        FxProjectUpdate {
+            id,
+            name: None,
+            default: None,
+            status: None,
+            settings: None,
+            position: None,
+            archived_status: z::ColumnUpdate::Unchanged,
+        }
+    }
+}
+
+impl z::ColumnValues for FxProjectUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(7);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        if let Some(v) = &self.name {
+            row.insert("name", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = &self.default {
+            row.insert("default", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = &self.status {
+            row.insert("status", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = &self.settings {
+            row.insert("settings", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = &self.position {
+            row.insert("position", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = self.archived_status.to_zero_value() {
+            row.insert("archivedStatus", v);
+        }
+        row
+    }
+}
+
+/// What `mutate::project(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FxProjectKey {
+    pub id: String,
+}
+
+impl z::ColumnValues for FxProjectKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
     }
 }
 
@@ -110,6 +179,8 @@ impl z::QueryElement for FxQuery {
 
 impl z::ZeroRow for FxQuery {
     const TABLE: &'static str = "query";
+    type Update = FxQueryUpdate;
+    type Key = FxQueryKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(4);
@@ -124,6 +195,58 @@ impl z::ZeroRow for FxQuery {
 impl z::OptionalQueryElement for FxQuery {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::query(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FxQueryUpdate {
+    pub id: String,
+    pub project_id: Option<String>,
+    pub text: Option<String>,
+    pub class: z::ColumnUpdate<String>,
+}
+
+impl FxQueryUpdate {
+    /// The primary key, with every other column left as it is.
+    pub fn new(id: String) -> Self {
+        FxQueryUpdate {
+            id,
+            project_id: None,
+            text: None,
+            class: z::ColumnUpdate::Unchanged,
+        }
+    }
+}
+
+impl z::ColumnValues for FxQueryUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(4);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        if let Some(v) = &self.project_id {
+            row.insert("projectID", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = &self.text {
+            row.insert("text", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = self.class.to_zero_value() {
+            row.insert("class", v);
+        }
+        row
+    }
+}
+
+/// What `mutate::query(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FxQueryKey {
+    pub id: String,
+}
+
+impl z::ColumnValues for FxQueryKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
     }
 }
 
@@ -153,6 +276,8 @@ impl z::QueryElement for FxMember {
 
 impl z::ZeroRow for FxMember {
     const TABLE: &'static str = "member";
+    type Update = FxMemberUpdate;
+    type Key = FxMemberKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(3);
@@ -166,6 +291,53 @@ impl z::ZeroRow for FxMember {
 impl z::OptionalQueryElement for FxMember {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::member(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FxMemberUpdate {
+    pub project_id: String,
+    pub user_id: String,
+    pub role: Option<FxMemberRole>,
+}
+
+impl FxMemberUpdate {
+    /// The primary key, with every other column left as it is.
+    pub fn new(project_id: String, user_id: String) -> Self {
+        FxMemberUpdate {
+            project_id,
+            user_id,
+            role: None,
+        }
+    }
+}
+
+impl z::ColumnValues for FxMemberUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(3);
+        row.insert("projectID", z::ZeroValue::to_zero_value(&self.project_id));
+        row.insert("userID", z::ZeroValue::to_zero_value(&self.user_id));
+        if let Some(v) = &self.role {
+            row.insert("role", z::ZeroValue::to_zero_value(v));
+        }
+        row
+    }
+}
+
+/// What `mutate::member(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FxMemberKey {
+    pub project_id: String,
+    pub user_id: String,
+}
+
+impl z::ColumnValues for FxMemberKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(2);
+        row.insert("projectID", z::ZeroValue::to_zero_value(&self.project_id));
+        row.insert("userID", z::ZeroValue::to_zero_value(&self.user_id));
+        row
     }
 }
 
@@ -195,6 +367,8 @@ impl z::QueryElement for FxPerson {
 
 impl z::ZeroRow for FxPerson {
     const TABLE: &'static str = "person";
+    type Update = FxPersonUpdate;
+    type Key = FxPersonKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(3);
@@ -208,6 +382,53 @@ impl z::ZeroRow for FxPerson {
 impl z::OptionalQueryElement for FxPerson {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::person(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FxPersonUpdate {
+    pub id: String,
+    pub name: Option<String>,
+    pub nickname: z::ColumnUpdate<String>,
+}
+
+impl FxPersonUpdate {
+    /// The primary key, with every other column left as it is.
+    pub fn new(id: String) -> Self {
+        FxPersonUpdate {
+            id,
+            name: None,
+            nickname: z::ColumnUpdate::Unchanged,
+        }
+    }
+}
+
+impl z::ColumnValues for FxPersonUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(3);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        if let Some(v) = &self.name {
+            row.insert("name", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = self.nickname.to_zero_value() {
+            row.insert("nickname", v);
+        }
+        row
+    }
+}
+
+/// What `mutate::person(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FxPersonKey {
+    pub id: String,
+}
+
+impl z::ColumnValues for FxPersonKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
     }
 }
 
@@ -586,5 +807,28 @@ pub mod zql {
     /// The rows of `person`.
     pub fn person() -> super::z::Query<super::FxPerson> {
         super::z::Query::table(super::schema())
+    }
+}
+
+/// The CRUD operations of a mutator, one per table: `mutate::project(tx).insert(&row)`.
+pub mod mutate {
+    /// Inserts, upserts, updates, and deletes rows of `project`.
+    pub fn project(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::FxProject> {
+        super::z::TypedTableMutator::new(tx)
+    }
+
+    /// Inserts, upserts, updates, and deletes rows of `query`.
+    pub fn query(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::FxQuery> {
+        super::z::TypedTableMutator::new(tx)
+    }
+
+    /// Inserts, upserts, updates, and deletes rows of `member`.
+    pub fn member(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::FxMember> {
+        super::z::TypedTableMutator::new(tx)
+    }
+
+    /// Inserts, upserts, updates, and deletes rows of `person`.
+    pub fn person(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::FxPerson> {
+        super::z::TypedTableMutator::new(tx)
     }
 }

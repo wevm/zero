@@ -44,6 +44,8 @@ impl z::QueryElement for T {
 
 impl z::ZeroRow for T {
     const TABLE: &'static str = "t";
+    type Update = TUpdate;
+    type Key = TKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(7);
@@ -61,6 +63,73 @@ impl z::ZeroRow for T {
 impl z::OptionalQueryElement for T {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::t(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TUpdate {
+    pub update: String,
+    pub key: String,
+    pub row: Option<String>,
+    pub value: z::ColumnUpdate<String>,
+    pub kind: z::ColumnUpdate<TKind>,
+    pub doc: z::ColumnUpdate<TDoc>,
+    pub tags: z::ColumnUpdate<Vec<String>>,
+}
+
+impl TUpdate {
+    /// The primary key, with every other column left as it is.
+    pub fn new(update: String, key: String) -> Self {
+        TUpdate {
+            update,
+            key,
+            row: None,
+            value: z::ColumnUpdate::Unchanged,
+            kind: z::ColumnUpdate::Unchanged,
+            doc: z::ColumnUpdate::Unchanged,
+            tags: z::ColumnUpdate::Unchanged,
+        }
+    }
+}
+
+impl z::ColumnValues for TUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(7);
+        row.insert("Update", z::ZeroValue::to_zero_value(&self.update));
+        row.insert("Key", z::ZeroValue::to_zero_value(&self.key));
+        if let Some(v) = &self.row {
+            row.insert("row", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = self.value.to_zero_value() {
+            row.insert("value", v);
+        }
+        if let Some(v) = self.kind.to_zero_value() {
+            row.insert("kind", v);
+        }
+        if let Some(v) = self.doc.to_zero_value() {
+            row.insert("doc", v);
+        }
+        if let Some(v) = self.tags.to_zero_value() {
+            row.insert("tags", v);
+        }
+        row
+    }
+}
+
+/// What `mutate::t(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TKey {
+    pub update: String,
+    pub key: String,
+}
+
+impl z::ColumnValues for TKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(2);
+        row.insert("Update", z::ZeroValue::to_zero_value(&self.update));
+        row.insert("Key", z::ZeroValue::to_zero_value(&self.key));
+        row
     }
 }
 
@@ -179,5 +248,13 @@ pub mod zql {
     /// The rows of `t`.
     pub fn t() -> super::z::Query<super::T> {
         super::z::Query::table(super::schema())
+    }
+}
+
+/// The CRUD operations of a mutator, one per table: `mutate::t(tx).insert(&row)`.
+pub mod mutate {
+    /// Inserts, upserts, updates, and deletes rows of `t`.
+    pub fn t(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::T> {
+        super::z::TypedTableMutator::new(tx)
     }
 }

@@ -26,6 +26,8 @@ impl z::QueryElement for FooBarRow {
 
 impl z::ZeroRow for FooBarRow {
     const TABLE: &'static str = "foo_bar_row";
+    type Update = FooBarRowUpdate;
+    type Key = FooBarRowKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(1);
@@ -37,6 +39,34 @@ impl z::ZeroRow for FooBarRow {
 impl z::OptionalQueryElement for FooBarRow {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::foo_bar_row(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FooBarRowUpdate {
+    pub id: String,
+}
+
+impl z::ColumnValues for FooBarRowUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
+    }
+}
+
+/// What `mutate::foo_bar_row(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FooBarRowKey {
+    pub id: String,
+}
+
+impl z::ColumnValues for FooBarRowKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
     }
 }
 
@@ -60,6 +90,8 @@ impl z::QueryElement for FooBar {
 
 impl z::ZeroRow for FooBar {
     const TABLE: &'static str = "foo_bar";
+    type Update = FooBarUpdate;
+    type Key = FooBarKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(1);
@@ -71,6 +103,34 @@ impl z::ZeroRow for FooBar {
 impl z::OptionalQueryElement for FooBar {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::foo_bar(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FooBarUpdate {
+    pub id: String,
+}
+
+impl z::ColumnValues for FooBarUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
+    }
+}
+
+/// What `mutate::foo_bar(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FooBarKey {
+    pub id: String,
+}
+
+impl z::ColumnValues for FooBarKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
     }
 }
 
@@ -94,6 +154,8 @@ impl z::QueryElement for FooBarRow2 {
 
 impl z::ZeroRow for FooBarRow2 {
     const TABLE: &'static str = "fooBar";
+    type Update = FooBarRow2Update;
+    type Key = FooBarRow2Key;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(1);
@@ -105,6 +167,34 @@ impl z::ZeroRow for FooBarRow2 {
 impl z::OptionalQueryElement for FooBarRow2 {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::foo_bar_(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FooBarRow2Update {
+    pub id: String,
+}
+
+impl z::ColumnValues for FooBarRow2Update {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
+    }
+}
+
+/// What `mutate::foo_bar_(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FooBarRow2Key {
+    pub id: String,
+}
+
+impl z::ColumnValues for FooBarRow2Key {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
     }
 }
 
@@ -166,5 +256,23 @@ pub mod zql {
     /// The rows of `fooBar`.
     pub fn foo_bar_() -> super::z::Query<super::FooBarRow2> {
         super::z::Query::table(super::schema())
+    }
+}
+
+/// The CRUD operations of a mutator, one per table: `mutate::foo_bar_row(tx).insert(&row)`.
+pub mod mutate {
+    /// Inserts, upserts, updates, and deletes rows of `foo_bar_row`.
+    pub fn foo_bar_row(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::FooBarRow> {
+        super::z::TypedTableMutator::new(tx)
+    }
+
+    /// Inserts, upserts, updates, and deletes rows of `foo_bar`.
+    pub fn foo_bar(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::FooBar> {
+        super::z::TypedTableMutator::new(tx)
+    }
+
+    /// Inserts, upserts, updates, and deletes rows of `fooBar`.
+    pub fn foo_bar_(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::FooBarRow2> {
+        super::z::TypedTableMutator::new(tx)
     }
 }

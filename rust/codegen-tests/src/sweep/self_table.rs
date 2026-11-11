@@ -26,6 +26,8 @@ impl z::QueryElement for SelfRow {
 
 impl z::ZeroRow for SelfRow {
     const TABLE: &'static str = "self";
+    type Update = SelfRowUpdate;
+    type Key = SelfRowKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(1);
@@ -37,6 +39,34 @@ impl z::ZeroRow for SelfRow {
 impl z::OptionalQueryElement for SelfRow {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::self_(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SelfRowUpdate {
+    pub id: String,
+}
+
+impl z::ColumnValues for SelfRowUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
+    }
+}
+
+/// What `mutate::self_(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SelfRowKey {
+    pub id: String,
+}
+
+impl z::ColumnValues for SelfRowKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
     }
 }
 
@@ -66,5 +96,13 @@ pub mod zql {
     /// The rows of `self`.
     pub fn self_() -> super::z::Query<super::SelfRow> {
         super::z::Query::table(super::schema())
+    }
+}
+
+/// The CRUD operations of a mutator, one per table: `mutate::self_(tx).insert(&row)`.
+pub mod mutate {
+    /// Inserts, upserts, updates, and deletes rows of `self`.
+    pub fn self_(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::SelfRow> {
+        super::z::TypedTableMutator::new(tx)
     }
 }

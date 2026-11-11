@@ -175,7 +175,17 @@ The generated file holds, against `zero_client::typed`:
 - an enum per `enumeration<…>()` and a struct per typed `json<…>()` object,
   shared when the TS type is one named type;
 - `schema()`, the runtime `Schema`, and `zql`, a function per table that
-  starts a typed `Query<Row>`.
+  starts a typed `Query<Row>`;
+- the typed CRUD of a mutator (M4), as Swift's `tx.mutate.<table>`:
+  `mutate`, a function per table that returns a `TypedTableMutator`
+  (`insert` and `upsert` take the row, `update` a `<Row>Update`, `delete` a
+  `<Row>Key`). `<Row>Update` has the primary key and an `Option` per other
+  column, or a `ColumnUpdate` (`Unchanged`, `Null`, `Set`) for one that can
+  be null, with `<Row>Update::new(key)` leaving every other column, so
+  `IssueUpdate { closed: Some(true), ..IssueUpdate::new(id) }`. Swift nests
+  `Update` and `Key` in the row; Rust can't, so they are named after the
+  row, after the schema's own types claim theirs (`TKey2` when an enum is
+  `TKey`).
 
 `typed::Query<R, T>` wraps `AnyQuery`: each method calls the `AnyQuery`
 method of the same name with the constant's name, so a typed query builds
@@ -207,11 +217,9 @@ queries build the untyped queries' ASTs, formats, hashes, and errors, and
 that views of them, hydrated from memory sources and pushed to, read as the
 generated rows.
 
-Not yet, with the milestones that need them: the typed mutation API
-(Swift's `Update` and `Key` structs and `tx.mutate.<table>`) comes with the
-mutators (M4); `drift record` for Rust ports of app queries and mutators
-with the zbugs model (M6); publishing the CLI to npm, as `zero-rust`, with
-the first release (M7).
+Not yet, with the milestones that need them: `drift record` for Rust ports
+of app queries and mutators with the zbugs model (M6); publishing the CLI to
+npm, as `zero-rust`, with the first release (M7).
 
 ## Conformance
 

@@ -19,16 +19,20 @@
 //!
 //! A typed query builds the same AST as the [`AnyQuery`] calls with the
 //! same names; [`Query::read`] reads a view of it as the query's result
-//! type. The items marked "for generated code" are what the generated
+//! type. In a mutator, the generated `mutate` functions return a
+//! [`TypedTableMutator`] per table, whose updates and deletes take the
+//! generated `<Row>Update` and `<Row>Key` structs. The items marked "for generated code" are what the generated
 //! `from_entry`s and value conversions call.
 
 pub use crate::ast::{Condition, Direction, JsonPathSegment, SimpleOperator};
+pub use crate::client::Transaction;
 pub use crate::ivm::{ViewEntry, ViewValue};
 pub use crate::json::{Object, Value};
 pub use crate::query::{AnyGroupedQuery, AnyQuery, ExistsOptions, StaticParameter};
 pub use crate::schema::Schema;
 
 use crate::ast::{System, ValuePosition};
+use crate::client::Error;
 use crate::query::{ExpressionBuilder, JsonPathReference};
 use std::fmt;
 use std::marker::PhantomData;
@@ -289,8 +293,95 @@ pub trait QueryElement: Sized {
 pub trait ZeroRow: QueryElement {
     /// The client name of the row's table.
     const TABLE: &'static str;
+    /// What [`TypedTableMutator::update`] takes: the primary key, and the
+    /// other columns to set.
+    type Update: ColumnValues;
+    /// What [`TypedTableMutator::delete`] takes: the primary key.
+    type Key: ColumnValues;
     /// The row's columns, by client column name.
     fn column_values(&self) -> Object;
+}
+
+/// Some of a row's columns, by client column name: what an update or a
+/// delete writes. For generated code.
+pub trait ColumnValues {
+    fn column_values(&self) -> Object;
+}
+
+/// The typed CRUD operations of a table in a mutator (`tx.mutate.<table>`
+/// in JS), which the generated `mutate` module returns:
+///
+/// ```ignore
+/// mutate::issue(tx).insert(&issue)?;
+/// mutate::issue(tx).update(&IssueUpdate { closed: Some(true), ..IssueUpdate::new(id) })?;
+/// ```
+pub struct TypedTableMutator<'tx, R> {
+    tx: &'tx Transaction,
+    row: PhantomData<fn() -> R>,
+}
+
+impl<'tx, R: ZeroRow> TypedTableMutator<'tx, R> {
+    /// For generated code.
+    pub fn new(tx: &'tx Transaction) -> Self {
+        TypedTableMutator {
+            tx,
+            row: PhantomData,
+        }
+    }
+
+    /// Inserts a row unless one with its primary key exists.
+    pub fn insert(&self, row: &R) -> Result<(), Error> {
+        self.tx.table(R::TABLE).insert(&row.column_values())
+    }
+
+    /// Inserts a row, or replaces the columns of the existing one. Every
+    /// column is written, so an optional one that is `None` sets null; JS
+    /// keeps a column the value leaves out. Use `update` to set only some
+    /// columns.
+    pub fn upsert(&self, row: &R) -> Result<(), Error> {
+        self.tx.table(R::TABLE).upsert(&row.column_values())
+    }
+
+    /// Sets the columns that `value` sets, of the row with its primary key,
+    /// if the row exists.
+    pub fn update(&self, value: &R::Update) -> Result<(), Error> {
+        self.tx.table(R::TABLE).update(&value.column_values())
+    }
+
+    /// Deletes the row with the primary key `key`, if any.
+    pub fn delete(&self, key: &R::Key) -> Result<(), Error> {
+        self.tx.table(R::TABLE).delete(&key.column_values())
+    }
+}
+
+/// A column in an update that can be null: left as it is (the default),
+/// set to null, or set to a value. A column that can't be null is an
+/// `Option` in an update instead, `None` leaving it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ColumnUpdate<V> {
+    #[default]
+    Unchanged,
+    Null,
+    Set(V),
+}
+
+impl<V> From<Option<V>> for ColumnUpdate<V> {
+    /// Sets the column to the value, or to null for `None`.
+    fn from(value: Option<V>) -> Self {
+        value.map_or(ColumnUpdate::Null, ColumnUpdate::Set)
+    }
+}
+
+impl<V: ZeroValue> ColumnUpdate<V> {
+    /// What the update writes to the column; `None` when it leaves it. For
+    /// generated code.
+    pub fn to_zero_value(&self) -> Option<Value> {
+        match self {
+            ColumnUpdate::Unchanged => None,
+            ColumnUpdate::Null => Some(Value::Null),
+            ColumnUpdate::Set(v) => Some(v.to_zero_value()),
+        }
+    }
 }
 
 /// What a query materializes to: its rows (`Vec<Row>`, `Option<Row>` after

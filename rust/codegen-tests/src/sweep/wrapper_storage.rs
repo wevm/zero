@@ -45,6 +45,8 @@ impl z::QueryElement for Child {
 
 impl z::ZeroRow for Child {
     const TABLE: &'static str = "child";
+    type Update = ChildUpdate;
+    type Key = ChildKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(4);
@@ -59,6 +61,58 @@ impl z::ZeroRow for Child {
 impl z::OptionalQueryElement for Child {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::child(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChildUpdate {
+    pub id: String,
+    pub parent_id_: Option<String>,
+    pub parent_: Option<String>,
+    pub parent_id: Option<String>,
+}
+
+impl ChildUpdate {
+    /// The primary key, with every other column left as it is.
+    pub fn new(id: String) -> Self {
+        ChildUpdate {
+            id,
+            parent_id_: None,
+            parent_: None,
+            parent_id: None,
+        }
+    }
+}
+
+impl z::ColumnValues for ChildUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(4);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        if let Some(v) = &self.parent_id_ {
+            row.insert("parentID", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = &self.parent_ {
+            row.insert("_parent", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = &self.parent_id {
+            row.insert("parent_id", z::ZeroValue::to_zero_value(v));
+        }
+        row
+    }
+}
+
+/// What `mutate::child(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChildKey {
+    pub id: String,
+}
+
+impl z::ColumnValues for ChildKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
     }
 }
 
@@ -82,6 +136,8 @@ impl z::QueryElement for Parent {
 
 impl z::ZeroRow for Parent {
     const TABLE: &'static str = "parent";
+    type Update = ParentUpdate;
+    type Key = ParentKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(1);
@@ -93,6 +149,34 @@ impl z::ZeroRow for Parent {
 impl z::OptionalQueryElement for Parent {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::parent(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ParentUpdate {
+    pub id: String,
+}
+
+impl z::ColumnValues for ParentUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
+    }
+}
+
+/// What `mutate::parent(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ParentKey {
+    pub id: String,
+}
+
+impl z::ColumnValues for ParentKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
     }
 }
 
@@ -174,5 +258,18 @@ pub mod zql {
     /// The rows of `parent`.
     pub fn parent() -> super::z::Query<super::Parent> {
         super::z::Query::table(super::schema())
+    }
+}
+
+/// The CRUD operations of a mutator, one per table: `mutate::child(tx).insert(&row)`.
+pub mod mutate {
+    /// Inserts, upserts, updates, and deletes rows of `child`.
+    pub fn child(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::Child> {
+        super::z::TypedTableMutator::new(tx)
+    }
+
+    /// Inserts, upserts, updates, and deletes rows of `parent`.
+    pub fn parent(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::Parent> {
+        super::z::TypedTableMutator::new(tx)
     }
 }

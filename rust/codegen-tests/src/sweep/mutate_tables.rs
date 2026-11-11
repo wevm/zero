@@ -26,6 +26,8 @@ impl z::QueryElement for Table {
 
 impl z::ZeroRow for Table {
     const TABLE: &'static str = "table";
+    type Update = TableUpdate;
+    type Key = TableKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(1);
@@ -37,6 +39,34 @@ impl z::ZeroRow for Table {
 impl z::OptionalQueryElement for Table {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::table(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TableUpdate {
+    pub id: String,
+}
+
+impl z::ColumnValues for TableUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
+    }
+}
+
+/// What `mutate::table(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TableKey {
+    pub id: String,
+}
+
+impl z::ColumnValues for TableKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
     }
 }
 
@@ -60,6 +90,8 @@ impl z::QueryElement for Insert {
 
 impl z::ZeroRow for Insert {
     const TABLE: &'static str = "insert";
+    type Update = InsertUpdate;
+    type Key = InsertKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(1);
@@ -71,6 +103,34 @@ impl z::ZeroRow for Insert {
 impl z::OptionalQueryElement for Insert {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::insert(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InsertUpdate {
+    pub id: String,
+}
+
+impl z::ColumnValues for InsertUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
+    }
+}
+
+/// What `mutate::insert(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InsertKey {
+    pub id: String,
+}
+
+impl z::ColumnValues for InsertKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
     }
 }
 
@@ -94,6 +154,8 @@ impl z::QueryElement for Upsert {
 
 impl z::ZeroRow for Upsert {
     const TABLE: &'static str = "upsert";
+    type Update = UpsertUpdate;
+    type Key = UpsertKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(1);
@@ -105,6 +167,34 @@ impl z::ZeroRow for Upsert {
 impl z::OptionalQueryElement for Upsert {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::upsert(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UpsertUpdate {
+    pub id: String,
+}
+
+impl z::ColumnValues for UpsertUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
+    }
+}
+
+/// What `mutate::upsert(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UpsertKey {
+    pub id: String,
+}
+
+impl z::ColumnValues for UpsertKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
     }
 }
 
@@ -128,6 +218,8 @@ impl z::QueryElement for Tx {
 
 impl z::ZeroRow for Tx {
     const TABLE: &'static str = "tx";
+    type Update = TxUpdate;
+    type Key = TxKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(1);
@@ -139,6 +231,34 @@ impl z::ZeroRow for Tx {
 impl z::OptionalQueryElement for Tx {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::tx(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TxUpdate {
+    pub id: String,
+}
+
+impl z::ColumnValues for TxUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
+    }
+}
+
+/// What `mutate::tx(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TxKey {
+    pub id: String,
+}
+
+impl z::ColumnValues for TxKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
     }
 }
 
@@ -216,5 +336,28 @@ pub mod zql {
     /// The rows of `tx`.
     pub fn tx() -> super::z::Query<super::Tx> {
         super::z::Query::table(super::schema())
+    }
+}
+
+/// The CRUD operations of a mutator, one per table: `mutate::table(tx).insert(&row)`.
+pub mod mutate {
+    /// Inserts, upserts, updates, and deletes rows of `table`.
+    pub fn table(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::Table> {
+        super::z::TypedTableMutator::new(tx)
+    }
+
+    /// Inserts, upserts, updates, and deletes rows of `insert`.
+    pub fn insert(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::Insert> {
+        super::z::TypedTableMutator::new(tx)
+    }
+
+    /// Inserts, upserts, updates, and deletes rows of `upsert`.
+    pub fn upsert(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::Upsert> {
+        super::z::TypedTableMutator::new(tx)
+    }
+
+    /// Inserts, upserts, updates, and deletes rows of `tx`.
+    pub fn tx(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::Tx> {
+        super::z::TypedTableMutator::new(tx)
     }
 }

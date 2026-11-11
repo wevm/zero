@@ -48,6 +48,8 @@ impl z::QueryElement for User {
 
 impl z::ZeroRow for User {
     const TABLE: &'static str = "user";
+    type Update = UserUpdate;
+    type Key = UserKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(5);
@@ -63,6 +65,63 @@ impl z::ZeroRow for User {
 impl z::OptionalQueryElement for User {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::user(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UserUpdate {
+    pub id: String,
+    pub login: Option<String>,
+    pub name: z::ColumnUpdate<String>,
+    pub avatar: Option<String>,
+    pub role: Option<UserRole>,
+}
+
+impl UserUpdate {
+    /// The primary key, with every other column left as it is.
+    pub fn new(id: String) -> Self {
+        UserUpdate {
+            id,
+            login: None,
+            name: z::ColumnUpdate::Unchanged,
+            avatar: None,
+            role: None,
+        }
+    }
+}
+
+impl z::ColumnValues for UserUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(5);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        if let Some(v) = &self.login {
+            row.insert("login", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = self.name.to_zero_value() {
+            row.insert("name", v);
+        }
+        if let Some(v) = &self.avatar {
+            row.insert("avatar", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = &self.role {
+            row.insert("role", z::ZeroValue::to_zero_value(v));
+        }
+        row
+    }
+}
+
+/// What `mutate::user(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UserKey {
+    pub id: String,
+}
+
+impl z::ColumnValues for UserKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
     }
 }
 
@@ -114,6 +173,8 @@ impl z::QueryElement for Project {
 
 impl z::ZeroRow for Project {
     const TABLE: &'static str = "project";
+    type Update = ProjectUpdate;
+    type Key = ProjectKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(7);
@@ -131,6 +192,73 @@ impl z::ZeroRow for Project {
 impl z::OptionalQueryElement for Project {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::project(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProjectUpdate {
+    pub id: String,
+    pub name: Option<String>,
+    pub lower_case_name: Option<String>,
+    pub issue_count_estimate: z::ColumnUpdate<i64>,
+    pub supports_search: Option<bool>,
+    pub mark_url: z::ColumnUpdate<String>,
+    pub logo_url: z::ColumnUpdate<String>,
+}
+
+impl ProjectUpdate {
+    /// The primary key, with every other column left as it is.
+    pub fn new(id: String) -> Self {
+        ProjectUpdate {
+            id,
+            name: None,
+            lower_case_name: None,
+            issue_count_estimate: z::ColumnUpdate::Unchanged,
+            supports_search: None,
+            mark_url: z::ColumnUpdate::Unchanged,
+            logo_url: z::ColumnUpdate::Unchanged,
+        }
+    }
+}
+
+impl z::ColumnValues for ProjectUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(7);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        if let Some(v) = &self.name {
+            row.insert("name", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = &self.lower_case_name {
+            row.insert("lowerCaseName", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = self.issue_count_estimate.to_zero_value() {
+            row.insert("issueCountEstimate", v);
+        }
+        if let Some(v) = &self.supports_search {
+            row.insert("supportsSearch", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = self.mark_url.to_zero_value() {
+            row.insert("markURL", v);
+        }
+        if let Some(v) = self.logo_url.to_zero_value() {
+            row.insert("logoURL", v);
+        }
+        row
+    }
+}
+
+/// What `mutate::project(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProjectKey {
+    pub id: String,
+}
+
+impl z::ColumnValues for ProjectKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
     }
 }
 
@@ -215,6 +343,8 @@ impl z::QueryElement for Issue {
 
 impl z::ZeroRow for Issue {
     const TABLE: &'static str = "issue";
+    type Update = IssueUpdate;
+    type Key = IssueKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(11);
@@ -236,6 +366,93 @@ impl z::ZeroRow for Issue {
 impl z::OptionalQueryElement for Issue {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::issue(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IssueUpdate {
+    pub id: String,
+    pub short_id: z::ColumnUpdate<i64>,
+    pub title: Option<String>,
+    pub open: Option<bool>,
+    pub modified: Option<f64>,
+    pub created: Option<f64>,
+    pub project_id: Option<String>,
+    pub creator_id: Option<String>,
+    pub assignee_id: z::ColumnUpdate<String>,
+    pub description: Option<String>,
+    pub visibility: Option<IssueVisibility>,
+}
+
+impl IssueUpdate {
+    /// The primary key, with every other column left as it is.
+    pub fn new(id: String) -> Self {
+        IssueUpdate {
+            id,
+            short_id: z::ColumnUpdate::Unchanged,
+            title: None,
+            open: None,
+            modified: None,
+            created: None,
+            project_id: None,
+            creator_id: None,
+            assignee_id: z::ColumnUpdate::Unchanged,
+            description: None,
+            visibility: None,
+        }
+    }
+}
+
+impl z::ColumnValues for IssueUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(11);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        if let Some(v) = self.short_id.to_zero_value() {
+            row.insert("shortID", v);
+        }
+        if let Some(v) = &self.title {
+            row.insert("title", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = &self.open {
+            row.insert("open", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = &self.modified {
+            row.insert("modified", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = &self.created {
+            row.insert("created", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = &self.project_id {
+            row.insert("projectID", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = &self.creator_id {
+            row.insert("creatorID", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = self.assignee_id.to_zero_value() {
+            row.insert("assigneeID", v);
+        }
+        if let Some(v) = &self.description {
+            row.insert("description", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = &self.visibility {
+            row.insert("visibility", z::ZeroValue::to_zero_value(v));
+        }
+        row
+    }
+}
+
+/// What `mutate::issue(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IssueKey {
+    pub id: String,
+}
+
+impl z::ColumnValues for IssueKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
     }
 }
 
@@ -284,6 +501,8 @@ impl z::QueryElement for Comment {
 
 impl z::ZeroRow for Comment {
     const TABLE: &'static str = "comment";
+    type Update = CommentUpdate;
+    type Key = CommentKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(5);
@@ -299,6 +518,63 @@ impl z::ZeroRow for Comment {
 impl z::OptionalQueryElement for Comment {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::comment(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CommentUpdate {
+    pub id: String,
+    pub issue_id: Option<String>,
+    pub created: Option<f64>,
+    pub body: Option<String>,
+    pub creator_id: Option<String>,
+}
+
+impl CommentUpdate {
+    /// The primary key, with every other column left as it is.
+    pub fn new(id: String) -> Self {
+        CommentUpdate {
+            id,
+            issue_id: None,
+            created: None,
+            body: None,
+            creator_id: None,
+        }
+    }
+}
+
+impl z::ColumnValues for CommentUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(5);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        if let Some(v) = &self.issue_id {
+            row.insert("issueID", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = &self.created {
+            row.insert("created", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = &self.body {
+            row.insert("body", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = &self.creator_id {
+            row.insert("creatorID", z::ZeroValue::to_zero_value(v));
+        }
+        row
+    }
+}
+
+/// What `mutate::comment(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CommentKey {
+    pub id: String,
+}
+
+impl z::ColumnValues for CommentKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
     }
 }
 
@@ -335,6 +611,8 @@ impl z::QueryElement for Label {
 
 impl z::ZeroRow for Label {
     const TABLE: &'static str = "label";
+    type Update = LabelUpdate;
+    type Key = LabelKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(3);
@@ -348,6 +626,53 @@ impl z::ZeroRow for Label {
 impl z::OptionalQueryElement for Label {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::label(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LabelUpdate {
+    pub id: String,
+    pub name: Option<String>,
+    pub project_id: Option<String>,
+}
+
+impl LabelUpdate {
+    /// The primary key, with every other column left as it is.
+    pub fn new(id: String) -> Self {
+        LabelUpdate {
+            id,
+            name: None,
+            project_id: None,
+        }
+    }
+}
+
+impl z::ColumnValues for LabelUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(3);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        if let Some(v) = &self.name {
+            row.insert("name", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = &self.project_id {
+            row.insert("projectID", z::ZeroValue::to_zero_value(v));
+        }
+        row
+    }
+}
+
+/// What `mutate::label(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LabelKey {
+    pub id: String,
+}
+
+impl z::ColumnValues for LabelKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
     }
 }
 
@@ -387,6 +712,8 @@ impl z::QueryElement for IssueLabel {
 
 impl z::ZeroRow for IssueLabel {
     const TABLE: &'static str = "issueLabel";
+    type Update = IssueLabelUpdate;
+    type Key = IssueLabelKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(3);
@@ -400,6 +727,53 @@ impl z::ZeroRow for IssueLabel {
 impl z::OptionalQueryElement for IssueLabel {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::issue_label(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IssueLabelUpdate {
+    pub issue_id: String,
+    pub label_id: String,
+    pub project_id: Option<String>,
+}
+
+impl IssueLabelUpdate {
+    /// The primary key, with every other column left as it is.
+    pub fn new(issue_id: String, label_id: String) -> Self {
+        IssueLabelUpdate {
+            issue_id,
+            label_id,
+            project_id: None,
+        }
+    }
+}
+
+impl z::ColumnValues for IssueLabelUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(3);
+        row.insert("issueID", z::ZeroValue::to_zero_value(&self.issue_id));
+        row.insert("labelID", z::ZeroValue::to_zero_value(&self.label_id));
+        if let Some(v) = &self.project_id {
+            row.insert("projectID", z::ZeroValue::to_zero_value(v));
+        }
+        row
+    }
+}
+
+/// What `mutate::issue_label(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IssueLabelKey {
+    pub label_id: String,
+    pub issue_id: String,
+}
+
+impl z::ColumnValues for IssueLabelKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(2);
+        row.insert("labelID", z::ZeroValue::to_zero_value(&self.label_id));
+        row.insert("issueID", z::ZeroValue::to_zero_value(&self.issue_id));
+        row
     }
 }
 
@@ -429,6 +803,8 @@ impl z::QueryElement for ViewState {
 
 impl z::ZeroRow for ViewState {
     const TABLE: &'static str = "viewState";
+    type Update = ViewStateUpdate;
+    type Key = ViewStateKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(3);
@@ -442,6 +818,53 @@ impl z::ZeroRow for ViewState {
 impl z::OptionalQueryElement for ViewState {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::view_state(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ViewStateUpdate {
+    pub issue_id: String,
+    pub user_id: String,
+    pub viewed: Option<f64>,
+}
+
+impl ViewStateUpdate {
+    /// The primary key, with every other column left as it is.
+    pub fn new(issue_id: String, user_id: String) -> Self {
+        ViewStateUpdate {
+            issue_id,
+            user_id,
+            viewed: None,
+        }
+    }
+}
+
+impl z::ColumnValues for ViewStateUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(3);
+        row.insert("issueID", z::ZeroValue::to_zero_value(&self.issue_id));
+        row.insert("userID", z::ZeroValue::to_zero_value(&self.user_id));
+        if let Some(v) = &self.viewed {
+            row.insert("viewed", z::ZeroValue::to_zero_value(v));
+        }
+        row
+    }
+}
+
+/// What `mutate::view_state(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ViewStateKey {
+    pub user_id: String,
+    pub issue_id: String,
+}
+
+impl z::ColumnValues for ViewStateKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(2);
+        row.insert("userID", z::ZeroValue::to_zero_value(&self.user_id));
+        row.insert("issueID", z::ZeroValue::to_zero_value(&self.issue_id));
+        row
     }
 }
 
@@ -493,6 +916,8 @@ impl z::QueryElement for Emoji {
 
 impl z::ZeroRow for Emoji {
     const TABLE: &'static str = "emoji";
+    type Update = EmojiUpdate;
+    type Key = EmojiKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(6);
@@ -509,6 +934,68 @@ impl z::ZeroRow for Emoji {
 impl z::OptionalQueryElement for Emoji {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::emoji(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EmojiUpdate {
+    pub id: String,
+    pub value: Option<String>,
+    pub annotation: Option<String>,
+    pub subject_id: Option<String>,
+    pub creator_id: Option<String>,
+    pub created: Option<f64>,
+}
+
+impl EmojiUpdate {
+    /// The primary key, with every other column left as it is.
+    pub fn new(id: String) -> Self {
+        EmojiUpdate {
+            id,
+            value: None,
+            annotation: None,
+            subject_id: None,
+            creator_id: None,
+            created: None,
+        }
+    }
+}
+
+impl z::ColumnValues for EmojiUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(6);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        if let Some(v) = &self.value {
+            row.insert("value", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = &self.annotation {
+            row.insert("annotation", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = &self.subject_id {
+            row.insert("subjectID", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = &self.creator_id {
+            row.insert("creatorID", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = &self.created {
+            row.insert("created", z::ZeroValue::to_zero_value(v));
+        }
+        row
+    }
+}
+
+/// What `mutate::emoji(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EmojiKey {
+    pub id: String,
+}
+
+impl z::ColumnValues for EmojiKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
     }
 }
 
@@ -538,6 +1025,8 @@ impl z::QueryElement for UserPref {
 
 impl z::ZeroRow for UserPref {
     const TABLE: &'static str = "userPref";
+    type Update = UserPrefUpdate;
+    type Key = UserPrefKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(3);
@@ -551,6 +1040,53 @@ impl z::ZeroRow for UserPref {
 impl z::OptionalQueryElement for UserPref {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::user_pref(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UserPrefUpdate {
+    pub key: String,
+    pub user_id: String,
+    pub value: Option<String>,
+}
+
+impl UserPrefUpdate {
+    /// The primary key, with every other column left as it is.
+    pub fn new(key: String, user_id: String) -> Self {
+        UserPrefUpdate {
+            key,
+            user_id,
+            value: None,
+        }
+    }
+}
+
+impl z::ColumnValues for UserPrefUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(3);
+        row.insert("key", z::ZeroValue::to_zero_value(&self.key));
+        row.insert("userID", z::ZeroValue::to_zero_value(&self.user_id));
+        if let Some(v) = &self.value {
+            row.insert("value", z::ZeroValue::to_zero_value(v));
+        }
+        row
+    }
+}
+
+/// What `mutate::user_pref(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UserPrefKey {
+    pub user_id: String,
+    pub key: String,
+}
+
+impl z::ColumnValues for UserPrefKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(2);
+        row.insert("userID", z::ZeroValue::to_zero_value(&self.user_id));
+        row.insert("key", z::ZeroValue::to_zero_value(&self.key));
+        row
     }
 }
 
@@ -583,6 +1119,8 @@ impl z::QueryElement for IssueNotifications {
 
 impl z::ZeroRow for IssueNotifications {
     const TABLE: &'static str = "issueNotifications";
+    type Update = IssueNotificationsUpdate;
+    type Key = IssueNotificationsKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(4);
@@ -597,6 +1135,58 @@ impl z::ZeroRow for IssueNotifications {
 impl z::OptionalQueryElement for IssueNotifications {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::issue_notifications(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IssueNotificationsUpdate {
+    pub user_id: String,
+    pub issue_id: String,
+    pub subscribed: Option<bool>,
+    pub created: Option<f64>,
+}
+
+impl IssueNotificationsUpdate {
+    /// The primary key, with every other column left as it is.
+    pub fn new(user_id: String, issue_id: String) -> Self {
+        IssueNotificationsUpdate {
+            user_id,
+            issue_id,
+            subscribed: None,
+            created: None,
+        }
+    }
+}
+
+impl z::ColumnValues for IssueNotificationsUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(4);
+        row.insert("userID", z::ZeroValue::to_zero_value(&self.user_id));
+        row.insert("issueID", z::ZeroValue::to_zero_value(&self.issue_id));
+        if let Some(v) = &self.subscribed {
+            row.insert("subscribed", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = &self.created {
+            row.insert("created", z::ZeroValue::to_zero_value(v));
+        }
+        row
+    }
+}
+
+/// What `mutate::issue_notifications(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IssueNotificationsKey {
+    pub user_id: String,
+    pub issue_id: String,
+}
+
+impl z::ColumnValues for IssueNotificationsKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(2);
+        row.insert("userID", z::ZeroValue::to_zero_value(&self.user_id));
+        row.insert("issueID", z::ZeroValue::to_zero_value(&self.issue_id));
+        row
     }
 }
 
@@ -1281,5 +1871,58 @@ pub mod zql {
     /// The rows of `issueNotifications`.
     pub fn issue_notifications() -> super::z::Query<super::IssueNotifications> {
         super::z::Query::table(super::schema())
+    }
+}
+
+/// The CRUD operations of a mutator, one per table: `mutate::user(tx).insert(&row)`.
+pub mod mutate {
+    /// Inserts, upserts, updates, and deletes rows of `user`.
+    pub fn user(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::User> {
+        super::z::TypedTableMutator::new(tx)
+    }
+
+    /// Inserts, upserts, updates, and deletes rows of `project`.
+    pub fn project(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::Project> {
+        super::z::TypedTableMutator::new(tx)
+    }
+
+    /// Inserts, upserts, updates, and deletes rows of `issue`.
+    pub fn issue(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::Issue> {
+        super::z::TypedTableMutator::new(tx)
+    }
+
+    /// Inserts, upserts, updates, and deletes rows of `comment`.
+    pub fn comment(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::Comment> {
+        super::z::TypedTableMutator::new(tx)
+    }
+
+    /// Inserts, upserts, updates, and deletes rows of `label`.
+    pub fn label(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::Label> {
+        super::z::TypedTableMutator::new(tx)
+    }
+
+    /// Inserts, upserts, updates, and deletes rows of `issueLabel`.
+    pub fn issue_label(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::IssueLabel> {
+        super::z::TypedTableMutator::new(tx)
+    }
+
+    /// Inserts, upserts, updates, and deletes rows of `viewState`.
+    pub fn view_state(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::ViewState> {
+        super::z::TypedTableMutator::new(tx)
+    }
+
+    /// Inserts, upserts, updates, and deletes rows of `emoji`.
+    pub fn emoji(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::Emoji> {
+        super::z::TypedTableMutator::new(tx)
+    }
+
+    /// Inserts, upserts, updates, and deletes rows of `userPref`.
+    pub fn user_pref(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::UserPref> {
+        super::z::TypedTableMutator::new(tx)
+    }
+
+    /// Inserts, upserts, updates, and deletes rows of `issueNotifications`.
+    pub fn issue_notifications(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::IssueNotifications> {
+        super::z::TypedTableMutator::new(tx)
     }
 }

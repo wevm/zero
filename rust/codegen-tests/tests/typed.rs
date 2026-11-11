@@ -507,3 +507,99 @@ fn rows_read_strictly_but_forgive_nulls() {
         "metadata: expected a UserMetadata object, got string \"not an object\""
     );
 }
+
+/// The generated `mutate` functions and `Update` and `Key` structs drive a
+/// client's CRUD: an update sets only what it sets, `ColumnUpdate` tells
+/// leaving a nullable column from setting it to null, and an upsert writes
+/// every column.
+#[test]
+fn typed_mutators_insert_update_upsert_and_delete() {
+    use zero_client::client::{MutationOutcome, Mutator, Zero, ZeroOptions};
+    use zero_client::testing::ManualScheduler;
+    use zero_client::ttl::Ttl;
+    use zero_client::typed::ColumnUpdate;
+    use zero_codegen_tests::test_schema::{IssueKey, IssueUpdate, mutate};
+
+    let mutators = vec![
+        Mutator::new("create", |tx, _, _| {
+            mutate::issue(tx).insert(&issue("i1", "First", false, Some("u1"), 1.0))?;
+            mutate::issue(tx).insert(&issue("i2", "Second", false, Some("u2"), 2.0))?;
+            Ok(None)
+        }),
+        Mutator::new("retitle", |tx, _, _| {
+            mutate::issue(tx).update(&IssueUpdate {
+                title: Some("Renamed".into()),
+                ..IssueUpdate::new("i1".into())
+            })?;
+            Ok(None)
+        }),
+        Mutator::new("disown", |tx, _, _| {
+            mutate::issue(tx).update(&IssueUpdate {
+                owner_id: ColumnUpdate::Null,
+                closed: Some(true),
+                ..IssueUpdate::new("i1".into())
+            })?;
+            mutate::issue(tx).update(&IssueUpdate {
+                owner_id: Some("u3".to_owned()).into(),
+                ..IssueUpdate::new("i2".into())
+            })?;
+            Ok(None)
+        }),
+        Mutator::new("replace", |tx, _, _| {
+            mutate::issue(tx).upsert(&issue("i2", "Replaced", false, None, 5.0))?;
+            Ok(None)
+        }),
+        Mutator::new("remove", |tx, _, _| {
+            mutate::issue(tx).delete(&IssueKey { id: "i1".into() })?;
+            Ok(None)
+        }),
+    ];
+    let scheduler = ManualScheduler::new(1_000.0);
+    let zero = Zero::new(
+        schema(),
+        (),
+        mutators,
+        ZeroOptions::default(),
+        scheduler.clone(),
+        None,
+    )
+    .unwrap();
+    let query = zql::issue().order_by(Issue::ID, Direction::Asc);
+    let view = zero.materialize(query.any(), &Ttl::default()).unwrap();
+    let step = |name: &str| -> Vec<Issue> {
+        let r = zero.mutate(name, None);
+        scheduler.run_checkpoints();
+        assert_eq!(
+            r.client.result().unwrap().unwrap(),
+            MutationOutcome::Success { data: None },
+            "{name}"
+        );
+        Vec::<Issue>::from_view(&view.data()).unwrap()
+    };
+
+    assert_eq!(
+        step("create"),
+        [
+            issue("i1", "First", false, Some("u1"), 1.0),
+            issue("i2", "Second", false, Some("u2"), 2.0)
+        ]
+    );
+    // Only the title changes; the owner is `Unchanged`.
+    assert_eq!(
+        step("retitle")[0],
+        issue("i1", "Renamed", false, Some("u1"), 1.0)
+    );
+    assert_eq!(
+        step("disown"),
+        [
+            issue("i1", "Renamed", true, None, 1.0),
+            issue("i2", "Second", false, Some("u3"), 2.0)
+        ]
+    );
+    // An upsert writes every column: the owner `None` sets null.
+    assert_eq!(
+        step("replace")[1],
+        issue("i2", "Replaced", false, None, 5.0)
+    );
+    assert_eq!(step("remove"), [issue("i2", "Replaced", false, None, 5.0)]);
+}

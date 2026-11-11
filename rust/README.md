@@ -36,4 +36,17 @@ let open = zql::issue()
     .order_by(Issue::CREATED_AT, Direction::Desc);
 ```
 
+In a mutator, the generated `mutate` module does the table's CRUD:
+
+```rust
+use schema::{IssueUpdate, mutate};
+use zero_client::client::Mutator;
+
+let close = Mutator::new("issue.close", |tx, args, _ctx: &()| {
+    let id = args.and_then(|a| a.as_str()).unwrap_or_default().to_owned();
+    mutate::issue(tx).update(&IssueUpdate { closed: Some(true), ..IssueUpdate::new(id) })?;
+    Ok(None)
+});
+```
+
 See [DESIGN.md](DESIGN.md#codegen-m3).

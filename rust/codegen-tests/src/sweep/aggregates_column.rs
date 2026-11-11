@@ -39,6 +39,8 @@ impl z::QueryElement for Aggregated {
 
 impl z::ZeroRow for Aggregated {
     const TABLE: &'static str = "aggregated";
+    type Update = AggregatedUpdate;
+    type Key = AggregatedKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(3);
@@ -52,6 +54,53 @@ impl z::ZeroRow for Aggregated {
 impl z::OptionalQueryElement for Aggregated {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::aggregated(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AggregatedUpdate {
+    pub id: String,
+    pub aggregates_: Option<String>,
+    pub other_id: Option<String>,
+}
+
+impl AggregatedUpdate {
+    /// The primary key, with every other column left as it is.
+    pub fn new(id: String) -> Self {
+        AggregatedUpdate {
+            id,
+            aggregates_: None,
+            other_id: None,
+        }
+    }
+}
+
+impl z::ColumnValues for AggregatedUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(3);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        if let Some(v) = &self.aggregates_ {
+            row.insert("aggregates", z::ZeroValue::to_zero_value(v));
+        }
+        if let Some(v) = &self.other_id {
+            row.insert("otherID", z::ZeroValue::to_zero_value(v));
+        }
+        row
+    }
+}
+
+/// What `mutate::aggregated(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AggregatedKey {
+    pub id: String,
+}
+
+impl z::ColumnValues for AggregatedKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
     }
 }
 
@@ -75,6 +124,8 @@ impl z::QueryElement for Other {
 
 impl z::ZeroRow for Other {
     const TABLE: &'static str = "other";
+    type Update = OtherUpdate;
+    type Key = OtherKey;
 
     fn column_values(&self) -> z::Object {
         let mut row = z::Object::with_capacity(1);
@@ -86,6 +137,34 @@ impl z::ZeroRow for Other {
 impl z::OptionalQueryElement for Other {
     fn optional_from_view(view: &z::ViewValue) -> Result<Option<Self>, z::ZeroValueError> {
         z::optional_row(view)
+    }
+}
+
+/// What `mutate::other(tx).update` takes: the primary key, and the other columns to set. A column that is `None`, or `ColumnUpdate::Unchanged`, keeps its value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OtherUpdate {
+    pub id: String,
+}
+
+impl z::ColumnValues for OtherUpdate {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
+    }
+}
+
+/// What `mutate::other(tx).delete` takes: the primary key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OtherKey {
+    pub id: String,
+}
+
+impl z::ColumnValues for OtherKey {
+    fn column_values(&self) -> z::Object {
+        let mut row = z::Object::with_capacity(1);
+        row.insert("id", z::ZeroValue::to_zero_value(&self.id));
+        row
     }
 }
 
@@ -152,5 +231,18 @@ pub mod zql {
     /// The rows of `other`.
     pub fn other() -> super::z::Query<super::Other> {
         super::z::Query::table(super::schema())
+    }
+}
+
+/// The CRUD operations of a mutator, one per table: `mutate::aggregated(tx).insert(&row)`.
+pub mod mutate {
+    /// Inserts, upserts, updates, and deletes rows of `aggregated`.
+    pub fn aggregated(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::Aggregated> {
+        super::z::TypedTableMutator::new(tx)
+    }
+
+    /// Inserts, upserts, updates, and deletes rows of `other`.
+    pub fn other(tx: &super::z::Transaction) -> super::z::TypedTableMutator<'_, super::Other> {
+        super::z::TypedTableMutator::new(tx)
     }
 }
