@@ -12,7 +12,9 @@ both), and Windows is next.
   client is single-threaded and Rune owns the main thread without an async
   executor. The UI sends it commands, and it sends back each query's rows,
   read as the generated row types, through Rune's `AppHandle::update`.
-- `src/view.rs` has the screens, with `rune-kit`'s controls: the filters,
+- `src/view.rs` has the screens, with `rune-kit`'s controls: the project
+  and the filters (status, sort, creator, assignee, and labels, as the web
+  app's list params),
   the issue list (virtual rows, paged as it scrolls, with a dot on issues
   changed since you looked), the issue with its Markdown, comments, and
   reactions, its assignee, visibility, notifications, and labels, and sheets

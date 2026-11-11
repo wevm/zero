@@ -71,8 +71,13 @@ pub struct Filter {
     pub status: Status,
     pub sort_field: SortField,
     pub sort_direction: SortDirection,
-    pub created_by_me: bool,
-    pub assigned_to_me: bool,
+    /// The project's lower-case name.
+    pub project: String,
+    /// Logins, as the web app's `creator` and `assignee` list params.
+    pub creator: Option<String>,
+    pub assignee: Option<String>,
+    /// Label names: an issue must have all of them.
+    pub labels: Vec<String>,
 }
 
 /// The reactions the emoji menu offers, with their CLDR names, which the
@@ -95,6 +100,11 @@ pub enum Picker {
     Labels,
     Visibility,
     Notifications,
+    /// The sidebar's.
+    Project,
+    CreatorFilter,
+    AssigneeFilter,
+    LabelFilter,
     /// Reactions to the issue (its ID) or to one of its comments.
     Emoji(String),
 }
@@ -134,6 +144,11 @@ pub struct App {
     /// The logged-in user, for the "by me" filters.
     pub me: Option<User>,
     pub projects: Vec<Project>,
+    /// Who the list can be filtered by: those who created, or are assigned,
+    /// issues in the project, and its labels.
+    pub creators: Vec<User>,
+    pub assignees: Vec<User>,
+    pub project_labels: Vec<Label>,
 
     pub selected: Option<String>,
     /// Scroll the list to the selected issue once it's there (a relaunch).
@@ -171,6 +186,11 @@ pub struct App {
 /// The choices of the issue page's Visibility and Notifications menus.
 pub const VISIBILITY: [&str; 2] = ["Public", "Internal"];
 pub const NOTIFICATIONS: [&str; 2] = ["Subscribed", "Unsubscribed"];
+
+/// As the web app's pickers sort users.
+fn by_login(rows: &mut [User]) {
+    rows.sort_by(|a, b| a.login.cmp(&b.login));
+}
 
 /// When the user last looked at the issue (the query has only their row).
 fn viewed(issue: &Issue) -> f64 {
@@ -224,8 +244,10 @@ impl App {
                 status: Status::Open,
                 sort_field: SortField::Modified,
                 sort_direction: SortDirection::Desc,
-                created_by_me: false,
-                assigned_to_me: false,
+                project: ZERO_PROJECT_NAME.to_lowercase(),
+                creator: None,
+                assignee: None,
+                labels: Vec::new(),
             },
             search: TextEdit::new(""),
             issues: Vec::new(),
@@ -234,6 +256,9 @@ impl App {
             count: None,
             me: None,
             projects: Vec::new(),
+            creators: Vec::new(),
+            assignees: Vec::new(),
+            project_labels: Vec::new(),
             selected: None,
             reveal_selected: false,
             detail: None,
@@ -292,8 +317,6 @@ impl App {
         }
         if self.auth.is_none() {
             self.settings.token = None;
-            self.filter.created_by_me = false;
-            self.filter.assigned_to_me = false;
         }
         self.me = None;
         self.sync.connect(Session {
@@ -308,21 +331,7 @@ impl App {
             |auth: &Context| queries::ALL_PROJECTS.call(&(), auth.as_ref()),
             |s, rows, _, _| s.projects = rows,
         );
-        let crew = UsersForProjectArgs {
-            disabled: false,
-            login: None,
-            project_name: ZERO_PROJECT_NAME.to_owned(),
-            filter: Some(UsersFilter::Crew),
-        };
-        self.sync.watch(
-            "crew",
-            move |auth: &Context| queries::USERS_FOR_PROJECT.call(&crew, auth.as_ref()),
-            |s, mut rows: Vec<User>, _, _| {
-                // As the web app's picker sorts them.
-                rows.sort_by(|a, b| a.login.cmp(&b.login));
-                s.crew = rows;
-            },
-        );
+        self.watch_project();
         if let Some(sub) = self.auth.as_ref().map(|a| a.sub.clone()) {
             self.sync.watch(
                 "me",
@@ -338,15 +347,115 @@ impl App {
         }
     }
 
+    /// The users and labels that depend on the project.
+    fn watch_project(&mut self) {
+        let users = |filter| UsersForProjectArgs {
+            disabled: false,
+            login: None,
+            project_name: self.filter.project.clone(),
+            filter: Some(filter),
+        };
+        let crew = users(UsersFilter::Crew);
+        self.sync.watch(
+            "crew",
+            move |auth: &Context| queries::USERS_FOR_PROJECT.call(&crew, auth.as_ref()),
+            |s, mut rows: Vec<User>, _, _| {
+                by_login(&mut rows);
+                s.crew = rows;
+            },
+        );
+        let creators = users(UsersFilter::Creators);
+        self.sync.watch(
+            "creators",
+            move |auth: &Context| queries::USERS_FOR_PROJECT.call(&creators, auth.as_ref()),
+            |s, mut rows: Vec<User>, _, _| {
+                by_login(&mut rows);
+                s.creators = rows;
+            },
+        );
+        let assignees = users(UsersFilter::Assignees);
+        self.sync.watch(
+            "assignees",
+            move |auth: &Context| queries::USERS_FOR_PROJECT.call(&assignees, auth.as_ref()),
+            |s, mut rows: Vec<User>, _, _| {
+                by_login(&mut rows);
+                s.assignees = rows;
+            },
+        );
+        let labels = LabelsOrderByNameArgs {
+            project_name: self.filter.project.clone(),
+            order_by: SortDirection::Asc,
+        };
+        self.sync.watch(
+            "project-labels",
+            move |auth: &Context| queries::LABELS_ORDER_BY_NAME.call(&labels, auth.as_ref()),
+            |s, rows, _, _| s.project_labels = rows,
+        );
+    }
+
+    /// Shows the project's issues, with the filters that were the last
+    /// project's cleared, as the web app's project picker does.
+    pub fn set_project(&mut self, name: &str) {
+        self.picker = None;
+        let Some(p) = self.projects.iter().find(|p| p.name == name) else {
+            return;
+        };
+        if p.lower_case_name == self.filter.project {
+            return;
+        }
+        self.filter.project = p.lower_case_name.clone();
+        self.filter.creator = None;
+        self.filter.assignee = None;
+        self.filter.labels.clear();
+        self.watch_project();
+        self.list_changed();
+    }
+
+    /// The project the list shows, once it has synced.
+    pub fn project(&self) -> Option<&Project> {
+        self.projects
+            .iter()
+            .find(|p| p.lower_case_name == self.filter.project)
+    }
+
+    /// Filters the list by creator (`Some(login)`) or not.
+    pub fn set_creator(&mut self, login: Option<String>) {
+        self.picker = None;
+        self.filter.creator = login;
+        self.list_changed();
+    }
+
+    pub fn set_assignee(&mut self, login: Option<String>) {
+        self.picker = None;
+        self.filter.assignee = login;
+        self.list_changed();
+    }
+
+    /// Adds the label to the list's filter, or takes it out. The menu stays
+    /// open for the next one.
+    pub fn toggle_label_filter(&mut self, name: &str) {
+        match self.filter.labels.iter().position(|l| l == name) {
+            Some(i) => {
+                self.filter.labels.remove(i);
+            }
+            None => self.filter.labels.push(name.to_owned()),
+        }
+        self.list_changed();
+    }
+
+    /// The user's login, once it has synced.
+    pub fn my_login(&self) -> Option<&str> {
+        self.me.as_ref().map(|u| u.login.as_str())
+    }
+
     fn list_context(&self) -> ListContextParams {
-        let login = self.me.as_ref().map(|u| u.login.clone());
         let text = self.search.text.trim();
         ListContextParams {
             open: self.filter.status.open(),
-            project_name: None,
-            assignee: login.clone().filter(|_| self.filter.assigned_to_me),
-            creator: login.filter(|_| self.filter.created_by_me),
-            labels: None,
+            project_name: Some(self.filter.project.clone()),
+            assignee: self.filter.assignee.clone(),
+            creator: self.filter.creator.clone(),
+            labels: (!self.filter.labels.is_empty()).then(|| self.filter.labels.clone()),
             text_filter: (!text.is_empty()).then(|| text.to_owned()),
             sort_field: self.filter.sort_field,
             sort_direction: self.filter.sort_direction,
@@ -803,12 +912,8 @@ impl App {
             };
             self.mutate(UPDATE_ISSUE.with(&args));
         } else {
-            let project = self
-                .projects
-                .iter()
-                .find(|p| p.lower_case_name == ZERO_PROJECT_NAME.to_lowercase());
-            let Some(project) = project else {
-                self.sheet_error = Some("The Zero project hasn't synced yet.".into());
+            let Some(project) = self.project() else {
+                self.sheet_error = Some("The project hasn't synced yet.".into());
                 return;
             };
             let id = make_id();
