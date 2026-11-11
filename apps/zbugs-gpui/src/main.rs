@@ -4,6 +4,7 @@ mod app;
 mod http;
 mod live;
 mod login;
+mod picker;
 mod session;
 mod token;
 mod transport;

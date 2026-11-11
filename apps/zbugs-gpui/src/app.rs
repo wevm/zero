@@ -5,6 +5,7 @@
 pub mod e2e;
 
 use crate::live::Live;
+use crate::picker::{self, Choice};
 use crate::session::{Session, app_dir, now_ms, save_setting};
 use futures::StreamExt;
 use futures::channel::mpsc;
@@ -145,14 +146,6 @@ impl Saved {
     }
 }
 
-/// One entry of a picker menu: `value` is what picking it passes on,
-/// `None` for the entry that clears the choice.
-struct Choice {
-    label: String,
-    value: Option<String>,
-    checked: bool,
-}
-
 /// The reactions the add-reaction menu offers, with their annotations.
 const REACTIONS: [(&str, &str); 6] = [
     ("👍", "thumbs up"),
@@ -225,7 +218,15 @@ struct Seen {
 /// `user`'s avatar, round, as zbugs' `AvatarImage`; GitHub's at 64
 /// pixels, as `avatarURLWithSize` asks for.
 fn avatar(user: &User, size: Pixels) -> impl IntoElement {
-    let url = match http_client::Url::parse(&user.avatar) {
+    img(avatar_url(user))
+        .flex_none()
+        .size(size)
+        .rounded_full()
+        .with_fallback(move || div().size(size).into_any_element())
+}
+
+fn avatar_url(user: &User) -> String {
+    match http_client::Url::parse(&user.avatar) {
         Ok(mut url) if url.host_str() == Some("avatars.githubusercontent.com") => {
             let query = url
                 .query_pairs()
@@ -239,12 +240,7 @@ fn avatar(user: &User, size: Pixels) -> impl IntoElement {
             url.to_string()
         }
         _ => user.avatar.clone(),
-    };
-    img(url)
-        .flex_none()
-        .size(size)
-        .rounded_full()
-        .with_fallback(move || div().size(size).into_any_element())
+    }
 }
 
 /// `text` as markdown, with its images. TextView measures a block once, so
@@ -1603,6 +1599,7 @@ impl ZbugsApp {
             projects
                 .into_iter()
                 .map(|p| Choice {
+                    avatar: None,
                     checked: p.lower_case_name == current,
                     label: p.name.clone(),
                     value: Some(p.name),
@@ -1716,8 +1713,33 @@ impl ZbugsApp {
             .into_any_element()
     }
 
+    /// `button` opens `choices` with a search, as zbugs' comboboxes do;
+    /// see `picker::searchable`.
+    fn searchable(
+        &self,
+        id: &'static str,
+        multi: bool,
+        button: Button,
+        choices: Vec<Choice>,
+        on_pick: OnPick,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let app = cx.entity().downgrade();
+        picker::searchable(
+            id,
+            button,
+            choices,
+            multi,
+            Rc::new(move |value, window, cx| {
+                let _ = app.update(cx, |this, cx| on_pick(this, value, window, cx));
+            }),
+        )
+        .into_any_element()
+    }
+
     fn user_choices(users: &Live<Vec<User>>, none: &str, current: Option<&str>) -> Vec<Choice> {
         let mut choices = vec![Choice {
+            avatar: None,
             label: none.to_owned(),
             value: None,
             checked: current.is_none(),
@@ -1725,6 +1747,7 @@ impl ZbugsApp {
         let mut users = users.snapshot().value.clone().unwrap_or_default();
         users.sort_by_key(|u| u.login.to_lowercase());
         choices.extend(users.into_iter().map(|u| Choice {
+            avatar: Some(avatar_url(&u)),
             checked: current == Some(u.login.as_str()),
             label: u.login.clone(),
             value: Some(u.login),
@@ -1769,7 +1792,9 @@ impl ZbugsApp {
                 .into_any_element();
         }
         let f = &self.filters;
-        let creator = self.picker(
+        let creator = self.searchable(
+            "filter-creator",
+            false,
             Button::new("filter-creator")
                 .label(
                     f.creator
@@ -1781,7 +1806,9 @@ impl ZbugsApp {
             Rc::new(|this, login, _, cx| this.refilter(|f| f.creator = login, cx)),
             cx,
         );
-        let assignee = self.picker(
+        let assignee = self.searchable(
+            "filter-assignee",
+            false,
             Button::new("filter-assignee")
                 .label(
                     f.assignee
@@ -1803,16 +1830,20 @@ impl ZbugsApp {
             .collect::<Vec<_>>();
         names.sort_by_key(|n| n.to_lowercase());
         let mut label_choices = vec![Choice {
+            avatar: None,
             label: "Any label".into(),
             value: None,
             checked: f.labels.is_empty(),
         }];
         label_choices.extend(names.into_iter().map(|name| Choice {
+            avatar: None,
             checked: f.labels.contains(&name),
             label: name.clone(),
             value: Some(name),
         }));
-        let labels = self.picker(
+        let labels = self.searchable(
+            "filter-labels",
+            true,
             Button::new("filter-labels")
                 .label(match f.labels.as_slice() {
                     [] => "Labels".into(),
@@ -2216,6 +2247,7 @@ impl ZbugsApp {
         let edit = issue.clone();
         let assignee_id = issue.assignee_id.clone();
         let mut assignee_choices = vec![Choice {
+            avatar: None,
             label: "Unassigned".into(),
             value: None,
             checked: assignee_id.is_none(),
@@ -2223,13 +2255,16 @@ impl ZbugsApp {
         let mut crew = self.crew.snapshot().value.clone().unwrap_or_default();
         crew.sort_by_key(|u| u.login.to_lowercase());
         assignee_choices.extend(crew.into_iter().map(|u| Choice {
+            avatar: Some(avatar_url(&u)),
             checked: assignee_id.as_deref() == Some(u.id.as_str()),
             label: u.login,
             value: Some(u.id),
         }));
         let logged_in = self.session.auth.is_some();
         let id = issue.id.clone();
-        let assignee = self.picker(
+        let assignee = self.searchable(
+            "detail-assignee",
+            false,
             Button::new("detail-assignee")
                 .label(match &issue.assignee {
                     Some(u) => format!("Assigned to {}", u.login),
@@ -2245,6 +2280,7 @@ impl ZbugsApp {
         let mut label_choices: Vec<Choice> = all_labels
             .into_iter()
             .map(|l| Choice {
+                avatar: None,
                 checked: issue.labels.iter().flatten().any(|has| has.id == l.id),
                 label: l.name,
                 value: Some(l.id),
@@ -2253,6 +2289,7 @@ impl ZbugsApp {
         // The crew can make a new label, as in the web app's label picker.
         if self.session.auth.as_ref().is_some_and(|a| a.is_crew()) {
             label_choices.push(Choice {
+                avatar: None,
                 label: "New label…".into(),
                 value: Some(NEW_LABEL.into()),
                 checked: false,
@@ -2274,11 +2311,13 @@ impl ZbugsApp {
                 .disabled(!logged_in),
             vec![
                 Choice {
+                    avatar: None,
                     label: "Subscribed".into(),
                     value: Some("subscribe".into()),
                     checked: subscribed,
                 },
                 Choice {
+                    avatar: None,
                     label: "Unsubscribed".into(),
                     value: Some("unsubscribe".into()),
                     checked: !subscribed,
@@ -2302,11 +2341,13 @@ impl ZbugsApp {
                     .tooltip("Visibility"),
                 vec![
                     Choice {
+                        avatar: None,
                         label: "Public".into(),
                         value: Some("public".into()),
                         checked: !internal,
                     },
                     Choice {
+                        avatar: None,
                         label: "Internal".into(),
                         value: Some("internal".into()),
                         checked: internal,
@@ -2322,7 +2363,9 @@ impl ZbugsApp {
             )
         });
         let labeled = issue.clone();
-        let labels = self.picker(
+        let labels = self.searchable(
+            "detail-labels",
+            true,
             Button::new("detail-labels")
                 .label("Labels…")
                 .disabled(!logged_in),
