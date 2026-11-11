@@ -214,6 +214,14 @@ fn relative_time(ms: f64, now: f64) -> String {
     }
 }
 
+/// The comments and reactions on the shown issue so far, to tell others'
+/// new ones, as zbugs' toasts.
+struct Seen {
+    issue_id: String,
+    comments: BTreeSet<String>,
+    emoji: BTreeSet<String>,
+}
+
 /// What a reaction is on.
 #[derive(Clone, Copy)]
 enum Subject {
@@ -272,6 +280,7 @@ pub struct ZbugsApp {
     error: Option<String>,
     /// Marks the selected issue viewed after a second (`mark_viewed`).
     view_timer: Option<(String, Task<()>)>,
+    seen: Option<Seen>,
     _unsubscribe: Box<dyn Fn()>,
     _tasks: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -386,6 +395,7 @@ impl ZbugsApp {
             connection,
             error: None,
             view_timer: None,
+            seen: None,
             _unsubscribe: unsubscribe,
             _tasks: vec![watch],
             _subscriptions: subscriptions,
@@ -1174,6 +1184,53 @@ impl ZbugsApp {
             created: now_ms(),
         };
         self.mutate(UPDATE_NOTIFICATION.with(&args), cx);
+    }
+
+    /// Tells the user when someone else comments on or reacts to the
+    /// issue they're looking at, as zbugs' toasts do. What the issue
+    /// brought once the server confirmed it is already seen.
+    fn notice_activity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(detail) = self.detail.as_ref().filter(|d| d.is_synced()) else {
+            return;
+        };
+        let snapshot = detail.snapshot();
+        let Some(issue) = snapshot.value.as_ref().and_then(Option::as_ref) else {
+            return;
+        };
+        let comments = issue.comments.as_deref().unwrap_or_default();
+        let emoji = issue.emoji.as_deref().unwrap_or_default();
+        let seen = self.seen.as_ref().filter(|s| s.issue_id == issue.id);
+        if let Some(seen) = seen {
+            let me = self.session.auth.as_ref().map(|a| a.sub.as_str());
+            let others = |id: &str| Some(id) != me;
+            let new_comments = comments
+                .iter()
+                .filter(|c| !seen.comments.contains(&c.id) && others(&c.creator_id))
+                .filter_map(|c| c.creator.as_ref())
+                .map(|u| format!("{} posted a new comment", u.login));
+            let new_emoji = emoji
+                .iter()
+                .filter(|e| !seen.emoji.contains(&e.id) && others(&e.creator_id))
+                .filter_map(|e| {
+                    let u = e.creator.as_ref()?;
+                    Some(format!("{} reacted on this issue: {}", u.login, e.value))
+                });
+            for message in new_comments.chain(new_emoji).collect::<Vec<_>>() {
+                window.push_notification(Notification::info(message), cx);
+            }
+            let unchanged = comments.len() == seen.comments.len()
+                && emoji.len() == seen.emoji.len()
+                && comments.iter().all(|c| seen.comments.contains(&c.id))
+                && emoji.iter().all(|e| seen.emoji.contains(&e.id));
+            if unchanged {
+                return;
+            }
+        }
+        self.seen = Some(Seen {
+            issue_id: issue.id.clone(),
+            comments: comments.iter().map(|c| c.id.clone()).collect(),
+            emoji: emoji.iter().map(|e| e.id.clone()).collect(),
+        });
     }
 
     /// Marks the selected issue viewed once it has been on screen for a
@@ -2430,6 +2487,7 @@ impl Render for ZbugsApp {
         }
         self.keep_scroll_anchor();
         self.mark_viewed(cx);
+        self.notice_activity(window, cx);
         h_flex()
             .size_full()
             .bg(cx.theme().background)
