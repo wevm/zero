@@ -1,0 +1,43 @@
+[package]
+name = "zbugs-rune"
+version = "0.0.0"
+description = "zbugs on the Zero Rust client, with the Rune UI framework."
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+# Its own workspace: Rune needs a newer Rust than `zero-client`'s 1.88
+# (rust-toolchain.toml), and the app's dependencies stay out of `rust/`.
+[workspace]
+
+[dependencies]
+# zbugs' schema, queries, and mutators, shared with apps/zbugs-gpui.
+zbugs-model = { path = "../zbugs-model" }
+# The sync thread runs the client on tokio, with SQLite storage.
+zero-client = { path = "../../rust/zero-client", features = [
+  "tokio-transport",
+  "tls",
+  "sqlite",
+] }
+tokio = { version = "1", default-features = false, features = [
+  "macros",
+  "rt",
+  "sync",
+  "time",
+] }
+# Rune is pre-release: pinned to a rev of `dev`, which is never rewritten.
+rune = { git = "https://github.com/anomalyco/rune", rev = "0add0d576dfe85712ddbf8b51d2a24221b45e786", default-features = false, features = [
+  "accessibility",
+  "embedded-fonts",
+  "metal-backend",
+  "svg",
+] }
+rune-kit = { git = "https://github.com/anomalyco/rune", rev = "0add0d576dfe85712ddbf8b51d2a24221b45e786", features = [
+  "markdown",
+] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
