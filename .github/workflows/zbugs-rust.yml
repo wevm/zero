@@ -106,7 +106,8 @@ jobs:
           ZBUGS_E2E=online ./target/debug/zbugs-gpui
           # What the online run did, as the server stored it: closed,
           # assigned to its creator, labelled bug and a label it made, with its one comment
-          # edited (the other one deleted) and a reaction, its creator
+          # edited (the other one deleted) and a reaction in the skin tone
+          # its creator picked, its creator
           # unsubscribed, viewed since its last change, and internal. The
           # issue it deleted is gone.
           row="$(psql postgresql://postgres@127.0.0.1:5432/zbugs_gpui -tAc "
@@ -116,7 +117,9 @@ jobs:
               (SELECT count(*) FROM \"issueLabel\" il JOIN label l ON l.id = il.\"labelID\"
                 WHERE il.\"issueID\" = i.id AND l.name LIKE 'e2e-%'),
               (SELECT string_agg(c.body, ',') FROM comment c WHERE c.\"issueID\" = i.id),
-              (SELECT count(*) FROM emoji e WHERE e.\"subjectID\" = i.id),
+              (SELECT string_agg(e.value, ',') FROM emoji e WHERE e.\"subjectID\" = i.id),
+              (SELECT p.value FROM \"userPref\" p
+                WHERE p.key = 'emojiSkinTone' AND p.\"userID\" = i.\"creatorID\"),
               (SELECT n.subscribed FROM \"issueNotifications\" n
                 WHERE n.\"issueID\" = i.id AND n.\"userID\" = i.\"creatorID\"),
               (SELECT v.viewed >= i.modified FROM \"viewState\" v
@@ -126,7 +129,7 @@ jobs:
               i.visibility
             FROM issue i WHERE i.title = 'Created by the zbugs-gpui end-to-end run'")"
           echo "issue row: $row"
-          [ "$row" = 'f|t|1|1|Edited by the zbugs-gpui end-to-end run|1|f|t|0|internal' ]
+          [ "$row" = 'f|t|1|1|Edited by the zbugs-gpui end-to-end run|👍🏽|3|f|t|0|internal' ]
           # Offline: with the backend stopped, the window reopens from the
           # local store. Same URLs, as the store's name comes from them.
           pkill -f apps/zbugs-swift/server/server.ts
