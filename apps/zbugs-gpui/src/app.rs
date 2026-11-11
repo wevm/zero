@@ -222,6 +222,31 @@ struct Seen {
     emoji: BTreeSet<String>,
 }
 
+/// `user`'s avatar, round, as zbugs' `AvatarImage`; GitHub's at 64
+/// pixels, as `avatarURLWithSize` asks for.
+fn avatar(user: &User, size: Pixels) -> impl IntoElement {
+    let url = match http_client::Url::parse(&user.avatar) {
+        Ok(mut url) if url.host_str() == Some("avatars.githubusercontent.com") => {
+            let query = url
+                .query_pairs()
+                .filter(|(key, _)| key != "size")
+                .map(|(key, value)| (key.into_owned(), value.into_owned()))
+                .collect::<Vec<_>>();
+            url.query_pairs_mut()
+                .clear()
+                .extend_pairs(query)
+                .append_pair("size", "64");
+            url.to_string()
+        }
+        _ => user.avatar.clone(),
+    };
+    img(url)
+        .flex_none()
+        .size(size)
+        .rounded_full()
+        .with_fallback(move || div().size(size).into_any_element())
+}
+
 /// What a reaction is on.
 #[derive(Clone, Copy)]
 enum Subject {
@@ -2338,7 +2363,13 @@ impl ZbugsApp {
                     .text_color(cx.theme().muted_foreground)
                     .children(issue.short_id.map(|n| format!("#{n}")))
                     .child(if issue.open { "Open" } else { "Closed" })
-                    .child(format!("by {}", who(&issue.creator)))
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child("by")
+                            .children(issue.creator.as_deref().map(|u| avatar(u, px(18.))))
+                            .child(who(&issue.creator)),
+                    )
                     .child(format!(
                         "updated {}",
                         relative_time(issue.modified, now_ms())
@@ -2403,6 +2434,7 @@ impl ZbugsApp {
                             .gap_1()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
+                            .children(c.creator.as_deref().map(|u| avatar(u, px(18.))))
                             .child(who(&c.creator))
                             .child(div().flex_1().child(relative_time(c.created, now_ms())))
                             .when(self.can_change(&c.creator_id), |row| {

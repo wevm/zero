@@ -11,6 +11,7 @@ publish = false
 [workspace]
 
 [dependencies]
+anyhow = "1"
 # Relative times in the local time zone, as zbugs' `RelativeTime`.
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 futures = "0.3"
@@ -36,6 +37,8 @@ tokio-tungstenite = { version = "0.30", default-features = false, features = [
   "connect",
   "rustls-tls-webpki-roots",
 ] }
+# Avatars: GPUI loads images over HTTP with what the app gives it.
+ureq = { version = "3", default-features = false, features = ["rustls"] }
 zbugs-model = { path = "../zbugs-model" }
 # SQLite storage, so the app keeps its data across launches.
 zero-client = { path = "../../rust/zero-client", features = ["sqlite"] }
