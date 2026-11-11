@@ -1,7 +1,8 @@
-name: zbugs Rune (macOS)
+name: zbugs Rune
 
 # apps/zbugs-rune: zbugs on the Zero Rust client with the Rune UI framework.
-# Path-filtered because macOS runners are slow to start.
+# Path-filtered because macOS runners are slow to start. macOS runs the app
+# end to end; Linux checks that it builds, passes its tests, and renders.
 
 on:
   push:
@@ -116,4 +117,49 @@ jobs:
           path: |
             ${{ runner.temp }}/zbugs-rune.png
             ${{ runner.temp }}/zbugs-rune-e2e.png
+          if-no-files-found: ignore
+
+  linux:
+    name: zbugs Rune app (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: apps/zbugs-rune
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      # Rune's windowing libraries, and a software Vulkan driver for its
+      # headless renderer on a runner without a GPU.
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libwayland-dev mesa-vulkan-drivers
+      - name: Install the toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/zbugs-rune/target
+          key: zbugs-rune-${{ runner.os }}-${{ hashFiles('apps/zbugs-rune/Cargo.lock', 'apps/zbugs-rune/rust-toolchain.toml') }}
+          restore-keys: zbugs-rune-${{ runner.os }}-
+      - name: Lint
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Test
+        run: cargo test --locked
+      - name: Render headless
+        env:
+          ZBUGS_RUNE_DIR: ${{ runner.temp }}/zbugs-rune
+        run: |
+          cargo run --locked -- --snap "$RUNNER_TEMP/zbugs-rune-linux.png" --size 1180x760
+          test -s "$RUNNER_TEMP/zbugs-rune-linux.png"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: zbugs-rune-linux-snapshot
+          path: ${{ runner.temp }}/zbugs-rune-linux.png
           if-no-files-found: ignore
