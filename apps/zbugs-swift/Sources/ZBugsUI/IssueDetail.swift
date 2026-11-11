@@ -70,7 +70,7 @@
         VStack(alignment: .leading, spacing: 16) {
           header
           if !issue.description.isEmpty {
-            Text(markdown(issue.description)).textSelection(.enabled)
+            MarkdownView(issue.description)
           }
           Divider()
         }
@@ -171,7 +171,7 @@
           .foregroundStyle(.secondary)
         }
         .font(.subheadline)
-        Text(markdown(comment.body)).textSelection(.enabled)
+        MarkdownView(comment.body)
       }
       .frame(maxWidth: .infinity, alignment: .leading)
       .padding(12)
@@ -233,13 +233,6 @@
         .frame(minWidth: 420, minHeight: 300)
       #endif
     }
-  }
-
-  /// Markdown as `Text` shows it, or the plain text when it isn't.
-  func markdown(_ s: String) -> AttributedString {
-    (try? AttributedString(
-      markdown: s, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
-      ?? AttributedString(s)
   }
 
   /// Milliseconds since 1970, zbugs' timestamps.
