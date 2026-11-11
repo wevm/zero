@@ -150,6 +150,9 @@ pub struct ZbugsApp {
     /// Scroll to the selected issue once the list has it: after a launch
     /// restores the selection.
     reveal_selected: bool,
+    /// The first rows on screen and where they were, to keep them on
+    /// screen when rows above them come and go.
+    anchor: Vec<(String, usize)>,
     search: Entity<InputState>,
     comment: Entity<InputState>,
     scroll: UniformListScrollHandle,
@@ -267,6 +270,7 @@ impl ZbugsApp {
             comment_page: None,
             list_focus: cx.focus_handle(),
             reveal_selected: false,
+            anchor: Vec::new(),
             search,
             comment,
             scroll: UniformListScrollHandle::new(),
@@ -480,6 +484,45 @@ impl ZbugsApp {
             })
     }
 
+    /// Keeps the rows on screen where they are when rows above them come,
+    /// go, or move, as zbugs' list does: shifts the scroll by the move most
+    /// of the anchored rows made, so one row that moved itself (the issue
+    /// just edited) doesn't drag the list. At the top, the list stays at
+    /// the top.
+    fn keep_scroll_anchor(&mut self) {
+        let snapshot = self.list.snapshot();
+        let rows = snapshot.value.as_deref().unwrap_or_default();
+        let handle = self.scroll.0.borrow().base_handle.clone();
+        let mut offset = handle.offset();
+        if offset.y < px(0.) {
+            let mut shifts: Vec<isize> = self
+                .anchor
+                .iter()
+                .filter_map(|(id, was)| {
+                    let at = rows.iter().position(|r| &r.id == id)?;
+                    Some(at as isize - *was as isize)
+                })
+                .collect();
+            shifts.sort_unstable();
+            let shift = shifts
+                .chunk_by(|a, b| a == b)
+                .max_by_key(|run| run.len())
+                .map_or(0, |run| run[0]);
+            if shift != 0 {
+                offset.y -= px(shift as f32 * ROW_HEIGHT);
+                handle.set_offset(offset);
+            }
+        }
+        let top = (-offset.y.as_f32() / ROW_HEIGHT).max(0.) as usize;
+        self.anchor = rows
+            .iter()
+            .enumerate()
+            .skip(top)
+            .take(8)
+            .map(|(ix, r)| (r.id.clone(), ix))
+            .collect();
+    }
+
     /// Keeps what the window shows for the next launch.
     fn save(&self) {
         let saved = Saved {
@@ -544,6 +587,7 @@ impl ZbugsApp {
         }
         self.filters = filters;
         self.limit = PAGE;
+        self.anchor.clear();
         self.save();
         let (list, count) = Self::queries(&self.session, &self.filters, self.limit, cx);
         self.list = list;
@@ -1506,6 +1550,7 @@ impl Render for ZbugsApp {
                 self.reveal_selected = false;
             }
         }
+        self.keep_scroll_anchor();
         h_flex()
             .size_full()
             .bg(cx.theme().background)
