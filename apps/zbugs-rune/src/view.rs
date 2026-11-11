@@ -10,7 +10,7 @@ use rune_kit::{
     Select, TextArea, TextInput,
 };
 use zbugs_model::args::{SortDirection, SortField};
-use zbugs_model::schema::{Comment, Issue, IssueVisibility, Label};
+use zbugs_model::schema::{Comment, Issue, IssueVisibility, Label, User};
 use zero_client::client::ConnectionState;
 use zero_client::ivm::ResultType;
 
@@ -38,7 +38,7 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
         .w_full()
         .h_full()
         .fill(k.c.page)
-        .child(sidebar(s, k).pt(cx.titlebar_inset()))
+        .child(sidebar(s, k, &mut layer).pt(cx.titlebar_inset()))
         .child(divider())
         .child(issue_list(s, k).pt(cx.titlebar_inset()))
         .child(divider())
@@ -63,7 +63,7 @@ fn dialog_text(k: &Kit, t: impl Into<String>) -> El {
     text(t).font(k.ty.ui.lh(20.0)).color(k.c.text_muted).wrap()
 }
 
-fn sidebar(s: &App, k: &Kit) -> El {
+fn sidebar(s: &App, k: &Kit, layer: &mut Vec<El>) -> El {
     let status = Status::ALL.iter().position(|x| *x == s.filter.status);
     let titles: Vec<&str> = Status::ALL.iter().map(|x| x.title()).collect();
     let mut filters = col()
@@ -116,30 +116,55 @@ fn sidebar(s: &App, k: &Kit) -> El {
             .w_full()
             .key("order"),
         );
-    // Matched by login, so only once the user has synced.
-    if s.me.is_some() {
+    // Shortcuts for the creator and assignee filters, by the user's login,
+    // so only once it has synced, as the web app's "Created by me" links.
+    if let Some(me) = s.my_login() {
+        let mine = |f: &Option<String>| f.as_deref() == Some(me);
         filters = filters
             .child(
-                Checkbox::new(s.filter.created_by_me)
+                Checkbox::new(mine(&s.filter.creator))
                     .label("Created by Me")
                     .on_toggle(|s: &mut App| {
-                        s.filter.created_by_me = !s.filter.created_by_me;
-                        s.list_changed();
+                        let me = s.my_login().map(str::to_owned);
+                        let on = s.filter.creator != me;
+                        s.set_creator(me.filter(|_| on));
                     })
                     .build(k)
                     .key("created-by-me"),
             )
             .child(
-                Checkbox::new(s.filter.assigned_to_me)
+                Checkbox::new(mine(&s.filter.assignee))
                     .label("Assigned to Me")
                     .on_toggle(|s: &mut App| {
-                        s.filter.assigned_to_me = !s.filter.assigned_to_me;
-                        s.list_changed();
+                        let me = s.my_login().map(str::to_owned);
+                        let on = s.filter.assignee != me;
+                        s.set_assignee(me.filter(|_| on));
                     })
                     .build(k)
                     .key("assigned-to-me"),
             );
     }
+    filters = filters
+        .child(label_text(k, "Creator"))
+        .child(user_filter(
+            s,
+            k,
+            layer,
+            Picker::CreatorFilter,
+            &s.creators,
+            &s.filter.creator,
+        ))
+        .child(label_text(k, "Assignee"))
+        .child(user_filter(
+            s,
+            k,
+            layer,
+            Picker::AssigneeFilter,
+            &s.assignees,
+            &s.filter.assignee,
+        ))
+        .child(label_text(k, "Labels"))
+        .child(label_filter(s, k, layer));
     let account = match &s.auth {
         Some(auth) => col()
             .gap(6.0)
@@ -175,11 +200,7 @@ fn sidebar(s: &App, k: &Kit) -> El {
         .px(14.0)
         .pb(14.0)
         .gap(16.0)
-        .child(
-            text("Zero Bugs")
-                .font(k.ty.body_medium)
-                .color(k.c.text_base),
-        )
+        .child(project_picker(s, k, layer))
         .child(filters)
         .child(el().grow(1.0))
         .child(connection_badge(s, k))
@@ -191,6 +212,95 @@ fn sidebar(s: &App, k: &Kit) -> El {
                 .build(k)
                 .key("servers"),
         )
+}
+
+/// The project the list shows, as a menu when there's more than one.
+fn project_picker(s: &App, k: &Kit, layer: &mut Vec<El>) -> El {
+    let name = s.project().map_or("Zero Bugs", |p| p.name.as_str());
+    if s.projects.len() < 2 {
+        return text(name)
+            .key("project")
+            .font(k.ty.body_medium)
+            .color(k.c.text_base);
+    }
+    let names: Vec<&str> = s.projects.iter().map(|p| p.name.as_str()).collect();
+    Select::new("project", &names)
+        .width(202.0)
+        .current(Some(name))
+        .open(s.picker == Some(Picker::Project))
+        .on_toggle(|s: &mut App| s.toggle_picker(Picker::Project))
+        .on_close(|s: &mut App| s.picker = None)
+        .on_choose(|s: &mut App, name: &str, _| s.set_project(name))
+        .build(k, layer)
+}
+
+/// Filters the list by who created the issues, or who they're assigned to.
+fn user_filter(
+    s: &App,
+    k: &Kit,
+    layer: &mut Vec<El>,
+    picker: Picker,
+    users: &[User],
+    current: &Option<String>,
+) -> El {
+    const ANYONE: &str = "Anyone";
+    let mut options = vec![ANYONE];
+    options.extend(users.iter().map(|u| u.login.as_str()));
+    // A login from before the users synced, or from the "me" shortcut.
+    if let Some(c) = current.as_deref().filter(|c| !options.contains(c)) {
+        options.push(c);
+    }
+    let creator = picker == Picker::CreatorFilter;
+    let key = if creator {
+        "creator"
+    } else {
+        "assignee-filter"
+    };
+    Select::new(key, &options)
+        .width(202.0)
+        .current(Some(current.as_deref().unwrap_or(ANYONE)))
+        .open(s.picker.as_ref() == Some(&picker))
+        .on_toggle(move |s: &mut App| s.toggle_picker(picker.clone()))
+        .on_close(|s: &mut App| s.picker = None)
+        .on_choose(move |s: &mut App, login: &str, _| {
+            let login = (login != ANYONE).then(|| login.to_owned());
+            if creator {
+                s.set_creator(login);
+            } else {
+                s.set_assignee(login);
+            }
+        })
+        .build(k, layer)
+}
+
+/// Filters the list by labels, checked when it does.
+fn label_filter(s: &App, k: &Kit, layer: &mut Vec<El>) -> El {
+    let open = s.picker == Some(Picker::LabelFilter);
+    let title = match s.filter.labels.as_slice() {
+        [] => "Any".to_owned(),
+        names => names.join(", "),
+    };
+    let mut menu = Menu::new("label-filter")
+        .trigger(
+            Button::new(title)
+                .variant(ButtonVariant::Outline)
+                .expanded(open)
+                .on_press(|s: &mut App| s.toggle_picker(Picker::LabelFilter))
+                .build(k)
+                .w_full(),
+        )
+        .min_width(202.0)
+        .open(open)
+        .on_close(|s: &mut App| s.picker = None);
+    for l in &s.project_labels {
+        let name = l.name.clone();
+        menu = menu.item(
+            MenuItem::new(l.name.clone())
+                .checked(s.filter.labels.contains(&l.name))
+                .on_select(move |s: &mut App| s.toggle_label_filter(&name)),
+        );
+    }
+    menu.build(k, layer)
 }
 
 fn connection_badge(s: &App, k: &Kit) -> El {
