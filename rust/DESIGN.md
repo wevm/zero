@@ -230,8 +230,9 @@ npm, as `zero-rust`, with the first release (M7).
 cases per file, how many match JS exactly, how many match only under a
 documented exception, and how many fail.
 
-- Every checked-in file is listed. A file no suite replays yet is reported as
-  not implemented, never as passing.
+- Every checked-in file, and every generated corpus that is there, is
+  listed. A file no suite replays yet is reported as not implemented, never
+  as passing.
 - Each case is checked alone; a failing or panicking case is counted and the
   rest still run. CI fails on any failing case and, with
   `--require-generated`, on missing generated corpora.
@@ -269,26 +270,26 @@ in [PARITY.md](PARITY.md).
   on crates.io.
 
 `.github/workflows/rust-nightly.yml`, nightly and by hand: JS's answers to
-new random queries and pushes on fresh seeds (the ones Swift Nightly uses),
-five to ten times the PR checks' IVM cases, replayed by the conformance
-runner. Scheduled workflows run from the default branch, so it starts once
-`rust-client` is merged.
+new random queries, pushes and client scenarios over synced aggregates on
+fresh seeds (the ones Swift Nightly uses), five to ten times the PR checks'
+cases, replayed by the conformance runner. Scheduled workflows run from the
+default branch, so it starts once `rust-client` is merged.
 
-Still to come, with the milestones that need them: client scenario seeds in
-the nightly run (M4), macOS and Windows (M6, with the apps).
+Still to come, with the milestones that need them: macOS and Windows (M6,
+with the apps).
 
 ## Milestones
 
 Each milestone ends with green CI on `rust-client` and a short report.
 
-| Milestone | Scope                                                                                                                                                                                      | Done when                                                        | Status      |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- | ----------- |
-| M0        | Scaffolding: the `rust/` workspace, the conformance runner and its report, CI                                                                                                              | CI green on `rust-client`, running the runner on real vectors    | done        |
-| M1        | Primitives and wire: JSON, JS numbers, string orders, hashes, primary and aggregate keys, value comparison, LIKE, TTL, AST and normalization, query hashes, protocol messages, poke chunks | Every primitive, AST, and protocol vector file and corpus passes | done        |
-| M1.5      | Walking skeleton: connect to a real `zero-cache`, handshake, receive pokes, log rows                                                                                                       | Talks to a real server in CI                                     | done        |
-| M2        | IVM: memory sources, every client operator, pipeline builder, change application, aggregates                                                                                               | Curated and seeded-fuzz IVM vectors pass                         | done        |
-| M3        | Codegen: a Rust target for the schema codegen CLI                                                                                                                                          | Generated code compiles and drives M2                            | done        |
-| M4        | Client engine on memory storage: connection, query manager, pokes, mutators, rebase, auth, recovery                                                                                        | Client scenario vectors pass                                     | in progress |
-| M5        | The storage trait and lifecycle in the core, the memory backend, and SQLite behind the `sqlite` feature; scenarios on both; end-to-end against Postgres and `zero-cache`                   | Scenarios pass on memory and SQLite; end-to-end passes           |             |
-| M6        | The shared zbugs model, then `apps/zbugs-gpui` and `apps/zbugs-rune`                                                                                                                       | Both apps run against a real backend                             |             |
-| M7        | Hardening, docs, packaging, the first crates.io release (with tmm's approval)                                                                                                              | `0.1.0` ready to publish                                         |             |
+| Milestone | Scope                                                                                                                                                                                      | Done when                                                        | Status |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- | ------ |
+| M0        | Scaffolding: the `rust/` workspace, the conformance runner and its report, CI                                                                                                              | CI green on `rust-client`, running the runner on real vectors    | done   |
+| M1        | Primitives and wire: JSON, JS numbers, string orders, hashes, primary and aggregate keys, value comparison, LIKE, TTL, AST and normalization, query hashes, protocol messages, poke chunks | Every primitive, AST, and protocol vector file and corpus passes | done   |
+| M1.5      | Walking skeleton: connect to a real `zero-cache`, handshake, receive pokes, log rows                                                                                                       | Talks to a real server in CI                                     | done   |
+| M2        | IVM: memory sources, every client operator, pipeline builder, change application, aggregates                                                                                               | Curated and seeded-fuzz IVM vectors pass                         | done   |
+| M3        | Codegen: a Rust target for the schema codegen CLI                                                                                                                                          | Generated code compiles and drives M2                            | done   |
+| M4        | Client engine on memory storage: connection, query manager, pokes, mutators, rebase, auth, recovery                                                                                        | Client scenario vectors pass                                     | done   |
+| M5        | The storage trait and lifecycle in the core, the memory backend, and SQLite behind the `sqlite` feature; scenarios on both; end-to-end against Postgres and `zero-cache`                   | Scenarios pass on memory and SQLite; end-to-end passes           |        |
+| M6        | The shared zbugs model, then `apps/zbugs-gpui` and `apps/zbugs-rune`                                                                                                                       | Both apps run against a real backend                             |        |
+| M7        | Hardening, docs, packaging, the first crates.io release (with tmm's approval)                                                                                                              | `0.1.0` ready to publish                                         |        |

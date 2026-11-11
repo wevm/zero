@@ -1,5 +1,6 @@
 //! Client scenarios: `client/client.test.ts`, `client/harden-*.test.ts`,
-//! `harden-queries`, and `client/bughunt.test.ts`.
+//! `harden-queries`, and `client/bughunt.test.ts` with its seeded
+//! aggregate scenarios (`generated/client-aggregates-fuzz`).
 //!
 //! Each case is a scenario of steps an app and a server take
 //! (`client/harness.ts`): materializing views, mutating, receiving server
@@ -43,6 +44,12 @@ pub fn suites() -> Vec<Suite> {
         source: Source::Checked,
         check: scenario,
     })
+    // The seeded aggregate scenarios of `client/bughunt.test.ts`.
+    .chain([Suite {
+        file: "client-aggregates-fuzz",
+        source: Source::Generated,
+        check: scenario,
+    }])
     .collect()
 }
 

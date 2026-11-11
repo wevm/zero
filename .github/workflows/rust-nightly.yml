@@ -2,8 +2,8 @@ name: Rust Nightly
 
 # Long fuzz runs of the Rust client, on seeds the PR checks don't reach. Each
 # run takes new seeds from its run number, and a failure names the seed to
-# replay: JS's answers to new random queries and pushes, compared with
-# Rust's. The seeds are the ones Swift Nightly uses on the same run number.
+# replay: JS's answers to new random queries, pushes and client scenarios,
+# compared with Rust's. The seeds are the ones Swift Nightly uses on the same run number.
 
 on:
   schedule:
@@ -46,11 +46,12 @@ jobs:
           export IVM_FUZZ_SEED=$base IVM_FUZZ_CASES=6000
           export SWEEP_IVM_SEED=$base SWEEP_IVM_CASES=15000
           export HARDEN_IVM_SEED=$((base * 10)) HARDEN_IVM_SEEDS=5
+          export AGG_FUZZ_SEED=$base AGG_FUZZ_CASES=750
           env | grep -E '_(SEED|SEEDS|CASES)=' | sort
           # Five to ten times the cases outlast vitest's 10 s default; the
           # job's timeout bounds them.
           pnpm exec vitest run --test-timeout=600000 src/ivm/ivm.test.ts src/ivm/ivm-features.test.ts \
-            src/ivm/sweep-ivm.test.ts src/ivm/harden-ivm.test.ts
+            src/ivm/sweep-ivm.test.ts src/ivm/harden-ivm.test.ts src/client/bughunt.test.ts
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: differential-vectors
@@ -77,7 +78,14 @@ jobs:
       # rustup is preinstalled; rust-toolchain.toml picks the version.
       - name: Install the toolchain
         run: rustup show active-toolchain || rustup toolchain install
-      # Only the IVM corpora are written, so the others are missing; the
-      # report still fails on any case that differs from JS.
+      # Only the IVM corpora and the client aggregate scenarios are written,
+      # so the others are missing; the report still fails on any case that
+      # differs from JS. Both run, so one's failure doesn't hide the other's.
       - name: Compare with JS
-        run: cargo run --locked --release -p zero-conformance -- --summary "$GITHUB_STEP_SUMMARY" ivm
+        run: |
+          cargo build --locked --release -p zero-conformance
+          status=0
+          for filter in ivm client-aggregates; do
+            cargo run --locked --release -p zero-conformance -- --summary "$GITHUB_STEP_SUMMARY" "$filter" || status=1
+          done
+          exit $status

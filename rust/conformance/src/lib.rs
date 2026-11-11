@@ -205,8 +205,9 @@ pub fn suites() -> Vec<Suite> {
     suites::all()
 }
 
-/// Replays every suite, and lists the checked-in vector files that no suite
-/// replays. `filter` keeps the files whose names contain it.
+/// Replays every suite, and lists the checked-in vector files and the
+/// generated corpora there that no suite replays. `filter` keeps the files
+/// whose names contain it.
 pub fn run(filter: Option<&str>) -> Result<Report, String> {
     let vectors = vectors_dir();
     let generated = generated_dir();
@@ -223,10 +224,17 @@ pub fn run(filter: Option<&str>) -> Result<Report, String> {
     for s in &suites {
         by_file.entry((s.source, s.file)).or_default().push(s);
     }
+    // Generated corpora are listed when they are there.
+    let generated_files = list_json(&generated).unwrap_or_default();
     let mut files = Vec::new();
-    for name in &checked_files {
-        if keep(name) && !by_file.contains_key(&(Source::Checked, name.as_str())) {
-            files.push(not_implemented(&vectors, name));
+    for (source, dir, names) in [
+        (Source::Checked, &vectors, &checked_files),
+        (Source::Generated, &generated, &generated_files),
+    ] {
+        for name in names {
+            if keep(name) && !by_file.contains_key(&(source, name.as_str())) {
+                files.push(not_implemented(dir, source, name));
+            }
         }
     }
     for ((source, name), suites) in by_file {
@@ -293,16 +301,16 @@ fn empty(name: &str, source: Source, status: Status, cases: usize) -> FileReport
     }
 }
 
-fn not_implemented(dir: &Path, name: &str) -> FileReport {
+fn not_implemented(dir: &Path, source: Source, name: &str) -> FileReport {
     match read(dir, name) {
         Ok(file) => {
             let cases = file
                 .as_ref()
                 .and_then(|f| f.get("cases")?.as_array())
                 .map_or(0, Vec::len);
-            empty(name, Source::Checked, Status::NotImplemented, cases)
+            empty(name, source, Status::NotImplemented, cases)
         }
-        Err(e) => empty(name, Source::Checked, Status::Unreadable(e), 0),
+        Err(e) => empty(name, source, Status::Unreadable(e), 0),
     }
 }
 
