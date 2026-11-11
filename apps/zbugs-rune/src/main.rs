@@ -5,6 +5,7 @@
 //! it; their handlers change it and ask the sync thread for other rows or
 //! to run a mutator.
 
+mod icons;
 mod images;
 mod login;
 mod settings;
@@ -82,15 +83,21 @@ pub struct Filter {
     pub labels: Vec<String>,
 }
 
-/// A dropdown on the issue page.
+/// An open dropdown or menu.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Picker {
+    /// The issue page's.
     Labels,
     Visibility,
     Notifications,
     /// The sidebar's.
     Project,
+    Status,
+    Sort,
+    Order,
     LabelFilter,
+    /// The list header's account menu.
+    Account,
     /// Reactions to the issue (its ID) or to one of its comments.
     Emoji(String),
 }
@@ -1149,7 +1156,9 @@ fn main() {
         poll: Some(|s, _, _| s.images.poll()),
         ..AppSpec::new("Zero Bugs", (1180.0, 760.0), placeholder, view::view)
     };
-    let app = rune::App::new(spec);
+    // The headers and the toolbar share the titlebar's band, as a Mac
+    // app's unified toolbar does.
+    let app = rune::App::new(spec).titlebar(rune::Titlebar::new(view::BAR));
     let handle = app.handle();
     app.init(move || App::new(handle)).on_close(on_close).run();
 }
