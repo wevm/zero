@@ -25,6 +25,8 @@ tokio = { version = "1", default-features = false, features = [
   "sync",
   "time",
 ] }
+# The emoji picker's emoji, names, shortcodes, and skin tones.
+emojis = "0.9"
 # Fetches avatars and the images in issues and comments, over rustls.
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 # The login token goes in the Keychain, the Credential Manager, or the

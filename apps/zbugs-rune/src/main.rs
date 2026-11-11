@@ -20,14 +20,14 @@ use zbugs_model::args::{
     EditCommentArgs, IdField, IssueDetailArgs, IssueKey, IssueLabelArgs, IssueListCountArgs,
     IssueListV2Args, LabelsOrderByNameArgs, ListContextParams, NotificationType,
     NotificationUpdateArgs, PageDirection, ProjectArgs, RemoveLabelArgs, SortDirection, SortField,
-    UpdateIssueArgs, UsersFilter, UsersForProjectArgs, ViewStateArgs,
+    UpdateIssueArgs, UserPrefArgs, UsersFilter, UsersForProjectArgs, ViewStateArgs,
 };
 use zbugs_model::mutators::{
     ADD_COMMENT, ADD_EMOJI_TO_COMMENT, ADD_EMOJI_TO_ISSUE, ADD_LABEL, CREATE_AND_ADD_LABEL,
     CREATE_ISSUE, DELETE_ISSUE, DELETE_ISSUES, EDIT_COMMENT, REMOVE_COMMENT, REMOVE_EMOJI,
-    REMOVE_LABEL, SET_VIEW_STATE, UPDATE_ISSUE, UPDATE_NOTIFICATION,
+    REMOVE_LABEL, SET_USER_PREF, SET_VIEW_STATE, UPDATE_ISSUE, UPDATE_NOTIFICATION,
 };
-use zbugs_model::schema::{Comment, Emoji, Issue, IssueVisibility, Label, Project, User};
+use zbugs_model::schema::{Comment, Emoji, Issue, IssueVisibility, Label, Project, User, UserPref};
 use zbugs_model::{AuthData, Context, MutateRequest, ZERO_PROJECT_NAME, make_id, queries};
 use zero_client::client::ConnectionState;
 use zero_client::ivm::ResultType;
@@ -80,19 +80,6 @@ pub struct Filter {
     /// Label names: an issue must have all of them.
     pub labels: Vec<String>,
 }
-
-/// The reactions the emoji menu offers, with their CLDR names, which the
-/// web app shows on hover.
-pub const REACTIONS: [(&str, &str); 8] = [
-    ("👍", "thumbs up"),
-    ("👎", "thumbs down"),
-    ("😄", "grinning face with smiling eyes"),
-    ("🎉", "party popper"),
-    ("😕", "confused face"),
-    ("❤️", "red heart"),
-    ("🚀", "rocket"),
-    ("👀", "eyes"),
-];
 
 /// A dropdown on the issue page.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -166,6 +153,10 @@ pub struct App {
     pub comments: Vec<Comment>,
     comments_limit: i64,
     pub comment: TextEdit,
+    /// The emoji picker's search, and the skin tone it shows, as the web
+    /// picker keeps it in the `emojiSkinTone` user pref (0 is the default).
+    pub emoji_search: TextEdit,
+    pub skin_tone: u8,
     /// The comment being edited in place, and its text.
     pub editing_comment: Option<String>,
     pub comment_edit: TextEdit,
@@ -190,6 +181,9 @@ pub struct App {
     /// A GitHub login waiting for the browser.
     pub github_login: Option<login::LoopbackLogin>,
 }
+
+/// The user pref the web app keeps the emoji picker's skin tone in.
+const SKIN_TONE_PREF: &str = "emojiSkinTone";
 
 /// The choices of the issue page's Visibility and Notifications menus.
 pub const VISIBILITY: [&str; 2] = ["Public", "Internal"];
@@ -277,6 +271,8 @@ impl App {
             comments: Vec::new(),
             comments_limit: COMMENTS_PAGE,
             comment: TextEdit::new(""),
+            emoji_search: TextEdit::new(""),
+            skin_tone: 0,
             editing_comment: None,
             comment_edit: TextEdit::new(""),
             confirm: None,
@@ -349,8 +345,17 @@ impl App {
                 move |auth: &Context| queries::USER.call(&sub, auth.as_ref()),
                 |s, me, _, _| s.me = me,
             );
+            self.sync.watch(
+                "skin-tone",
+                |auth: &Context| queries::USER_PREF.call(&SKIN_TONE_PREF.to_owned(), auth.as_ref()),
+                |s, pref: Option<UserPref>, _, _| {
+                    s.skin_tone = pref.and_then(|p| p.value.parse().ok()).unwrap_or(0);
+                },
+            );
         } else {
             self.sync.unwatch("me");
+            self.sync.unwatch("skin-tone");
+            self.skin_tone = 0;
         }
         self.watch_list();
         if let Some(id) = self.selected.clone() {
@@ -828,7 +833,22 @@ impl App {
         self.mutate(UPDATE_NOTIFICATION.with(&args));
     }
 
+    /// Shows emoji in this skin tone (0 to 5, light to dark after the
+    /// default), and keeps it for the user, as the web picker does.
+    pub fn set_skin_tone(&mut self, tone: u8) {
+        self.skin_tone = tone;
+        let args = UserPrefArgs {
+            key: SKIN_TONE_PREF.to_owned(),
+            value: tone.to_string(),
+        };
+        self.mutate(SET_USER_PREF.with(&args));
+    }
+
     pub fn toggle_picker(&mut self, picker: Picker) {
+        if matches!(picker, Picker::Emoji(_)) {
+            self.emoji_search = TextEdit::new("");
+            self.emoji_search.focused = true;
+        }
         self.picker = (self.picker.as_ref() != Some(&picker)).then_some(picker);
     }
 
@@ -889,10 +909,9 @@ impl App {
             self.mutate(REMOVE_EMOJI.with(&id));
             return;
         }
-        let annotation = REACTIONS
-            .iter()
-            .find(|(v, _)| *v == value)
-            .map(|(_, a)| *a)
+        // Its CLDR name, as the web picker sends it.
+        let annotation = emojis::get(value)
+            .map(emojis::Emoji::name)
             .or_else(|| {
                 let e = self.reactions(subject_id).iter().find(|e| e.value == value);
                 e.map(|e| e.annotation.as_str())

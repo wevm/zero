@@ -6,8 +6,8 @@ use std::sync::OnceLock;
 
 use rune::{Cx, El, GrowthSpec, ScrollSpec, col, el, row, text};
 use rune_kit::{
-    Button, ButtonVariant, Checkbox, Dialog, Kit, Markdown, Menu, MenuItem, SegmentedControl,
-    Select, TextArea, TextInput,
+    Button, ButtonVariant, Checkbox, Dialog, Kit, Markdown, Menu, MenuItem, Popover,
+    SegmentedControl, Select, TextArea, TextInput,
 };
 use zbugs_model::args::{SortDirection, SortField};
 use zbugs_model::schema::{Comment, Issue, IssueVisibility, Label, User};
@@ -15,7 +15,7 @@ use zero_client::client::ConnectionState;
 use zero_client::ivm::ResultType;
 
 use crate::images;
-use crate::{App, Confirm, NOTIFICATIONS, Picker, REACTIONS, Sheet, Status, VISIBILITY};
+use crate::{App, Confirm, NOTIFICATIONS, Picker, Sheet, Status, VISIBILITY};
 
 /// The rows' estimated height, for the virtual list.
 const ROW: f32 = 58.0;
@@ -93,8 +93,8 @@ fn sidebar(s: &App, k: &Kit, layer: &mut Vec<El>) -> El {
                     s.filter.status = Status::ALL[i];
                     s.list_changed();
                 })
+                .width(None)
                 .build(k)
-                .w_full()
                 .key("status"),
         )
         .child(label_text(k, "Sort"))
@@ -111,8 +111,8 @@ fn sidebar(s: &App, k: &Kit, layer: &mut Vec<El>) -> El {
                 };
                 s.list_changed();
             })
+            .width(None)
             .build(k)
-            .w_full()
             .key("sort"),
         )
         .child(label_text(k, "Order"))
@@ -129,8 +129,8 @@ fn sidebar(s: &App, k: &Kit, layer: &mut Vec<El>) -> El {
                 };
                 s.list_changed();
             })
+            .width(None)
             .build(k)
-            .w_full()
             .key("order"),
         );
     // Shortcuts for the creator and assignee filters, by the user's login,
@@ -1012,26 +1012,108 @@ fn reactions(s: &App, subject_id: &str, k: &Kit, layer: &mut Vec<El>) -> El {
     }
     let picker = Picker::Emoji(subject_id.to_owned());
     let open = s.picker.as_ref() == Some(&picker);
-    let mut menu = Menu::new(format!("add-reaction-{subject_id}"))
+    let mut popover = Popover::new(format!("add-reaction-{subject_id}"))
         .trigger(
             Button::new("+ 🙂")
                 .variant(ButtonVariant::Ghost)
-                .expanded(open)
                 .on_press(move |s: &mut App| s.toggle_picker(picker.clone()))
                 .build(k)
                 .key("add-reaction"),
         )
-        .min_width(280.0)
+        .label("Emoji")
         .open(open)
         .on_close(|s: &mut App| s.picker = None);
-    for (value, name) in REACTIONS {
-        let subject = subject_id.to_owned();
-        menu = menu.item(
-            MenuItem::new(format!("{value}  {name}"))
-                .on_select(move |s: &mut App| s.toggle_reaction(&subject, value)),
+    if open {
+        popover = popover.child(emoji_picker(s, subject_id, k));
+    }
+    r.child(popover.build(k, layer))
+}
+
+/// The skin tones the picker offers, as the web picker's: the default,
+/// then light to dark.
+const SKIN_TONES: [emojis::SkinTone; 6] = [
+    emojis::SkinTone::Default,
+    emojis::SkinTone::Light,
+    emojis::SkinTone::MediumLight,
+    emojis::SkinTone::Medium,
+    emojis::SkinTone::MediumDark,
+    emojis::SkinTone::Dark,
+];
+
+/// The most a picker shows at once: the search narrows the rest.
+const EMOJI_SHOWN: usize = 96;
+
+/// The newest emoji the system fonts draw (Apple Color Emoji and Noto Color
+/// Emoji in 2026): later ones would show as empty boxes.
+const EMOJI_NEWEST: emojis::EmojiVersion = emojis::EmojiVersion::new(16, 0);
+
+/// Every emoji, searchable by name and GitHub shortcode, in the user's skin
+/// tone, as the web app's emoji picker.
+fn emoji_picker(s: &App, subject_id: &str, k: &Kit) -> El {
+    let query = s.emoji_search.text.trim().to_lowercase();
+    let tone = SKIN_TONES[usize::from(s.skin_tone).min(SKIN_TONES.len() - 1)];
+    let hands: Vec<String> = SKIN_TONES
+        .iter()
+        .map(|t| {
+            emojis::get("✋")
+                .and_then(|e| e.with_skin_tone(*t))
+                .map_or_else(String::new, |e| e.as_str().to_owned())
+        })
+        .collect();
+    let hands: Vec<&str> = hands.iter().map(String::as_str).collect();
+    let matches = emojis::iter()
+        .filter(|e| {
+            e.emoji_version() <= EMOJI_NEWEST
+                && (query.is_empty()
+                    || e.name().contains(&query)
+                    || e.shortcodes().any(|c| c.contains(&query)))
+        })
+        .take(EMOJI_SHOWN);
+    let mut grid = row().key("emoji-grid").w_full().flex_wrap();
+    for e in matches {
+        let e = e.with_skin_tone(tone).unwrap_or(e);
+        let (subject, value) = (subject_id.to_owned(), e.as_str());
+        grid = grid.child(
+            text(value)
+                .key(format!("emoji-{value}"))
+                .role("button")
+                .label(e.name())
+                .help(e.name())
+                .font(k.ty.body)
+                .w(32.0)
+                .h(32.0)
+                .center()
+                .radius(6.0)
+                .on_press(move |s: &mut App| s.toggle_reaction(&subject, value)),
         );
     }
-    r.child(menu.build(k, layer))
+    col()
+        .w(288.0)
+        .gap(8.0)
+        .child(
+            TextInput::new(&s.emoji_search)
+                .placeholder("Search")
+                .on_edit(|s: &mut App| &mut s.emoji_search)
+                .build(k)
+                .key("emoji-search"),
+        )
+        .child(
+            SegmentedControl::new(&hands, Some(usize::from(s.skin_tone)))
+                .on_pick(|s: &mut App, i, _| s.set_skin_tone(i as u8))
+                .width(None)
+                .build(k)
+                .key("skin-tone"),
+        )
+        .child(
+            col()
+                .key("emoji-scroll")
+                .w_full()
+                .h(232.0)
+                .scroll(ScrollSpec {
+                    stick_bottom: false,
+                })
+                .child(grid),
+        )
 }
 
 fn composer(s: &App, k: &Kit) -> El {
