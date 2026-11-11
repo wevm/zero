@@ -24,7 +24,8 @@ use zbugs_model::mutators::{
     REMOVE_EMOJI, REMOVE_LABEL, UPDATE_ISSUE,
 };
 use zbugs_model::queries::{
-    ALL_PROJECTS, ISSUE_DETAIL, ISSUE_LIST_COUNT, ISSUE_LIST_V2, LABELS, USERS_FOR_PROJECT,
+    ALL_PROJECTS, COMMENTS_PAGE, ISSUE_DETAIL, ISSUE_LIST_COUNT, ISSUE_LIST_V2, LABELS,
+    USERS_FOR_PROJECT,
 };
 use zbugs_model::schema::{Comment, Emoji, Issue, Label, Project, User};
 use zbugs_model::{ZERO_PROJECT_NAME, make_id};
@@ -34,6 +35,21 @@ use zero_client::ttl::Ttl;
 /// Rows the list asks for at a time, as zbugs' list pages.
 const PAGE: i64 = 100;
 const ROW_HEIGHT: f32 = 52.;
+/// Comments `issueDetail` loads, and how many more "Show older comments"
+/// adds.
+const COMMENT_PAGE: i64 = 50;
+
+actions!(zbugs, [SelectNext, SelectPrevious]);
+
+/// j/k and the arrow keys move the selection while the list has focus.
+pub fn bind_keys(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("j", SelectNext, Some("IssueList")),
+        KeyBinding::new("down", SelectNext, Some("IssueList")),
+        KeyBinding::new("k", SelectPrevious, Some("IssueList")),
+        KeyBinding::new("up", SelectPrevious, Some("IssueList")),
+    ]);
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Status {
@@ -103,6 +119,12 @@ pub struct ZbugsApp {
     labels: Live<Vec<Label>>,
     selected: Option<String>,
     detail: Option<Live<Option<Issue>>>,
+    /// How many of the selected issue's comments to show, newest first.
+    comments_limit: i64,
+    /// Past the comments `issueDetail` brings: `commentsPage`, newest
+    /// first, up to `comments_limit`.
+    comment_page: Option<Live<Vec<Comment>>>,
+    list_focus: FocusHandle,
     search: Entity<InputState>,
     comment: Entity<InputState>,
     scroll: UniformListScrollHandle,
@@ -202,6 +224,9 @@ impl ZbugsApp {
             labels,
             selected: None,
             detail: None,
+            comments_limit: COMMENT_PAGE,
+            comment_page: None,
+            list_focus: cx.focus_handle(),
             search,
             comment,
             scroll: UniformListScrollHandle::new(),
@@ -314,6 +339,47 @@ impl ZbugsApp {
         );
         self.detail = Some(Live::new(&self.session.zero, q, &ttl(), cx));
         self.selected = Some(id);
+        self.comments_limit = COMMENT_PAGE;
+        self.comment_page = None;
+        cx.notify();
+    }
+
+    /// Selects the issue `delta` rows from the selected one, or the first.
+    fn move_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let next = {
+            let snapshot = self.list.snapshot();
+            let rows = snapshot.value.as_deref().unwrap_or_default();
+            if rows.is_empty() {
+                return;
+            }
+            let at = self
+                .selected
+                .as_ref()
+                .and_then(|id| rows.iter().position(|r| &r.id == id));
+            let ix = match at {
+                Some(ix) => (ix as isize + delta).clamp(0, rows.len() as isize - 1) as usize,
+                None => 0,
+            };
+            (ix, rows[ix].id.clone())
+        };
+        self.select(next.1, cx);
+        self.scroll.scroll_to_item(next.0, ScrollStrategy::Nearest);
+    }
+
+    fn show_older_comments(&mut self, cx: &mut Context<Self>) {
+        let Some(issue_id) = self.selected.clone() else {
+            return;
+        };
+        self.comments_limit += COMMENT_PAGE;
+        let args = CommentsPageArgs {
+            issue_id,
+            limit: self.comments_limit,
+            start: None,
+            dir: PageDirection::Backward,
+            inclusive: false,
+        };
+        let q = COMMENTS_PAGE.call(&args, self.session.auth.as_ref());
+        self.comment_page = Some(Live::new(&self.session.zero, q, &ttl(), cx));
         cx.notify();
     }
 
@@ -778,7 +844,7 @@ impl ZbugsApp {
                 .child(if synced { "No issues" } else { "Loading…" })
                 .into_any_element();
         }
-        uniform_list(
+        let list = uniform_list(
             "issues",
             len,
             cx.processor(move |this, range: Range<usize>, window, cx| {
@@ -791,9 +857,16 @@ impl ZbugsApp {
             }),
         )
         .track_scroll(&self.scroll)
-        .w_full()
-        .flex_1()
-        .into_any_element()
+        .size_full();
+        div()
+            .track_focus(&self.list_focus)
+            .key_context("IssueList")
+            .on_action(cx.listener(|this, _: &SelectNext, _, cx| this.move_selection(1, cx)))
+            .on_action(cx.listener(|this, _: &SelectPrevious, _, cx| this.move_selection(-1, cx)))
+            .w_full()
+            .flex_1()
+            .child(list)
+            .into_any_element()
     }
 
     fn render_row(&self, issue: &Issue, cx: &mut Context<Self>) -> impl IntoElement {
@@ -821,7 +894,10 @@ impl ZbugsApp {
             .border_color(cx.theme().border)
             .when(selected, |d| d.bg(cx.theme().accent))
             .hover(|d| d.bg(cx.theme().accent))
-            .on_click(cx.listener(move |this, _, _, cx| this.select(id.clone(), cx)))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.select(id.clone(), cx);
+                window.focus(&this.list_focus, cx);
+            }))
             .child(
                 h_flex()
                     .gap_2()
@@ -959,8 +1035,18 @@ impl ZbugsApp {
                 cx,
             );
         };
+        // The newest comments first; shown oldest first. The page takes
+        // over once it has at least what the issue brought.
         let mut comments: Vec<Comment> = issue.comments.clone().unwrap_or_default();
-        // The latest 50, newest first; shown oldest first.
+        if let Some(page) = self
+            .comment_page
+            .as_ref()
+            .and_then(|p| p.snapshot().value.clone())
+            && page.len() >= comments.len()
+        {
+            comments = page;
+        }
+        let more = comments.len() as i64 >= self.comments_limit;
         comments.reverse();
         let who = |u: &Option<Box<zbugs_model::schema::User>>| {
             u.as_ref().map_or("nobody".to_owned(), |u| u.login.clone())
@@ -1084,8 +1170,21 @@ impl ZbugsApp {
                 div()
                     .text_sm()
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child(format!("Comments ({})", comments.len())),
+                    .child(format!(
+                        "Comments ({}{})",
+                        comments.len(),
+                        if more { "+" } else { "" }
+                    )),
             )
+            .when(more, |d| {
+                d.child(
+                    Button::new("older-comments")
+                        .small()
+                        .ghost()
+                        .label("Show older comments")
+                        .on_click(cx.listener(|this, _, _, cx| this.show_older_comments(cx))),
+                )
+            })
             .children(comments.into_iter().map(|c| {
                 let reactions = self.render_reactions(
                     Subject::Comment,

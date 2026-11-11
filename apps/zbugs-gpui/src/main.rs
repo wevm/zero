@@ -12,6 +12,7 @@ fn main() {
         .with_assets(gpui_kit::assets::Assets)
         .run(|cx| {
             gpui_kit::init(cx);
+            app::bind_keys(cx);
             let session = session::Session::load(cx);
             let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
             gpui_kit::open_window(
