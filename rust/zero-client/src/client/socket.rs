@@ -7,7 +7,9 @@ use std::rc::Rc;
 /// A frame from the server.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SocketMessage {
+    /// A text frame.
     Text(String),
+    /// A binary frame.
     Binary(Vec<u8>),
 }
 
@@ -26,6 +28,7 @@ pub trait SocketFactory {
 
 /// An open or opening WebSocket.
 pub trait SocketConnection {
+    /// Sends a text frame.
     fn send(&self, text: &str);
     /// Closes the socket. No more events are delivered after this.
     fn close(&self, code: Option<u16>);
@@ -33,7 +36,11 @@ pub trait SocketConnection {
 
 /// Receives the events of one socket.
 pub trait SocketEvents {
+    /// The socket opened.
     fn did_open(&self);
+    /// A frame arrived.
     fn did_receive(&self, message: SocketMessage);
+    /// The socket closed, with its close code and reason; `was_clean` when the
+    /// closing handshake finished.
     fn did_close(&self, code: u16, reason: &str, was_clean: bool);
 }

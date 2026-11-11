@@ -43,15 +43,18 @@ macro_rules! string_enum {
     ($(#[$m:meta])* $name:ident { $($variant:ident = $s:literal),* $(,)? }) => {
         $(#[$m])*
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-        pub enum $name { $($variant),* }
+        pub enum $name { $(#[doc = concat!("`", $s, "`")] $variant),* }
 
         impl $name {
+            /// Every value, in declaration order.
             pub const ALL: &[$name] = &[$($name::$variant),*];
 
+            /// The value as JS writes it.
             pub fn as_str(self) -> &'static str {
                 match self { $($name::$variant => $s),* }
             }
 
+            /// The value JS writes as `s`, if any.
             pub fn parse(s: &str) -> Option<$name> {
                 match s { $($s => Some($name::$variant),)* _ => None }
             }

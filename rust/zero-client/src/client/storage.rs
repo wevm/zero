@@ -29,6 +29,7 @@ pub enum ZeroStorage {
     /// `~/.local/share/zero`) elsewhere.
     #[cfg(feature = "sqlite")]
     Sqlite {
+        /// Where the files go; `None` for the default directory.
         directory: Option<std::path::PathBuf>,
     },
     /// A store the app brings.
@@ -53,10 +54,13 @@ impl fmt::Debug for ZeroStorage {
 /// (`StorageFailureError`): the client keeps running on memory.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StorageFailure {
+    /// What failed.
     pub kind: StorageFailureKind,
+    /// The error, as the store reported it.
     pub message: String,
 }
 
+/// What part of the store failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum StorageFailureKind {
     /// The device is out of space.
@@ -68,6 +72,7 @@ pub enum StorageFailureKind {
 }
 
 impl StorageFailureKind {
+    /// The kind as JS names it.
     pub fn as_str(self) -> &'static str {
         match self {
             StorageFailureKind::Full => "full",
@@ -78,6 +83,7 @@ impl StorageFailureKind {
 }
 
 impl StorageFailure {
+    /// A failure of `kind`.
     pub fn new(kind: StorageFailureKind, message: impl Into<String>) -> Self {
         StorageFailure {
             kind,
@@ -125,7 +131,9 @@ pub struct DroppedDatabases {
 /// the same mutators (`ClientGroup`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct ClientGroupRecord {
+    /// The group's ID.
     pub id: String,
+    /// The names of the mutators its clients register.
     pub mutator_names: Vec<String>,
     /// The server lost the group, so no new client joins it.
     pub disabled: bool,
@@ -134,7 +142,9 @@ pub struct ClientGroupRecord {
 /// A client that used the database (`ClientV6`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct ClientRecord {
+    /// The client's ID.
     pub id: String,
+    /// The group the client is in.
     pub client_group_id: String,
     /// When the client last showed it was running, in ms since 1970.
     pub heartbeat: f64,
@@ -143,7 +153,9 @@ pub struct ClientRecord {
 /// A deleted client the server may not know about yet.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClientIdPair {
+    /// The client's group.
     pub client_group_id: String,
+    /// The client's ID.
     pub client_id: String,
 }
 
@@ -166,10 +178,15 @@ pub type AggregateWrites = Vec<(String, Option<Value>)>;
 /// A mutation that ran on a client and the server has not confirmed.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StoredMutation {
+    /// The client that ran it.
     pub client_id: String,
+    /// Its ID, counting up from 1 per client.
     pub id: f64,
+    /// The mutator it ran.
     pub name: String,
+    /// Its arguments.
     pub args: Value,
+    /// When it ran, in ms since 1970.
     pub timestamp: f64,
     /// JS persists these in the mutation's commit; the client runs the
     /// mutation again at launch, before any query registers the aggregates
@@ -181,8 +198,11 @@ pub struct StoredMutation {
 /// not yet in it.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct StoredGroup {
+    /// The replica: every key the server synced, with its value.
     pub entries: BTreeMap<String, Value>,
+    /// The server's cookie for the snapshot.
     pub cookie: Value,
+    /// The last mutation of each client that the snapshot includes.
     pub last_mutation_ids: BTreeMap<String, f64>,
     /// In the order they were added.
     pub mutations: Vec<StoredMutation>,
@@ -193,7 +213,9 @@ pub struct StoredGroup {
 pub struct StoredClients {
     /// In the order they were added: a client joins the first that fits.
     pub groups: Vec<ClientGroupRecord>,
+    /// The clients, in the order they were added.
     pub clients: Vec<ClientRecord>,
+    /// The deleted clients the server may not know about yet.
     pub deleted_clients: Vec<ClientIdPair>,
     /// The profile ID of the device (`profileID`): one for every database
     /// of the backend.
@@ -209,6 +231,7 @@ pub enum StorageOp {
     DeleteGroup(String),
     /// Adds the client, or updates its heartbeat.
     PutClient(ClientRecord),
+    /// Deletes the clients.
     DeleteClients(Vec<String>),
     /// Replaces the deleted clients.
     SetDeletedClients(Vec<ClientIdPair>),
@@ -216,26 +239,40 @@ pub enum StorageOp {
     /// whether it cleared every key first, and its cookie and last mutation
     /// IDs. Drops the mutations the IDs confirm.
     UpdateSnapshot {
+        /// The group.
         group: String,
+        /// The keys the poke changed, with their values (`None` for deleted).
         changes: Vec<(String, Option<Value>)>,
+        /// Whether the poke cleared every key first.
         cleared: bool,
+        /// The snapshot's cookie.
         cookie: Value,
+        /// The last mutation of each client the snapshot includes.
         last_mutation_ids: BTreeMap<String, f64>,
     },
+    /// Adds a mutation that is pending.
     AddMutation {
+        /// The group.
         group: String,
+        /// The mutation.
         mutation: StoredMutation,
     },
     /// What a rebase of a pending mutation wrote to synced aggregate rows.
     SetAggregateWrites {
+        /// The group.
         group: String,
+        /// The client that ran the mutation.
         client_id: String,
+        /// The mutation's ID.
         id: f64,
+        /// The aggregate rows it wrote.
         writes: AggregateWrites,
     },
     /// Drops the mutations the IDs confirm, keeping the snapshot.
     DeleteConfirmedMutations {
+        /// The group.
         group: String,
+        /// The last mutation of each client the server confirmed.
         last_mutation_ids: BTreeMap<String, f64>,
     },
 }

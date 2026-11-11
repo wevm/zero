@@ -27,6 +27,13 @@
 //! the `sqlite` feature, and an app can bring its own store with
 //! [`ZeroStorage::Custom`](client::ZeroStorage::Custom).
 //!
+//! # Modules
+//!
+//! An app uses [`client`], [`typed`] (through generated code), [`query`],
+//! [`ttl`], and [`testing`]; their items are all documented. The others
+//! (`ast`, `ivm`, `protocol`, and the primitives) are the engine's parts,
+//! public so the conformance runner can check each against JS.
+//!
 //! # Getting started
 //!
 //! A client is made from the app's schema (generated from its TypeScript
@@ -81,6 +88,7 @@
 
 pub mod ast;
 pub mod builder;
+#[warn(missing_docs)]
 pub mod client;
 pub mod compare;
 pub mod decode;
@@ -92,12 +100,17 @@ pub mod keys;
 pub mod like;
 pub mod map;
 pub mod protocol;
+#[warn(missing_docs)]
 pub mod query;
 pub mod schema;
 pub mod sort;
 pub mod strings;
+#[warn(missing_docs)]
 pub mod testing;
 #[cfg(feature = "tokio-transport")]
+#[warn(missing_docs)]
 pub mod tokio_transport;
+#[warn(missing_docs)]
 pub mod ttl;
+#[warn(missing_docs)]
 pub mod typed;

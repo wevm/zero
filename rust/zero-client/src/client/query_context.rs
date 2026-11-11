@@ -170,14 +170,20 @@ fn query_id(query: &AnyQuery) -> String {
     }
 }
 
+/// Which rows `Zero::run` returns.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RunType {
+    /// What the local replica holds now.
     Unknown,
+    /// Once the store holds a server-confirmed result, from this connection or
+    /// an earlier one.
     Cached,
+    /// Once the server has confirmed the result on this connection.
     Complete,
 }
 
 impl RunType {
+    /// The type as JS names it.
     pub fn as_str(self) -> &'static str {
         match self {
             RunType::Unknown => "unknown",
@@ -186,6 +192,7 @@ impl RunType {
         }
     }
 
+    /// The type JS names `s`, if any.
     pub fn parse(s: &str) -> Option<RunType> {
         Some(match s {
             "unknown" => RunType::Unknown,
@@ -830,18 +837,24 @@ impl MaterializedView {
         ViewInner::forward(&self.0);
     }
 
+    /// The view's rows now.
     pub fn data(&self) -> ViewValue {
         self.view().data()
     }
 
+    /// Whether the server has confirmed the rows on this connection
+    /// (`Complete`) or an earlier one (`Cached`), or not yet (`Unknown`), or
+    /// the query failed (`Error`).
     pub fn result_type(&self) -> ResultType {
         self.view().listener_result_type().0
     }
 
+    /// Why the query failed, when it did.
     pub fn error(&self) -> Option<ErroredQuery> {
         self.view().listener_result_type().1
     }
 
+    /// Whether `destroy` was called.
     pub fn is_destroyed(&self) -> bool {
         self.0.destroyed.get()
     }

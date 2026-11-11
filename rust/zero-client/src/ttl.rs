@@ -8,15 +8,20 @@ use crate::json::{Value, number};
 /// immediately. Durations are clamped to 10 minutes when sent to the server.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Ttl {
+    /// Expires as soon as nothing uses the query.
     None,
+    /// Never expires.
     Forever,
+    /// A duration in milliseconds.
     Milliseconds(f64),
     /// A duration string as JS accepts it: a number followed by `s`, `m`,
     /// `h`, `d`, or `y` (for example `"5m"`).
     String(String),
 }
 
+/// The TTL a query gets when it doesn't name one: five minutes.
 pub const DEFAULT_TTL_MILLISECONDS: f64 = 5.0 * 60.0 * 1000.0;
+/// The longest TTL the server keeps a query for: ten minutes.
 pub const MAX_TTL_MILLISECONDS: f64 = 10.0 * 60.0 * 1000.0;
 
 fn multiplier(unit: char) -> Option<f64> {
@@ -31,20 +36,25 @@ fn multiplier(unit: char) -> Option<f64> {
 }
 
 impl Ttl {
+    /// The default TTL as a string.
     pub const DEFAULT: &str = "5m";
 
+    /// `n` seconds.
     pub fn seconds(n: f64) -> Ttl {
         Ttl::String(number::format(n) + "s")
     }
 
+    /// `n` minutes.
     pub fn minutes(n: f64) -> Ttl {
         Ttl::String(number::format(n) + "m")
     }
 
+    /// `n` hours.
     pub fn hours(n: f64) -> Ttl {
         Ttl::String(number::format(n) + "h")
     }
 
+    /// `n` days.
     pub fn days(n: f64) -> Ttl {
         Ttl::String(number::format(n) + "d")
     }
@@ -58,6 +68,7 @@ impl Ttl {
         }
     }
 
+    /// The TTL as JS holds it.
     pub fn to_json(&self) -> Value {
         match self {
             Ttl::None => "none".into(),

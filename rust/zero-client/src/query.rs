@@ -24,7 +24,9 @@ pub const SUBQUERY_ALIAS_PREFIX: &str = "zsubq_";
 /// The name and arguments of the named query a query was built by.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CustomQueryId {
+    /// The query's name.
     pub name: String,
+    /// Its arguments.
     pub args: Vec<Value>,
 }
 
@@ -32,11 +34,14 @@ pub struct CustomQueryId {
 /// (`staticParam` in `packages/zql/src/query/static-param.ts`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct StaticParameter {
+    /// What the value is taken from.
     pub anchor: Anchor,
+    /// The field of it.
     pub field: StaticField,
 }
 
 impl StaticParameter {
+    /// The field `field` of `anchor`.
     pub fn new(anchor: Anchor, field: impl Into<String>) -> Self {
         StaticParameter {
             anchor,
@@ -44,6 +49,7 @@ impl StaticParameter {
         }
     }
 
+    /// The value at `path` in `anchor`.
     pub fn path(anchor: Anchor, path: Vec<String>) -> Self {
         StaticParameter {
             anchor,
@@ -84,6 +90,8 @@ pub struct AnyQuery {
 }
 
 impl AnyQuery {
+    /// All rows of `table`, for the system `system` (an app uses
+    /// `System::Client`).
     pub fn new(schema: Arc<Schema>, table: impl Into<String>, system: System) -> Self {
         let table = table.into();
         AnyQuery {
@@ -98,26 +106,32 @@ impl AnyQuery {
         }
     }
 
+    /// The schema the query is built on.
     pub fn schema(&self) -> &Arc<Schema> {
         &self.schema
     }
 
+    /// The table the query reads.
     pub fn table(&self) -> &str {
         &self.table
     }
 
+    /// The query's AST.
     pub fn ast(&self) -> &Ast {
         &self.ast
     }
 
+    /// How the query's view shapes its rows.
     pub fn format(&self) -> &Format {
         &self.format
     }
 
+    /// The system the query is built for.
     pub fn system(&self) -> System {
         self.system
     }
 
+    /// The name and arguments the query is named by, for a named query.
     pub fn custom_query_id(&self) -> Option<&CustomQueryId> {
         self.custom_query_id.as_ref()
     }
@@ -175,6 +189,8 @@ impl AnyQuery {
         }
     }
 
+    /// Names the query, as JS's `defineQueries` does: the server runs its own
+    /// query by `name` with `args`, and the client syncs what that returns.
     pub fn name_and_args(mut self, name: impl Into<String>, args: Vec<Value>) -> Self {
         self.custom_query_id = Some(CustomQueryId {
             name: name.into(),
@@ -267,6 +283,7 @@ impl AnyQuery {
         self.with(ast, None)
     }
 
+    /// At most `limit` rows.
     pub fn limit(self, limit: i64) -> Self {
         if let Some(m) = self
             .not_aggregated("limit")
@@ -291,6 +308,8 @@ impl AnyQuery {
         self.with(ast, None)
     }
 
+    /// Orders the rows by `field`, after any earlier `order_by`; the primary
+    /// key breaks ties.
     pub fn order_by(self, field: impl Into<String>, direction: Direction) -> Self {
         let field = field.into();
         if let Some(j) = &self.current_junction {
@@ -546,6 +565,8 @@ impl AnyQuery {
         self.aggregate(AggregateFunction::Avg, Some(field.into()), None)
     }
 
+    /// Reduces the query to the average of the numbers at `path` in the JSON
+    /// `column`.
     pub fn avg_json(self, column: impl Into<String>, path: Vec<JsonPathSegment>) -> Self {
         self.aggregate(AggregateFunction::Avg, Some(column.into()), Some(path))
     }
@@ -565,6 +586,7 @@ impl AnyQuery {
         self.aggregate(AggregateFunction::Max, Some(field.into()), None)
     }
 
+    /// Reduces the query to the greatest value at `path` in the JSON `column`.
     pub fn max_json(self, column: impl Into<String>, path: Vec<JsonPathSegment>) -> Self {
         self.aggregate(AggregateFunction::Max, Some(column.into()), Some(path))
     }
@@ -819,34 +841,42 @@ impl AnyGroupedQuery {
         self.reduce(AggregateFunction::Count, None, None)
     }
 
+    /// Each group's sum of `field`.
     pub fn sum(self, field: impl Into<String>) -> AnyQuery {
         self.reduce(AggregateFunction::Sum, Some(field.into()), None)
     }
 
+    /// Each group's sum of the numbers at `path` in the JSON `column`.
     pub fn sum_json(self, column: impl Into<String>, path: Vec<JsonPathSegment>) -> AnyQuery {
         self.reduce(AggregateFunction::Sum, Some(column.into()), Some(path))
     }
 
+    /// Each group's average of `field`.
     pub fn avg(self, field: impl Into<String>) -> AnyQuery {
         self.reduce(AggregateFunction::Avg, Some(field.into()), None)
     }
 
+    /// Each group's average of the numbers at `path` in the JSON `column`.
     pub fn avg_json(self, column: impl Into<String>, path: Vec<JsonPathSegment>) -> AnyQuery {
         self.reduce(AggregateFunction::Avg, Some(column.into()), Some(path))
     }
 
+    /// Each group's least value of `field`.
     pub fn min(self, field: impl Into<String>) -> AnyQuery {
         self.reduce(AggregateFunction::Min, Some(field.into()), None)
     }
 
+    /// Each group's least value at `path` in the JSON `column`.
     pub fn min_json(self, column: impl Into<String>, path: Vec<JsonPathSegment>) -> AnyQuery {
         self.reduce(AggregateFunction::Min, Some(column.into()), Some(path))
     }
 
+    /// Each group's greatest value of `field`.
     pub fn max(self, field: impl Into<String>) -> AnyQuery {
         self.reduce(AggregateFunction::Max, Some(field.into()), None)
     }
 
+    /// Each group's greatest value at `path` in the JSON `column`.
     pub fn max_json(self, column: impl Into<String>, path: Vec<JsonPathSegment>) -> AnyQuery {
         self.reduce(AggregateFunction::Max, Some(column.into()), Some(path))
     }
@@ -875,6 +905,7 @@ impl<'a> ExpressionBuilder<'a> {
         }
     }
 
+    /// `field` compares to `value` by `op`.
     pub fn cmp(
         &self,
         field: impl Into<String>,
@@ -884,6 +915,7 @@ impl<'a> ExpressionBuilder<'a> {
         cmp_condition(field.into(), op, ValuePosition::Literal(value.into()))
     }
 
+    /// `field` compares to a value of the context by `op`.
     pub fn cmp_param(
         &self,
         field: impl Into<String>,
@@ -931,6 +963,7 @@ impl<'a> ExpressionBuilder<'a> {
         }
     }
 
+    /// The value at the JSON path compares to a value of the context by `op`.
     pub fn cmp_json_param(
         &self,
         reference: &JsonPathReference,
@@ -972,14 +1005,17 @@ impl<'a> ExpressionBuilder<'a> {
         }
     }
 
+    /// Rows that every condition matches.
     pub fn and(&self, conditions: Vec<Condition>) -> Condition {
         and_conditions(conditions)
     }
 
+    /// Rows that any condition matches.
     pub fn or(&self, conditions: Vec<Condition>) -> Condition {
         or_conditions(conditions)
     }
 
+    /// Rows that `condition` doesn't match.
     pub fn not(&self, condition: Condition) -> Condition {
         negate_condition(condition)
     }
@@ -1003,7 +1039,9 @@ impl<'a> ExpressionBuilder<'a> {
 /// (`ColumnRef` in `packages/zql/src/query/expression.ts`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct JsonPathReference {
+    /// The JSON column.
     pub column: String,
+    /// The path in its value.
     pub path: Vec<JsonPathSegment>,
 }
 

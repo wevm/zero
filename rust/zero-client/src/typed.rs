@@ -66,6 +66,7 @@ impl std::error::Error for ZeroValueError {}
 pub trait ZeroValue: Sized {
     /// Reads a value from a row; a missing column reads as `null`.
     fn from_zero_value(value: &Value) -> Result<Self, ZeroValueError>;
+    /// Writes the value as the row and the query builder hold it.
     fn to_zero_value(&self) -> Value;
     /// What a row's `null` reads as when the schema says the column can't
     /// be null; `None` to fail. Databases drift from schemas, and JS shows
@@ -186,6 +187,7 @@ impl<T: NumericZeroValue> NumericZeroValue for Option<T> {}
 /// included (`OrderedSelector`). `Unwrapped` is the type of its non-null
 /// values, the aggregate's type.
 pub trait OrderedZeroValue: ZeroValue {
+    /// The type of the column's non-null values.
     type Unwrapped: ZeroValue + OptionalQueryElement;
 }
 impl OrderedZeroValue for f64 {
@@ -284,6 +286,7 @@ pub fn schema_from_json(json: &str) -> Arc<Schema> {
 /// A row of a query's result: a row struct, or a row of `group_by` or
 /// `distinct`.
 pub trait QueryElement: Sized {
+    /// Reads the row from a view's entry.
     fn from_entry(entry: &ViewEntry) -> Result<Self, ZeroValueError>;
 }
 
@@ -305,6 +308,7 @@ pub trait ZeroRow: QueryElement {
 /// Some of a row's columns, by client column name: what an update or a
 /// delete writes. For generated code.
 pub trait ColumnValues {
+    /// The columns, by client column name.
     fn column_values(&self) -> Object;
 }
 
@@ -360,8 +364,11 @@ impl<'tx, R: ZeroRow> TypedTableMutator<'tx, R> {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub enum ColumnUpdate<V> {
     #[default]
+    /// Leaves the column as it is.
     Unchanged,
+    /// Sets the column to null.
     Null,
+    /// Sets the column to the value.
     Set(V),
 }
 
@@ -387,6 +394,7 @@ impl<V: ZeroValue> ColumnUpdate<V> {
 /// What a query materializes to: its rows (`Vec<Row>`, `Option<Row>` after
 /// `one()`), or the value of an aggregate, such as the `i64` of `count()`.
 pub trait QueryValue: Sized {
+    /// Reads the query's result from its view.
     fn from_view(view: &ViewValue) -> Result<Self, ZeroValueError>;
 }
 
@@ -401,6 +409,8 @@ impl<E: QueryElement> QueryValue for Vec<E> {
 /// rows implement it with [`optional_row`], generated enumerations with
 /// [`optional_value`].
 pub trait OptionalQueryElement: Sized {
+    /// Reads the query's result from its view: `None` for no row, or for an
+    /// aggregate over no rows.
     fn optional_from_view(view: &ViewValue) -> Result<Option<Self>, ZeroValueError>;
 }
 
@@ -473,6 +483,7 @@ impl<R, V> fmt::Debug for Column<R, V> {
 }
 
 impl<R, V> Column<R, V> {
+    /// The column named `name` (its client name). For generated code.
     pub const fn new(name: &'static str) -> Self {
         Column {
             name,
@@ -535,21 +546,27 @@ impl<R, V: ZeroValue> Column<R, V> {
         self.compare(op, ValuePosition::Literal(value))
     }
 
+    /// The column is less than `value`.
     pub fn lt(self, value: V) -> Condition {
         self.cmp(SimpleOperator::Lt, value)
     }
+    /// The column is at most `value`.
     pub fn le(self, value: V) -> Condition {
         self.cmp(SimpleOperator::Le, value)
     }
+    /// The column is greater than `value`.
     pub fn gt(self, value: V) -> Condition {
         self.cmp(SimpleOperator::Gt, value)
     }
+    /// The column is at least `value`.
     pub fn ge(self, value: V) -> Condition {
         self.cmp(SimpleOperator::Ge, value)
     }
+    /// The column `IS` `value`: as `=`, but null matches null.
     pub fn is(self, value: V) -> Condition {
         self.cmp(SimpleOperator::Is, value)
     }
+    /// The column `IS NOT` `value`: as `!=`, but null matches non-null values.
     pub fn is_not(self, value: V) -> Condition {
         self.cmp(SimpleOperator::IsNot, value)
     }
@@ -572,15 +589,21 @@ fn array<V: ZeroValue>(values: Vec<V>) -> Value {
 macro_rules! like {
     ($t:ty) => {
         impl<R> Column<R, $t> {
+            /// The column matches the SQL `LIKE` pattern, with `%` and `_` as
+            /// wildcards (`like::escape_like` escapes them).
             pub fn like(self, pattern: &str) -> Condition {
                 self.pattern(SimpleOperator::Like, pattern)
             }
+            /// The column doesn't match the `LIKE` pattern.
             pub fn not_like(self, pattern: &str) -> Condition {
                 self.pattern(SimpleOperator::NotLike, pattern)
             }
+            /// The column matches the pattern ignoring case (`ILIKE`).
             pub fn ilike(self, pattern: &str) -> Condition {
                 self.pattern(SimpleOperator::Ilike, pattern)
             }
+            /// The column doesn't match the pattern ignoring case (`NOT
+            /// ILIKE`).
             pub fn not_ilike(self, pattern: &str) -> Condition {
                 self.pattern(SimpleOperator::NotIlike, pattern)
             }
@@ -617,6 +640,7 @@ impl<R> fmt::Debug for ColumnRef<R> {
 }
 
 impl<R> ColumnRef<R> {
+    /// The column's client name.
     pub fn name(&self) -> &'static str {
         self.name
     }
@@ -652,6 +676,7 @@ impl<R, D> fmt::Debug for Relationship<R, D> {
 }
 
 impl<R, D> Relationship<R, D> {
+    /// The relationship named `name`. For generated code.
     pub const fn new(name: &'static str) -> Self {
         Relationship {
             name,
@@ -792,6 +817,7 @@ impl<R, T> Query<R, T> {
         &self.any
     }
 
+    /// The untyped query this one wraps.
     pub fn into_any(self) -> AnyQuery {
         self.any
     }
@@ -882,10 +908,13 @@ impl<R: ZeroRow, T> Query<R, T> {
         self.map(|q| q.related(relationship.name, |a| sub(Query::from_any(a)).any))
     }
 
+    /// Orders the rows by `column`, after any earlier `order_by`; the primary
+    /// key breaks ties.
     pub fn order_by<V>(self, column: Column<R, V>, direction: Direction) -> Self {
         self.map(|q| q.order_by(column.name, direction))
     }
 
+    /// At most `limit` rows.
     pub fn limit(self, limit: i64) -> Self {
         self.map(|q| q.limit(limit))
     }
@@ -934,6 +963,8 @@ impl<R: ZeroRow, T> Query<R, T> {
         self.to(|q| q.avg(column.name))
     }
 
+    /// Reduces the query to the average of the numbers at `path` in the JSON
+    /// `column`.
     pub fn avg_json<V>(
         self,
         column: Column<R, V>,
@@ -947,6 +978,7 @@ impl<R: ZeroRow, T> Query<R, T> {
         self.to(|q| q.min(column.name))
     }
 
+    /// Reduces the query to the least value at `path` in the JSON `column`.
     pub fn min_json<V>(
         self,
         column: Column<R, V>,
@@ -961,6 +993,7 @@ impl<R: ZeroRow, T> Query<R, T> {
         self.to(|q| q.max(column.name))
     }
 
+    /// Reduces the query to the greatest value at `path` in the JSON `column`.
     pub fn max_json<V>(
         self,
         column: Column<R, V>,
@@ -1039,6 +1072,7 @@ impl<R> RowExpression<'_, '_, R> {
         self.builder.or(conditions)
     }
 
+    /// Rows that `condition` doesn't match.
     pub fn not(&self, condition: Condition) -> Condition {
         self.builder.not(condition)
     }
@@ -1053,14 +1087,17 @@ pub struct JsonPath<'a, 'q> {
 }
 
 impl JsonPath<'_, '_> {
+    /// The value at the path compares to `value` by `op`.
     pub fn cmp(&self, op: SimpleOperator, value: Value) -> Condition {
         self.builder.cmp_json(&self.reference, op, value)
     }
 
+    /// The value at the path compares to a value of the context by `op`.
     pub fn cmp_param(&self, op: SimpleOperator, param: &StaticParameter) -> Condition {
         self.builder.cmp_json_param(&self.reference, op, param)
     }
 
+    /// The value at the path equals `value` (`IS` for null).
     pub fn eq(&self, value: Value) -> Condition {
         let op = if value.is_null() {
             SimpleOperator::Is
@@ -1070,6 +1107,7 @@ impl JsonPath<'_, '_> {
         self.cmp(op, value)
     }
 
+    /// The value at the path differs from `value` (`IS NOT` for null).
     pub fn ne(&self, value: Value) -> Condition {
         let op = if value.is_null() {
             SimpleOperator::IsNot
@@ -1079,21 +1117,27 @@ impl JsonPath<'_, '_> {
         self.cmp(op, value)
     }
 
+    /// The value at the path is less than `value`.
     pub fn lt(&self, value: Value) -> Condition {
         self.cmp(SimpleOperator::Lt, value)
     }
+    /// The value at the path is at most `value`.
     pub fn le(&self, value: Value) -> Condition {
         self.cmp(SimpleOperator::Le, value)
     }
+    /// The value at the path is greater than `value`.
     pub fn gt(&self, value: Value) -> Condition {
         self.cmp(SimpleOperator::Gt, value)
     }
+    /// The value at the path is at least `value`.
     pub fn ge(&self, value: Value) -> Condition {
         self.cmp(SimpleOperator::Ge, value)
     }
+    /// The value at the path `IS` `value`.
     pub fn is(&self, value: Value) -> Condition {
         self.cmp(SimpleOperator::Is, value)
     }
+    /// The value at the path `IS NOT` `value`.
     pub fn is_not(&self, value: Value) -> Condition {
         self.cmp(SimpleOperator::IsNot, value)
     }
@@ -1101,18 +1145,23 @@ impl JsonPath<'_, '_> {
     pub fn is_in(&self, values: Vec<Value>) -> Condition {
         self.cmp(SimpleOperator::In, Value::Array(values))
     }
+    /// The value at the path is none of `values`.
     pub fn not_in(&self, values: Vec<Value>) -> Condition {
         self.cmp(SimpleOperator::NotIn, Value::Array(values))
     }
+    /// The value at the path matches the `LIKE` pattern.
     pub fn like(&self, pattern: &str) -> Condition {
         self.cmp(SimpleOperator::Like, Value::String(pattern.to_owned()))
     }
+    /// The value at the path doesn't match the `LIKE` pattern.
     pub fn not_like(&self, pattern: &str) -> Condition {
         self.cmp(SimpleOperator::NotLike, Value::String(pattern.to_owned()))
     }
+    /// The value at the path matches the pattern ignoring case (`ILIKE`).
     pub fn ilike(&self, pattern: &str) -> Condition {
         self.cmp(SimpleOperator::Ilike, Value::String(pattern.to_owned()))
     }
+    /// The value at the path doesn't match the pattern ignoring case.
     pub fn not_ilike(&self, pattern: &str) -> Condition {
         self.cmp(SimpleOperator::NotIlike, Value::String(pattern.to_owned()))
     }
@@ -1130,18 +1179,22 @@ pub struct GroupedQuery<R> {
 }
 
 impl<R> GroupedQuery<R> {
+    /// The untyped grouped query this one wraps.
     pub fn any(&self) -> &AnyGroupedQuery {
         &self.any
     }
 
+    /// Each group's row count.
     pub fn count(self) -> Grouped<R, i64> {
         Query::from_any(self.any.count())
     }
 
+    /// Each group's sum of `column`.
     pub fn sum<V: NumericZeroValue>(self, column: Column<R, V>) -> Grouped<R, Option<f64>> {
         Query::from_any(self.any.sum(column.name))
     }
 
+    /// Each group's sum of the numbers at `path` in the JSON `column`.
     pub fn sum_json<V>(
         self,
         column: Column<R, V>,
@@ -1150,10 +1203,12 @@ impl<R> GroupedQuery<R> {
         Query::from_any(self.any.sum_json(column.name, path))
     }
 
+    /// Each group's average of `column`.
     pub fn avg<V: NumericZeroValue>(self, column: Column<R, V>) -> Grouped<R, Option<f64>> {
         Query::from_any(self.any.avg(column.name))
     }
 
+    /// Each group's average of the numbers at `path` in the JSON `column`.
     pub fn avg_json<V>(
         self,
         column: Column<R, V>,
@@ -1162,6 +1217,7 @@ impl<R> GroupedQuery<R> {
         Query::from_any(self.any.avg_json(column.name, path))
     }
 
+    /// Each group's least value of `column`.
     pub fn min<V: OrderedZeroValue>(
         self,
         column: Column<R, V>,
@@ -1169,6 +1225,7 @@ impl<R> GroupedQuery<R> {
         Query::from_any(self.any.min(column.name))
     }
 
+    /// Each group's least value at `path` in the JSON `column`.
     pub fn min_json<V>(
         self,
         column: Column<R, V>,
@@ -1177,6 +1234,7 @@ impl<R> GroupedQuery<R> {
         Query::from_any(self.any.min_json(column.name, path))
     }
 
+    /// Each group's greatest value of `column`.
     pub fn max<V: OrderedZeroValue>(
         self,
         column: Column<R, V>,
@@ -1184,6 +1242,7 @@ impl<R> GroupedQuery<R> {
         Query::from_any(self.any.max(column.name))
     }
 
+    /// Each group's greatest value at `path` in the JSON `column`.
     pub fn max_json<V>(
         self,
         column: Column<R, V>,

@@ -29,6 +29,7 @@ type MutatorBody<C> = dyn Fn(&Transaction, Option<&Value>, &C) -> Result<Option<
 /// only depend on the transaction, the arguments, and the context. It
 /// returns what the caller's `client` outcome carries.
 pub struct Mutator<C> {
+    /// The name the server runs it by: its path in the TS mutator registry.
     pub name: String,
     body: Rc<MutatorBody<C>>,
 }
@@ -168,22 +169,27 @@ impl<C: 'static> Zero<C> {
         self.engine().client_group_id.clone()
     }
 
+    /// The user the client syncs for.
     pub fn user_id(&self) -> Option<&str> {
         self.core.options.user_id.as_deref()
     }
 
+    /// The app's schema.
     pub fn schema(&self) -> &Arc<Schema> {
         &self.core.schema
     }
 
+    /// What the mutators are given besides their arguments.
     pub fn context(&self) -> &C {
         &self.context
     }
 
+    /// Whether the client is closed.
     pub fn closed(&self) -> bool {
         self.engine().closed()
     }
 
+    /// The client's connection to zero-cache.
     pub fn connection(&self) -> &Connection {
         &self.core.connection
     }
@@ -449,6 +455,7 @@ impl Connection {
         });
     }
 
+    /// The state now.
     pub fn state(&self) -> ConnectionState {
         self.0.state.borrow().clone()
     }
