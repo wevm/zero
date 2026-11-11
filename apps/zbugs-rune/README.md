@@ -38,6 +38,17 @@ ZBUGS_PG=postgresql://user:password@127.0.0.1:6434/postgres \
   node apps/zbugs-swift/server/server.ts
 ```
 
+To keep its data across restarts (the database, the replica, its keys,
+and so the token it prints), add `ZBUGS_KEEP=1` and a working directory.
+The backend doesn't create the directory, so make it first:
+
+```sh
+mkdir -p ~/.zbugs-backend
+ZBUGS_KEEP=1 ZBUGS_DIR=~/.zbugs-backend \
+  ZBUGS_PG=postgresql://user:password@127.0.0.1:6434/postgres \
+  node apps/zbugs-swift/server/server.ts
+```
+
 It prints a token for a crew user and `ready ws://127.0.0.1:4848
 http://127.0.0.1:5173`, the servers the app uses by default. Then:
 
