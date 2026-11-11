@@ -3,9 +3,10 @@
 //! a user would through its own controls' handlers, and exits 0 when every
 //! step shows up, or 1 with the step that didn't.
 //!
-//! - `ZBUGS_E2E=online`: lists issues, creates one, comments, reacts,
-//!   labels, assigns, filters, and closes it, and waits for the server to
-//!   confirm each mutation. CI then checks the rows in Postgres.
+//! - `ZBUGS_E2E=online`: lists issues, creates one, comments, edits and
+//!   deletes comments, reacts, labels, assigns, filters, and closes it,
+//!   and waits for the server to confirm each mutation. CI then checks the
+//!   rows in Postgres.
 //! - `ZBUGS_E2E=offline`, with the backend stopped: the window reopens on
 //!   the filters and issue the online run left, from the local store.
 //!
@@ -18,6 +19,8 @@ use std::time::{Duration, Instant};
 /// The issue the online run creates, which CI looks for in Postgres.
 pub const TITLE: &str = "Created by the zbugs-gpui end-to-end run";
 const COMMENT: &str = "Commented by the zbugs-gpui end-to-end run";
+/// The comment once edited, which CI looks for in Postgres.
+const EDITED: &str = "Edited by the zbugs-gpui end-to-end run";
 
 type Step = Result<(), String>;
 
@@ -146,6 +149,34 @@ async fn online(window: AnyWindowHandle, app: &Entity<ZbugsApp>, cx: &mut AsyncA
     })?;
     until(app, cx, "the comment", |app| {
         issue(app).is_some_and(|i| i.comments.iter().flatten().any(|c| c.body == COMMENT))
+    })
+    .await?;
+
+    // Another comment, deleted, and the first one edited.
+    act(window, app, cx, |app, window, cx| {
+        app.comment
+            .update(cx, |state, cx| state.set_value("To delete", window, cx));
+        app.post_comment(window, cx);
+    })?;
+    until(app, cx, "the second comment", |app| {
+        issue(app).is_some_and(|i| i.comments.iter().flatten().count() == 2)
+    })
+    .await?;
+    act(window, app, cx, |app, _, cx| {
+        let comments = issue(app).and_then(|i| i.comments).unwrap_or_default();
+        for c in comments {
+            if c.body == COMMENT {
+                app.edit_comment(c.id, EDITED.into(), cx);
+            } else {
+                app.delete_comment(&c.id, cx);
+            }
+        }
+    })?;
+    until(app, cx, "the edited comment, alone", |app| {
+        issue(app).is_some_and(|i| {
+            let comments = i.comments.unwrap_or_default();
+            comments.len() == 1 && comments[0].body == EDITED
+        })
     })
     .await?;
     act(window, app, cx, |app, _, cx| {

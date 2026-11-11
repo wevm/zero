@@ -4,6 +4,7 @@ mod app;
 mod live;
 mod login;
 mod session;
+mod token;
 mod transport;
 
 use gpui_kit::*;
