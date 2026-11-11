@@ -1,0 +1,63 @@
+//! Incremental view maintenance (`packages/zql/src/ivm`): the operators a
+//! query's pipeline is built from, the memory source they read, and the view
+//! that materializes their output.
+//!
+//! A pipeline is a graph of reference-counted operators on one thread. Each
+//! operator holds its inputs strongly and its outputs weakly, so the view at
+//! the end of a pipeline owns it; a push that reaches a released output is
+//! dropped. Operators take `&self` and keep their state in cells, borrowed
+//! only between calls to other operators: a push can fetch back through the
+//! operator that pushed it.
+//!
+//! Fetches are lazy streams, like JS's generators: a fetch reads operator and
+//! source state when its first row is pulled, not when it is created.
+
+mod aggregate;
+mod change;
+mod constraint;
+mod data;
+mod deferred_input;
+mod failure;
+mod filter;
+mod filter_push;
+mod flipped_join;
+mod group_by;
+mod join;
+mod join_utils;
+mod lift_field;
+mod memory_source;
+mod operator;
+mod predicate;
+mod stream;
+mod take;
+mod union_fan;
+mod view;
+
+pub use aggregate::*;
+pub use change::*;
+pub use constraint::*;
+pub use data::*;
+pub use deferred_input::*;
+pub use failure::*;
+pub use filter::*;
+pub use filter_push::*;
+pub use flipped_join::*;
+pub use group_by::*;
+pub use join::*;
+pub use join_utils::*;
+pub use lift_field::*;
+pub use memory_source::*;
+pub use operator::*;
+pub use predicate::*;
+pub use stream::*;
+pub use take::*;
+pub use union_fan::*;
+pub use view::*;
+
+use crate::json::Object;
+use std::rc::Rc;
+
+/// A row: column name to value. A missing column reads as absent, as an
+/// `undefined` property does in JS. Rows are shared, not copied, as they
+/// flow through a pipeline.
+pub type Row = Rc<Object>;

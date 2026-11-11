@@ -53,9 +53,12 @@ jobs:
       - id: changesets
         uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
         with:
-          version-script: pnpm --filter zero-swift version-packages
-          commit-message: 'chore(zero-swift): version packages'
-          pr-title: 'chore(zero-swift): version packages'
+          # One PR versions both clients: Rust Release (rust-release.yml)
+          # has no version job of its own, since two would race for the
+          # same changeset-release/main branch.
+          version-script: pnpm --filter zero-swift version-packages && pnpm --filter zero-rust sync-version
+          commit-message: 'chore: version packages'
+          pr-title: 'chore: version packages'
 
   plan:
     name: Plan release

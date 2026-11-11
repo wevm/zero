@@ -1,0 +1,77 @@
+[package]
+name = "zero-client"
+version.workspace = true
+description = "A native Rust client for Zero."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["zero", "sync", "local-first", "ivm"]
+categories = ["database", "web-programming::websocket"]
+
+# The default build has no dependencies (rust/DESIGN.md); each one is behind
+# an opt-in feature.
+[features]
+# `tokio_transport`: a scheduler and a WebSocket transport on tokio.
+tokio-transport = ["dep:tokio", "dep:tokio-tungstenite", "dep:futures-util"]
+# `wss://` for the tokio transport: rustls on `ring`, with webpki roots.
+tls = [
+  "tokio-transport",
+  "tokio-tungstenite/rustls-tls-webpki-roots",
+  "dep:rustls",
+]
+
+# SQLite storage (`ZeroStorage::Sqlite`), on the system `libsqlite3`.
+sqlite = ["dep:rusqlite"]
+# SQLite storage with SQLite compiled in, for platforms without a
+# `libsqlite3`.
+sqlite-bundled = ["sqlite", "rusqlite/bundled"]
+
+[dependencies]
+futures-util = { version = "0.3", default-features = false, features = [
+  "sink",
+], optional = true }
+rusqlite = { version = "0.40", default-features = false, optional = true }
+rustls = { version = "0.23", default-features = false, features = [
+  "ring",
+  "std",
+  "tls12",
+], optional = true }
+tokio = { version = "1", default-features = false, features = [
+  "macros",
+  "rt",
+  "sync",
+  "time",
+], optional = true }
+tokio-tungstenite = { version = "0.30", default-features = false, features = [
+  "connect",
+], optional = true }
+
+[package.metadata.docs.rs]
+all-features = true
+
+# The end-to-end tests' WebSocket client and server.
+[dev-dependencies]
+futures-util = { version = "0.3", default-features = false, features = [
+  "sink",
+] }
+tokio = { version = "1", features = ["macros", "net", "rt", "time"] }
+tokio-tungstenite = { version = "0.30", default-features = false, features = [
+  "connect",
+] }
+
+[[test]]
+name = "tokio_transport"
+required-features = ["tokio-transport"]
+
+[[test]]
+name = "sqlite_storage"
+required-features = ["sqlite"]
+
+[[test]]
+name = "client_e2e"
+required-features = ["tokio-transport"]
+
+[lints]
+workspace = true

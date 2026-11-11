@@ -1,5 +1,5 @@
 /**
- * The app the Swift end-to-end tests talk to: named queries and mutators over
+ * The app the Swift and Rust end-to-end tests talk to: named queries and mutators over
  * the zql test schema. The Swift tests define the same names
  * (`swift/Tests/E2ETests/`), as an app's Swift client would.
  */

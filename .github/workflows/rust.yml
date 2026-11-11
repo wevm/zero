@@ -1,0 +1,208 @@
+name: Rust
+
+# CI for the Rust client in rust/ and the conformance vectors it replays
+# (packages/zero-conformance). Runs on every change because the vectors can
+# go stale from any JS change.
+
+on:
+  push:
+    # rust-client is the development branch until the client lands on main.
+    branches: [main, rust-client]
+  # Any base, so a PR stacked on another one gets checked too.
+  pull_request:
+
+concurrency:
+  group: '${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}'
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  vectors:
+    name: Conformance Vectors
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.11.0
+      # The vectors are JS's answers, so they come from the repo's pinned Node.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - run: pnpm install --frozen-lockfile
+      # Public JS checks oxfmt formatting, Markdown and TOML included, on pull
+      # requests and main but not on rust-client pushes; this catches it there.
+      - name: Format (oxfmt)
+        run: pnpm exec oxfmt --check rust .github/workflows/rust.yml .github/workflows/rust-release.yml .github/workflows/rust-nightly.yml packages/zero-rust-cli packages/zerogen
+      # The Rust tests (rust/codegen-tests) compile and run what `zero-rust
+      # codegen` generates, checked in; this fails when it is stale.
+      - name: Check generated Rust is current
+        run: pnpm --filter zero-rust run test
+      - name: Check the generator's types and lints
+        run: pnpm --filter zerogen --filter zero-rust run check-types && pnpm --filter zerogen --filter zero-rust run lint
+      # The published CLI is a bundle with zerogen inlined. This installs the
+      # packed package outside the workspace and runs it.
+      - name: Smoke test the packed CLI
+        run: pnpm --filter zero-rust smoke
+      # Fails when the checked-in vectors no longer match the JS behavior. Also
+      # writes the seeded fuzz corpora (generated/), which aren't checked in.
+      - name: Check vectors are current
+        run: pnpm --filter zero-conformance run test
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: generated-vectors
+          path: packages/zero-conformance/generated/
+          if-no-files-found: error
+
+  linux:
+    name: Rust (Linux)
+    needs: vectors
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: generated-vectors
+          path: packages/zero-conformance/generated/
+      # rustup is preinstalled; rust-toolchain.toml picks the version.
+      - name: Install the toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Format
+        run: cargo fmt --all --check
+      # With every opt-in feature, so the tokio transport is linted too.
+      - name: Lint
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Test
+        run: cargo test --workspace --locked
+      # The opt-in features' tests, such as the tokio transport against a
+      # local WebSocket server.
+      - name: Test (all features)
+        run: cargo test --workspace --all-features --locked
+      # The report: every vector file, how many cases match JS, match under a
+      # documented exception, or fail, and which files aren't replayed yet.
+      - name: Conformance
+        run: cargo run --locked --release -p zero-conformance -- --require-generated --summary "$GITHUB_STEP_SUMMARY"
+      # Broken intra-doc links and other rustdoc warnings fail.
+      - name: Docs
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --all-features --no-deps --locked
+      # The crate as crates.io would get it, built on its own, outside the
+      # workspace: what a consumer without path overrides compiles.
+      - name: Package
+        run: cargo package -p zero-client --locked
+      # zero-client has no third-party dependencies in its default build
+      # (rust/DESIGN.md): any normal or build dependency fails. Opt-in
+      # features may add them.
+      - name: No dependencies
+        run: |
+          deps="$(cargo tree -p zero-client -e normal,build --prefix none --locked | grep -v '^zero-client v' || true)"
+          if [ -n "$deps" ]; then
+            echo "zero-client's default build has third-party dependencies:" >&2
+            echo "$deps" >&2
+            echo "Put them behind an opt-in feature, or drop them." >&2
+            exit 1
+          fi
+      # The library builds on the oldest Rust its manifest names.
+      - name: Minimum Rust version
+        run: |
+          msrv="$(sed -nE 's/^rust-version = "(.*)"/\1/p' Cargo.toml)"
+          rustup toolchain install "$msrv" --profile minimal
+          cargo "+$msrv" check -p zero-client --locked
+          cargo "+$msrv" check -p zero-client --all-features --locked
+
+  e2e:
+    name: Rust end-to-end (Linux)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.11.0
+      # zero-cache runs from source, which needs Node 24 (`using`).
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+          package-manager-cache: false
+      - run: pnpm install --frozen-lockfile
+      - name: Start Postgres
+        run: |
+          sudo systemctl start postgresql.service
+          sudo -u postgres psql -q -c "ALTER SYSTEM SET wal_level = logical" \
+            -c "ALTER USER postgres PASSWORD 'postgres'"
+          sudo systemctl restart postgresql.service
+          until pg_isready -q -h 127.0.0.1; do sleep 1; done
+      - name: Install the toolchain
+        working-directory: rust
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Build
+        working-directory: rust
+        run: cargo test -p zero-client --features tokio-transport,sqlite-bundled --test walking_skeleton --test client_e2e --locked --no-run
+      - name: Start zero-cache
+        env:
+          ZERO_E2E_PG: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+        run: |
+          node packages/zero-conformance/src/e2e/server.ts > "$RUNNER_TEMP/server.log" 2>&1 &
+          for _ in $(seq 1 120); do
+            grep -q '^ready ' "$RUNNER_TEMP/server.log" && exit 0
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/server.log"
+          exit 1
+      - name: Test
+        working-directory: rust
+        env:
+          ZERO_E2E_URL: ws://127.0.0.1:4848
+        run: cargo test -p zero-client --features tokio-transport,sqlite-bundled --test walking_skeleton --test client_e2e --locked -- --nocapture
+      - name: zero-cache log
+        if: failure()
+        run: cat "$RUNNER_TEMP/server.log"
+
+  # Fails on a public API break since the last release that no changeset
+  # declares: below 1.0 a break needs a minor changeset, from 1.0 a major one.
+  # Nothing to compare with until zero-client is on crates.io.
+  api-breaks:
+    name: Rust API breaks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Find the baseline
+        id: baseline
+        run: |
+          status="$(curl -s -o /dev/null -w '%{http_code}' \
+            -A 'wevm/zero rust CI (https://github.com/wevm/zero)' https://crates.io/api/v1/crates/zero-client)"
+          case "$status" in
+            200) echo "released=true" >> "$GITHUB_OUTPUT" ;;
+            404) echo "released=false" >> "$GITHUB_OUTPUT"; echo "::notice::zero-client isn't on crates.io yet." ;;
+            *) echo "Looking up zero-client on crates.io returned HTTP $status." >&2; exit 1 ;;
+          esac
+      - name: Install cargo-semver-checks
+        if: steps.baseline.outputs.released == 'true'
+        run: rustup show active-toolchain || rustup toolchain install && cargo install cargo-semver-checks --locked
+      # The largest bump the pending zero-rust changesets declare.
+      - name: API breaks
+        if: steps.baseline.outputs.released == 'true'
+        run: |
+          set -euo pipefail
+          bumps="$(sed -nE "s/^['\"]?zero-rust['\"]?: *(major|minor|patch)/\1/p" ../.changeset/*.md 2>/dev/null || true)"
+          type=patch
+          echo "$bumps" | grep -q minor && type=minor
+          echo "$bumps" | grep -q major && type=major
+          cargo semver-checks -p zero-client --release-type "$type"

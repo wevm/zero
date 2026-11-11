@@ -1,0 +1,19 @@
+[workspace]
+resolver = "3"
+members = ["zero-client", "conformance", "codegen-tests"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.88"
+license = "Apache-2.0"
+repository = "https://github.com/wevm/zero"
+
+[workspace.dependencies]
+zero-client = { path = "zero-client", version = "0.0.0" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }

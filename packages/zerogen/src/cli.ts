@@ -21,7 +21,7 @@ import {
 } from './targets/swift.ts';
 import {readCustomTypes} from './types.ts';
 
-type SchemaConfig = {
+export type SchemaConfig = {
   readonly schema?: string | undefined;
   readonly export?: string | undefined;
 };
@@ -37,18 +37,35 @@ export class UsageError extends Error {
   }
 }
 
-function mustExist(path: string, code: string, message: string) {
+export function mustExist(path: string, code: string, message: string) {
   if (!existsSync(path)) {
     throw new UsageError(code, message);
   }
 }
 
 export async function codegenFile(config: Config, cwd: string) {
+  const {schema, customTypes, source} = await loadSchema(
+    config,
+    cwd,
+    'zero-swift.json',
+  );
+  return generate(schema, customTypes, config, source);
+}
+
+/**
+ * Imports the schema module `config` names and reads the TypeScript types
+ * of its columns. `configFile` is the target's config, for the errors.
+ */
+export async function loadSchema(
+  config: SchemaConfig,
+  cwd: string,
+  configFile: string,
+) {
   const schemaPath = resolve(cwd, config.schema ?? 'schema.ts');
   mustExist(
     schemaPath,
     'SCHEMA_NOT_FOUND',
-    `Schema ${relative(cwd, schemaPath)} doesn't exist. Pass --schema-file, or set "schema" in zero-swift.json.`,
+    `Schema ${relative(cwd, schemaPath)} doesn't exist. Pass --schema-file, or set "schema" in ${configFile}.`,
   );
   const exportName = config.export ?? 'schema';
   const module = (await import(pathToFileURL(schemaPath).href)) as Record<
@@ -59,26 +76,27 @@ export async function codegenFile(config: Config, cwd: string) {
   if (!schema || typeof schema !== 'object' || !('tables' in schema)) {
     throw new UsageError(
       'SCHEMA_NOT_EXPORTED',
-      `${relative(cwd, schemaPath)} does not export a schema as "${exportName}". Pass --export, or set "export" in zero-swift.json.`,
+      `${relative(cwd, schemaPath)} does not export a schema as "${exportName}". Pass --export, or set "export" in ${configFile}.`,
     );
   }
-  const customTypes = readCustomTypes(schemaPath, exportName);
-  return generate(
+  return {
     schema,
-    customTypes,
-    config,
-    relative(cwd, schemaPath).replaceAll('\\', '/'),
-  );
+    customTypes: readCustomTypes(schemaPath, exportName),
+    source: relative(cwd, schemaPath).replaceAll('\\', '/'),
+  };
 }
 
-type Fail = (options: {
+export type Fail = (options: {
   code: string;
   message: string;
   exitCode?: number | undefined;
 }) => never;
 
 /** Runs `body`, turning a `UsageError` into the command's error result. */
-async function reporting<T>(fail: Fail, body: () => Promise<T>): Promise<T> {
+export async function reporting<T>(
+  fail: Fail,
+  body: () => Promise<T>,
+): Promise<T> {
   try {
     return await body();
   } catch (e) {
@@ -93,7 +111,7 @@ async function reporting<T>(fail: Fail, body: () => Promise<T>): Promise<T> {
  * Writes `contents` and returns what it did, or with `check`, fails when the
  * file differs.
  */
-function writeOutput(
+export function writeOutput(
   output: string,
   contents: string,
   check: boolean,
@@ -148,7 +166,7 @@ export function legacyArgv(argv: readonly string[]): string[] {
   return out;
 }
 
-const check = z
+export const check = z
   .boolean()
   .optional()
   .describe('Fail when the output is out of date instead of writing it');
