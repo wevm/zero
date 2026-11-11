@@ -21,6 +21,9 @@ both), and Windows is next.
   reactions, its assignee, visibility, notifications, and labels, and sheets
   to create, edit, and delete an issue, edit and delete comments, create
   a label, log in, and set the servers.
+- `src/images.rs` fetches avatars and the images in issues and comments
+  (`ureq`, over rustls) for Rune's image cache to decode, as the web app
+  shows them.
 - `src/login.rs` logs in through GitHub in the browser: the API server
   redirects back to a listener the app opens on 127.0.0.1 for that one
   login (a loopback redirect, RFC 8252 §7.3).
