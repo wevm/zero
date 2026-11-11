@@ -60,6 +60,8 @@ jobs:
         run: cargo clippy --all-targets --locked -- -D warnings
       - name: Build
         run: cargo build --locked
+      - name: Test
+        run: cargo test --locked
       # The end-to-end run (src/app/e2e.rs) against zbugs' backend, on the
       # ports the app connects to by default.
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9

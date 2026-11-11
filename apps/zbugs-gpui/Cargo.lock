@@ -8180,6 +8180,7 @@ name = "zbugs-gpui"
 version = "0.0.0"
 dependencies = [
  "futures",
+ "getrandom 0.3.4",
  "gpui-kit",
  "rustls",
  "serde",

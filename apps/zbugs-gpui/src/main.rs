@@ -2,6 +2,7 @@
 
 mod app;
 mod live;
+mod login;
 mod session;
 mod transport;
 

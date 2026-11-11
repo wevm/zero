@@ -419,6 +419,36 @@ impl ZbugsApp {
         }
     }
 
+    /// Opens zbugs' GitHub login in the browser, and logs in with the token
+    /// it comes back with (`login::github`).
+    fn log_in_with_github(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (url, token) = match crate::login::github(&self.session.api_url) {
+            Ok(login) => login,
+            Err(e) => {
+                self.error = Some(format!("Couldn't start the GitHub login: {e}"));
+                cx.notify();
+                return;
+            }
+        };
+        cx.open_url(&url);
+        cx.spawn_in(window, async move |this, cx| {
+            let result = token
+                .await
+                .unwrap_or_else(|_| Err("The login stopped.".into()));
+            let _ = this.update_in(cx, |this, window, cx| match result {
+                Ok(token) => {
+                    this.log_in(Some(token), window, cx);
+                    cx.activate(true);
+                }
+                Err(e) => {
+                    this.error = Some(e);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
     fn open_login(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open_form(
             "Log in with a token",
@@ -467,18 +497,28 @@ impl ZbugsApp {
                 (None, false) => "Log in".into(),
             })
             .dropdown_menu(move |menu: PopupMenu, _, _| {
-                let (a, b) = (app.clone(), app.clone());
-                let account = if logged_in {
-                    PopupMenuItem::new("Log out").on_click(move |_, window, cx| {
-                        let _ = a.update(cx, |this, cx| this.log_in(None, window, cx));
-                    })
+                let (a, b, c) = (app.clone(), app.clone(), app.clone());
+                let menu = if logged_in {
+                    menu.item(
+                        PopupMenuItem::new("Log out").on_click(move |_, window, cx| {
+                            let _ = a.update(cx, |this, cx| this.log_in(None, window, cx));
+                        }),
+                    )
                 } else {
-                    PopupMenuItem::new("Log in with a token…").on_click(move |_, window, cx| {
-                        let _ = a.update(cx, |this, cx| this.open_login(window, cx));
-                    })
+                    menu.item(PopupMenuItem::new("Log in with GitHub").on_click(
+                        move |_, window, cx| {
+                            let _ = c.update(cx, |this, cx| this.log_in_with_github(window, cx));
+                        },
+                    ))
+                    .item(
+                        PopupMenuItem::new("Log in with a token…").on_click(
+                            move |_, window, cx| {
+                                let _ = a.update(cx, |this, cx| this.open_login(window, cx));
+                            },
+                        ),
+                    )
                 };
-                menu.item(account)
-                    .separator()
+                menu.separator()
                     .item(
                         PopupMenuItem::new("Servers…").on_click(move |_, window, cx| {
                             let _ = b.update(cx, |this, cx| this.open_servers(window, cx));
