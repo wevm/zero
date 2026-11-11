@@ -389,16 +389,38 @@ crate::ast::string_enum!(
 /// `packages/zero-client/src/client/connection.ts`).
 #[derive(Clone, Debug, PartialEq)]
 pub enum ConnectionState {
+    /// The client has not tried to connect yet.
     Initializing,
-    Disconnected { reason: String },
-    Connecting { reason: Option<String> },
+    /// Offline: the client keeps trying to connect, less often.
+    Disconnected {
+        /// Why the connection ended.
+        reason: String,
+    },
+    /// Trying to connect.
+    Connecting {
+        /// Why the last attempt failed, if one did.
+        reason: Option<String>,
+    },
+    /// Syncing.
     Connected,
+    /// The server or the API server rejected the credentials: call
+    /// `Connection::connect` with new ones.
     NeedsAuth(NeedsAuthReason),
-    Error { reason: String },
-    Closed { reason: String },
+    /// The client stopped: the server rejected it or a change failed.
+    /// `Connection::connect` tries again.
+    Error {
+        /// What failed.
+        reason: String,
+    },
+    /// `Zero::close` was called.
+    Closed {
+        /// Why the client closed.
+        reason: String,
+    },
 }
 
 impl ConnectionState {
+    /// The state's kind, without its details.
     pub fn status(&self) -> ConnectionStatus {
         match self {
             ConnectionState::Initializing => ConnectionStatus::Initializing,
@@ -462,11 +484,24 @@ impl ConnectionState {
 #[derive(Clone, Debug, PartialEq)]
 pub enum NeedsAuthReason {
     /// The API server answered a push with 401 or 403.
-    Mutate { status: f64, body: Option<String> },
+    Mutate {
+        /// The HTTP status.
+        status: f64,
+        /// The response body, if any.
+        body: Option<String>,
+    },
     /// The API server answered a query transform with 401 or 403.
-    Query { status: f64, body: Option<String> },
+    Query {
+        /// The HTTP status.
+        status: f64,
+        /// The response body, if any.
+        body: Option<String>,
+    },
     /// zero-cache rejected the credentials.
-    ZeroCache { reason: String },
+    ZeroCache {
+        /// zero-cache's message.
+        reason: String,
+    },
 }
 
 impl NeedsAuthReason {
@@ -498,6 +533,7 @@ impl NeedsAuthReason {
         }
     }
 
+    /// The JS reason object.
     pub fn to_json(&self) -> Value {
         let mut o = Object::new();
         match self {

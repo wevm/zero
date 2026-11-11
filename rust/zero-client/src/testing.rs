@@ -202,6 +202,7 @@ pub struct MockSocketFactory {
 }
 
 impl MockSocketFactory {
+    /// A factory with no sockets yet.
     pub fn new() -> Rc<Self> {
         Rc::default()
     }
@@ -248,7 +249,9 @@ impl SocketConnection for MockConnection {
 /// A socket the test drives: it records what the client sends and delivers
 /// what the test receives on the server's behalf.
 pub struct MockSocket {
+    /// The URL the client opened.
     pub url: String,
+    /// The `Sec-WebSocket-Protocol` header it sent.
     pub sec_protocol: Option<String>,
     messages: RefCell<Vec<String>>,
     closed: Cell<bool>,
@@ -267,6 +270,7 @@ impl MockSocket {
         self.closed.get()
     }
 
+    /// The code the client closed the socket with.
     pub fn close_code(&self) -> Option<u16> {
         self.close_code.get()
     }
@@ -282,6 +286,7 @@ impl MockSocket {
         }
     }
 
+    /// Delivers a text frame from the server.
     pub fn receive_text(&self, text: &str) {
         self.receive(SocketMessage::Text(text.to_owned()));
     }
@@ -293,6 +298,7 @@ impl MockSocket {
         }
     }
 
+    /// The socket opens.
     pub fn open(&self) {
         if let Some(e) = self.events() {
             e.did_open();
@@ -307,6 +313,7 @@ pub struct RecordingLogSink {
 }
 
 impl RecordingLogSink {
+    /// What was logged, oldest first.
     pub fn entries(&self) -> Vec<(LogLevel, String)> {
         self.entries.borrow().clone()
     }

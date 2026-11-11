@@ -14,9 +14,10 @@ mutators, and a zbugs model crate, but not their UI.
 
 | Path                     | Crate                | Published | What                                                                                    |
 | ------------------------ | -------------------- | --------- | --------------------------------------------------------------------------------------- |
-| `rust/zero-client`       | `zero-client`        | not yet   | The client: JSON, hashes, AST, protocol, IVM, and later the engine                      |
+| `rust/zero-client`       | `zero-client`        | not yet   | The client: JSON, hashes, AST, protocol, IVM, the engine, storage, and the transport    |
 | `rust/conformance`       | `zero-conformance`   | never     | The conformance runner: replays every vector file                                       |
 | `rust/codegen-tests`     | `zero-codegen-tests` | never     | The Rust `zero-rust codegen` generates, checked in, and its tests                       |
+| `rust/benchmarks`        | `zero-benchmarks`    | never     | Benchmarks against the JS and Swift clients ([BENCHMARKS.md](BENCHMARKS.md))            |
 | `packages/zero-rust-cli` | (npm) `zero-rust`    | not yet   | The `zero-rust` CLI: `codegen`, from the shared `packages/zerogen`; carries the version |
 
 tmm chose `zero-client` for the crate name (`zero` is taken on crates.io;
@@ -54,14 +55,16 @@ Like the Swift client's (`swift-release.yml`):
   skips the crates.io job with a notice and still pushes the mirror and its
   release; a rerun after the manual publish finds the version published.
 - npm's trusted publishing also needs the package to exist, so the first
-  `zero-rust` publish is made by hand too (`pnpm --filter zero-rust build`,
-  then `npm publish` in `packages/zero-rust-cli`); until then the npm job is
-  skipped with a notice.
+  `zero-rust` publish is made by hand too: `pnpm --filter zero-rust build`,
+  `pnpm --filter zero-rust pack`, then `npm publish` of that tarball, as
+  the workflow does. pnpm's pack applies `publishConfig`, which points the
+  `bin` at `dist/`; a plain `npm publish` in the package would ship
+  `src/bin.ts`. Until then the npm job is skipped with a notice.
 
 So the first mirror push and every crates.io and npm publish happen only when tmm
 merges a Version Packages PR that carries a `zero-rust` version.
 
-## Architecture (planned)
+## Architecture
 
 - A synchronous, single-owner engine with an injected clock and deterministic
   scheduling; no `await` inside a mutator or a rebase.
@@ -332,4 +335,13 @@ Each milestone ends with green CI on `rust-client` and a short report.
 | M4        | Client engine on memory storage: connection, query manager, pokes, mutators, rebase, auth, recovery                                                                                        | Client scenario vectors pass                                     | done   |
 | M5        | The storage trait and lifecycle in the core, the memory backend, and SQLite behind the `sqlite` feature; scenarios on both; end-to-end against Postgres and `zero-cache`                   | Scenarios pass on memory and SQLite; end-to-end passes           | done   |
 | M6        | The shared zbugs model, then `apps/zbugs-gpui` and `apps/zbugs-rune`                                                                                                                       | Both apps run against a real backend                             |        |
-| M7        | Hardening, docs, packaging, the first crates.io release (with tmm's approval)                                                                                                              | `0.1.0` ready to publish                                         |        |
+| M7        | Hardening, docs, packaging, the first crates.io release (with tmm's approval)                                                                                                              | `0.1.0` ready to publish                                         | ready  |
+
+M7 shipped: Swift's chaos end-to-end tests and transport probes (#133,
+#136), benchmarks against JS and Swift with the two fixes they found
+(#140), the JS-to-Rust guide in PARITY.md, documented app-facing modules,
+the crates.io README, and packaging checks (`cargo package` in CI; the
+packaged crate builds outside the workspace with every feature). The
+`0.1.0` changeset is ready in its own pull request and waits for tmm: once
+on `main`, it joins the open Version Packages PR, whose merge releases the
+mirror, the crate, and the CLI.

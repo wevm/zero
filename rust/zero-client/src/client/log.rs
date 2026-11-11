@@ -6,13 +6,18 @@ use std::rc::Rc;
 /// it: `Warn` logs warnings and errors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LogLevel {
+    /// Details for debugging.
     Debug,
+    /// The connection and sync life.
     Info,
+    /// Something unexpected the client recovered from.
     Warn,
+    /// Something failed.
     Error,
 }
 
 impl LogLevel {
+    /// The level as JS names it.
     pub fn as_str(self) -> &'static str {
         match self {
             LogLevel::Debug => "debug",

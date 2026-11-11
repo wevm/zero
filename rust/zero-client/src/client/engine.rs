@@ -167,16 +167,25 @@ pub struct ZeroOptions {
     pub auth: Option<String>,
     /// Distinguishes local stores of the same user and URLs.
     pub storage_key: Option<String>,
+    /// How long the client waits for a pong before it reconnects.
     pub ping_timeout_ms: f64,
+    /// How long the client tries to reconnect before the state is
+    /// `Disconnected`.
     pub disconnect_timeout_ms: f64,
     /// How long query changes are batched before they are sent.
     pub query_change_throttle_ms: f64,
     /// The longest `Sec-WebSocket-Protocol` header the client sends.
     /// `initConnection` is sent as a message instead when it doesn't fit.
     pub max_header_length: usize,
+    /// The API server's push URL, when it differs from the one zero-cache is
+    /// configured with.
     pub mutate_url: Option<String>,
+    /// Headers zero-cache sends to `mutate_url`.
     pub mutate_headers: Option<Vec<(String, String)>>,
+    /// The API server's query URL, when it differs from the one zero-cache is
+    /// configured with.
     pub query_url: Option<String>,
+    /// Headers zero-cache sends to `query_url`.
     pub query_headers: Option<Vec<(String, String)>>,
     /// The server needs a newer client. Defaults to doing nothing.
     pub on_update_needed: Option<UpdateNeededHandler>,
@@ -242,10 +251,12 @@ pub struct UpdateNeededReason {
     /// `VersionNotSupported`, `SchemaVersionNotSupported`, or
     /// `NewClientGroup`.
     pub type_: String,
+    /// The server's explanation, if it gave one.
     pub message: Option<String>,
 }
 
 impl UpdateNeededReason {
+    /// The JS reason object.
     pub fn to_json(&self) -> Value {
         let mut o = Object::new();
         o.insert("type", Value::String(self.type_.clone()));
@@ -260,18 +271,26 @@ impl UpdateNeededReason {
 /// (`MutatorResultDetails` in `packages/zero-client/src/client/custom.ts`).
 #[derive(Clone, Debug, PartialEq)]
 pub enum MutationOutcome {
-    /// `data` is what the mutator returned (client) or the server's result.
-    Success { data: Option<Value> },
+    /// The mutation ran.
+    Success {
+        /// What the mutator returned (client) or the server's result.
+        data: Option<Value>,
+    },
     /// The mutator or the API server raised an [`ApplicationError`].
     AppError {
+        /// The error's message.
         message: String,
+        /// The error's details.
         details: Option<Value>,
     },
     /// Zero couldn't run the mutation or learn its result, such as while
     /// offline or when the connection closed. On the server side this
     /// doesn't mean the mutation wasn't applied: the client sends pending
     /// mutations again when it reconnects.
-    ZeroError { message: String },
+    ZeroError {
+        /// Why.
+        message: String,
+    },
 }
 
 impl MutationOutcome {
@@ -311,7 +330,11 @@ impl MutationOutcome {
 /// and the server's.
 #[derive(Clone)]
 pub struct MutatorResult {
+    /// Settles when the mutator has run on the client: what it returned, or
+    /// what it raised.
     pub client: Deferred<MutationOutcome>,
+    /// Settles when the server has run the mutation, or when the client can't
+    /// learn its result.
     pub server: Deferred<MutationOutcome>,
 }
 

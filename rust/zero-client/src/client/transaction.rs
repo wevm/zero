@@ -34,6 +34,7 @@ pub enum Reason {
 }
 
 impl Reason {
+    /// The reason as JS names it.
     pub fn as_str(self) -> &'static str {
         match self {
             Reason::Optimistic => "optimistic",
@@ -96,14 +97,17 @@ impl Transaction {
         "client"
     }
 
+    /// The client running the mutation.
     pub fn client_id(&self) -> &str {
         &self.client_id
     }
 
+    /// The mutation's ID.
     pub fn mutation_id(&self) -> f64 {
         self.mutation_id
     }
 
+    /// Why the mutator is running: optimistically, or again in a rebase.
     pub fn reason(&self) -> Reason {
         self.reason
     }

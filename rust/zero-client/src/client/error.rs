@@ -32,15 +32,19 @@ crate::ast::string_enum!(
 /// `ZeroError` in `packages/zero-client/src/client/error.ts`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ConnectionError {
+    /// An error the client raised, of a kind, with its message.
     Client(ClientErrorKind, String),
+    /// An error the server sent.
     Server(Box<ErrorBody>),
 }
 
 impl ConnectionError {
+    /// An error the client raised.
     pub fn client(kind: ClientErrorKind, message: impl Into<String>) -> Self {
         ConnectionError::Client(kind, message.into())
     }
 
+    /// The error's message.
     pub fn message(&self) -> &str {
         match self {
             ConnectionError::Client(_, m) => m,
@@ -56,6 +60,7 @@ impl ConnectionError {
         }
     }
 
+    /// The kind of an error the client raised.
     pub fn client_kind(&self) -> Option<ClientErrorKind> {
         match self {
             ConnectionError::Client(kind, _) => Some(*kind),
@@ -63,6 +68,7 @@ impl ConnectionError {
         }
     }
 
+    /// The kind of an error the server sent.
     pub fn server_kind(&self) -> Option<ErrorKind> {
         match self {
             ConnectionError::Server(body) => Some(body.kind()),
@@ -225,11 +231,14 @@ impl ConnectionTransition {
 /// mutator to give the caller a message and details.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ApplicationError {
+    /// What the app shows.
     pub message: String,
+    /// Anything else the app wants to pass along, as JSON.
     pub details: Option<Value>,
 }
 
 impl ApplicationError {
+    /// An error with `message` and no details.
     pub fn new(message: impl Into<String>) -> Self {
         ApplicationError {
             message: message.into(),
@@ -272,12 +281,14 @@ impl std::error::Error for ApplicationError {}
 /// A query the server could not run.
 #[derive(Clone, Debug)]
 pub struct QueryError {
+    /// Why the server could not run the query, if it said.
     pub error: Option<ErroredQuery>,
     /// What the view held when the query failed. JS rejects `run` with it.
     pub data: Option<ViewValue>,
 }
 
 impl QueryError {
+    /// A query error with no view data.
     pub fn new(error: Option<ErroredQuery>) -> Self {
         QueryError { error, data: None }
     }
@@ -315,6 +326,7 @@ pub enum Error {
 }
 
 impl Error {
+    /// The error's message.
     pub fn message(&self) -> String {
         match self {
             Error::Application(e) => e.message.clone(),

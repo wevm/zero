@@ -69,6 +69,7 @@ pub struct TokioScheduler {
 }
 
 impl TokioScheduler {
+    /// A scheduler on the current tokio `LocalSet`.
     pub fn new() -> Self {
         TokioScheduler {
             start: Instant::now(),
@@ -143,6 +144,7 @@ pub struct TokioSocketFactory {
 }
 
 impl TokioSocketFactory {
+    /// A factory of WebSockets on the current tokio `LocalSet`.
     pub fn new() -> Self {
         Self::default()
     }

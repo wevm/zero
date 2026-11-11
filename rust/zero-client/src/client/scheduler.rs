@@ -73,6 +73,7 @@ impl<T: Clone + 'static> Default for Deferred<T> {
 }
 
 impl<T: Clone + 'static> Deferred<T> {
+    /// A deferred value that is not settled yet.
     pub fn new() -> Self {
         Deferred(Rc::new(RefCell::new(DeferredState {
             result: None,
@@ -86,6 +87,7 @@ impl<T: Clone + 'static> Deferred<T> {
         self.0.borrow().result.clone()
     }
 
+    /// Whether it has settled.
     pub fn is_settled(&self) -> bool {
         self.0.borrow().result.is_some()
     }
