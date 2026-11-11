@@ -91,7 +91,7 @@ merges a Version Packages PR that carries a `zero-rust` version.
   needs no cmake or system certificates, and an app on `ws://` or behind
   its own TLS pulls in none of it. A socket that can't open, or that drops
   without a close frame, closes with 1006, as a browser reports it.
-  `tests/client_e2e.rs` runs the whole client on it against `zero-cache`.
+  `tests/client_e2e/` runs the whole client on it against `zero-cache`.
 - The walking skeleton (M1.5) speaks the protocol to `zero-cache` itself,
   over `tokio-tungstenite`, without the client.
 - Snapshots and subscriptions that don't depend on a UI framework, bridged
@@ -144,7 +144,7 @@ IndexedDB-shaped machinery.
   connection's lock before falling back; a write busy past the 5 s timeout
   is kept and written with the next one; stored data that doesn't decode
   is lost client state, so the client starts a new database and calls
-  `on_client_state_not_found`. Swift hears of a failed write when it fails;
+  `on_client_state_not_found`, if the app set it. Swift hears of a failed write when it fails;
   Rust when the client next writes, flushes, or closes, which a heartbeat
   does within a minute. The database-file GC follows Swift's: five
   minutes after launch and then every 12 hours, databases no client used
@@ -153,8 +153,18 @@ IndexedDB-shaped machinery.
   `(sqlite)` row for each client file, each scenario on a directory of its
   own. `tests/sqlite_storage.rs` checks the file itself (a relaunch reads
   an edit made on disk, a corrupt file, a directory that can't open,
-  `delete`, the GC), and `tests/client_e2e.rs` relaunches on SQLite against
+  `delete`, the GC), and `tests/client_e2e/` relaunches on SQLite against
   `zero-cache`.
+- When the server no longer has the client's state (a 1009 close for a
+  message over its size limit, or the server's `ClientNotFound`), JS
+  disables the client group and calls `onClientStateNotFound`, which
+  reloads the page by default. With no `on_client_state_not_found`, Rust
+  does what zero-swift does: `Zero` replaces its engine by a new one on the
+  same store, with a new client ID and client group, the app's last auth
+  token, and its views and preloads moved over (each at the TTL it was made
+  with). So `client_id()` and `client_group_id()` return a `String`, read
+  from the engine now running. Before, such a client stayed in `error` and
+  never synced again (`oversized_mutation_does_not_wedge_the_client`).
 - The default build is memory-only (tmm's decision), so it keeps the
   no-third-party-dependencies rule; SQLite is opt-in. Swift differs: its
   default is SQLite. **A default build persists nothing across restarts**:
@@ -273,11 +283,20 @@ in [PARITY.md](PARITY.md).
   `rust-version` the manifest names.
 - **Rust end-to-end (Linux)**: Postgres and `zero-cache` from this repo's
   source over the fixture database (`packages/zero-conformance/src/e2e/`),
-  and `zero-client/tests/walking_skeleton.rs` and `client_e2e.rs` (the
+  and `zero-client/tests/walking_skeleton.rs` and `client_e2e/` (the
   whole client on the tokio transport: sync, optimistic mutations the
   server confirms, a relaunch, two clients of a group, synced aggregates)
   against them, with `ZERO_E2E_URL` set. Without it the tests skip, so
-  `cargo test` needs no server.
+  `cargo test` needs no server. With SQLite, `client_e2e/` also runs
+  Swift's chaos tests through a TCP proxy (`proxy.rs`, Swift's
+  `ChaosProxy`) that refuses, blackholes, silences, throttles, stalls, and
+  cuts connections, with `psql` writing behind zero-cache's back:
+  `harden.rs` (`HardenE2ETests`) and two seeds of `fuzz.rs`
+  (`ChaosFuzzTests`), whose seeds take the same steps as Swift's. One chaos
+  test runs at a time, as Swift serializes them. Swift's tests also check
+  the outcomes its `addMutationOutcomeListener` hears, which is Swift's own
+  (JS has none); here exactly-once rests on Postgres's rows and each
+  client's last mutation ID.
 - **Rust API breaks**: `cargo semver-checks` against the last release, at the
   bump the pending changesets declare. It does nothing until `zero-client` is
   on crates.io.
@@ -285,8 +304,8 @@ in [PARITY.md](PARITY.md).
 `.github/workflows/rust-nightly.yml`, nightly and by hand: JS's answers to
 new random queries, pushes and client scenarios over synced aggregates on
 fresh seeds (the ones Swift Nightly uses), five to ten times the PR checks'
-cases, replayed by the conformance runner. Scheduled workflows run from the
-default branch, so it starts once `rust-client` is merged.
+cases, replayed by the conformance runner; and 150 seeds of the chaos fuzz
+against `zero-cache`, the seeds Swift Nightly's chaos fuzz takes.
 
 Still to come, with the milestones that need them: macOS and Windows (M6,
 with the apps).

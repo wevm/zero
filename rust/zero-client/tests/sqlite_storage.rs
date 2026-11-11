@@ -154,7 +154,7 @@ fn a_relaunch_reads_what_the_last_client_wrote_to_disk() {
     let [file] = files(&dir).try_into().unwrap();
     assert_eq!(count(&file, "SELECT count(*) FROM mutations"), 1);
     assert_eq!(count(&file, "SELECT count(*) FROM clients"), 1);
-    let group = first.zero.client_group_id().to_owned();
+    let group = first.zero.client_group_id();
     drop(first);
 
     // Edited on disk, so the next client can only show it by reading the
@@ -179,7 +179,7 @@ fn a_store_that_does_not_decode_is_dropped_as_lost_client_state() {
     let dir = directory("corrupt");
     let first = client(sqlite(&dir), "k", 1_000.0);
     first.create("i1", "Lost");
-    let group = first.zero.client_group_id().to_owned();
+    let group = first.zero.client_group_id();
     drop(first);
     let [file] = files(&dir).try_into().unwrap();
     edit(&file, "UPDATE mutations SET args = '{not json'");

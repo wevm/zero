@@ -4,6 +4,18 @@
 //! server confirms, a relaunch on the same store, two clients of one group,
 //! and synced aggregates. `ZERO_E2E_URL` is zero-cache's `ws://` origin;
 //! without it the tests do nothing.
+//!
+//! With SQLite, also Swift's chaos tests: `harden` (`HardenE2ETests`) and
+//! `fuzz` (`ChaosFuzzTests`), through the `proxy` (`ChaosProxy`).
+
+#[cfg(feature = "sqlite")]
+mod chaos;
+#[cfg(feature = "sqlite")]
+mod fuzz;
+#[cfg(feature = "sqlite")]
+mod harden;
+#[cfg(feature = "sqlite")]
+mod proxy;
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -90,16 +102,22 @@ impl E2e {
     }
 
     fn zero(&self, storage_key: &str) -> Zero {
+        self.zero_with(storage_key, |_| {})
+    }
+
+    fn zero_with(&self, storage_key: &str, configure: impl FnOnce(&mut ZeroOptions)) -> Zero {
+        let mut options = ZeroOptions {
+            cache_url: Some(self.origin.clone()),
+            storage_key: Some(storage_key.to_owned()),
+            storage: self.storage.clone(),
+            ..ZeroOptions::default()
+        };
+        configure(&mut options);
         Zero::new(
             self.schema.clone(),
             (),
             mutators(),
-            ZeroOptions {
-                cache_url: Some(self.origin.clone()),
-                storage_key: Some(storage_key.to_owned()),
-                storage: self.storage.clone(),
-                ..ZeroOptions::default()
-            },
+            options,
             Rc::new(TokioScheduler::new()),
             Some(Rc::new(TokioSocketFactory::new())),
         )
@@ -298,7 +316,7 @@ async fn syncs_mutates_and_relaunches_on(e: E2e) {
         // A relaunch reads the rows from its store before the server
         // answers: memory in the same process, as JS `kvStore: 'mem'`
         // does, or the SQLite file.
-        let group = zero.client_group_id().to_owned();
+        let group = zero.client_group_id();
         zero.close();
         drop(zero);
         let relaunched = e.zero(&key);

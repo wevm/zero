@@ -748,14 +748,20 @@ impl QueryContext {
 /// Called with a view's data, result type, and error.
 pub type ViewListener = Rc<dyn Fn(&ViewValue, ResultType, Option<&ErroredQuery>)>;
 
-struct ViewInner {
+/// What a view reads from its client: replaced when the client is
+/// (`rebind`).
+struct ViewBinding {
     view: Rc<ArrayView>,
     update_ttl: Box<dyn Fn(&Ttl)>,
+    notifications: NotificationGate,
+}
+
+struct ViewInner {
+    binding: RefCell<ViewBinding>,
     remove_forward: RefCell<Option<Box<dyn Fn()>>>,
     destroyed: Cell<bool>,
     listeners: RefCell<Vec<(u64, ViewListener)>>,
     next_listener_id: Cell<u64>,
-    notifications: NotificationGate,
     /// How many notification passes are under way. As in JS, a listener
     /// that destroys the view doesn't keep the pass from reaching the
     /// others.
@@ -766,6 +772,15 @@ struct ViewInner {
 #[derive(Clone)]
 pub struct MaterializedView(Rc<ViewInner>);
 
+/// A view that doesn't keep it alive.
+pub(crate) struct WeakView(Weak<ViewInner>);
+
+impl WeakView {
+    pub(crate) fn upgrade(&self) -> Option<MaterializedView> {
+        self.0.upgrade().map(MaterializedView)
+    }
+}
+
 impl MaterializedView {
     fn new(
         view: Rc<ArrayView>,
@@ -773,56 +788,58 @@ impl MaterializedView {
         notifications: NotificationGate,
     ) -> Self {
         let inner = Rc::new(ViewInner {
-            view,
-            update_ttl,
+            binding: RefCell::new(ViewBinding {
+                view,
+                update_ttl,
+                notifications,
+            }),
             remove_forward: RefCell::new(None),
             destroyed: Cell::new(false),
             listeners: RefCell::default(),
             next_listener_id: Cell::new(0),
-            notifications,
             forwarding: Cell::new(0),
         });
-        let weak = Rc::downgrade(&inner);
-        let remove = inner.view.add_listener(move |data, result_type| {
-            let Some(inner) = weak.upgrade() else { return };
-            let error = inner.view.listener_result_type().1;
-            inner.notifications.set(inner.notifications.get() + 1);
-            inner.forwarding.set(inner.forwarding.get() + 1);
-            // Each listener in turn, reading the list again after every
-            // call, as JS iterates a `Set` that changes meanwhile.
-            let mut last: Option<u64> = None;
-            loop {
-                let next = inner
-                    .listeners
-                    .borrow()
-                    .iter()
-                    .find(|(id, _)| last.is_none_or(|l| *id > l))
-                    .cloned();
-                let Some((id, listener)) = next else { break };
-                last = Some(id);
-                listener(data, result_type, error.as_ref());
-            }
-            inner.notifications.set(inner.notifications.get() - 1);
-            inner.forwarding.set(inner.forwarding.get() - 1);
-            // Destroyed during the pass: its listeners went on hearing it.
-            if inner.destroyed.get() && inner.forwarding.get() == 0 {
-                inner.listeners.borrow_mut().clear();
-            }
-        });
-        *inner.remove_forward.borrow_mut() = Some(remove);
+        ViewInner::forward(&inner);
         MaterializedView(inner)
     }
 
+    fn view(&self) -> Rc<ArrayView> {
+        self.0.binding.borrow().view.clone()
+    }
+
+    pub(crate) fn downgrade(&self) -> WeakView {
+        WeakView(Rc::downgrade(&self.0))
+    }
+
+    /// Reads `fresh`, the same query on a client that replaced this one's,
+    /// from now on; the listeners hear its data at once. The view this one
+    /// read before is destroyed with `fresh`.
+    pub(crate) fn rebind(&self, fresh: MaterializedView) {
+        if self.is_destroyed() {
+            return;
+        }
+        for inner in [&self.0, &fresh.0] {
+            if let Some(r) = inner.remove_forward.borrow_mut().take() {
+                r();
+            }
+        }
+        std::mem::swap(
+            &mut *self.0.binding.borrow_mut(),
+            &mut *fresh.0.binding.borrow_mut(),
+        );
+        ViewInner::forward(&self.0);
+    }
+
     pub fn data(&self) -> ViewValue {
-        self.0.view.data()
+        self.view().data()
     }
 
     pub fn result_type(&self) -> ResultType {
-        self.0.view.listener_result_type().0
+        self.view().listener_result_type().0
     }
 
     pub fn error(&self) -> Option<ErroredQuery> {
-        self.0.view.listener_result_type().1
+        self.view().listener_result_type().1
     }
 
     pub fn is_destroyed(&self) -> bool {
@@ -831,7 +848,7 @@ impl MaterializedView {
 
     /// The primary key columns of the rows.
     pub fn primary_key(&self) -> Vec<String> {
-        self.0.view.schema().primary_key.clone()
+        self.view().schema().primary_key.clone()
     }
 
     /// Calls `listener` now and whenever the data or result type change.
@@ -844,8 +861,9 @@ impl MaterializedView {
         self.0.next_listener_id.set(id + 1);
         let listener: ViewListener = Rc::new(listener);
         self.0.listeners.borrow_mut().push((id, listener.clone()));
-        let (ty, error) = self.0.view.listener_result_type();
-        listener(&self.0.view.data(), ty, error.as_ref());
+        let view = self.view();
+        let (ty, error) = view.listener_result_type();
+        listener(&view.data(), ty, error.as_ref());
         let weak = Rc::downgrade(&self.0);
         Box::new(move || {
             if let Some(inner) = weak.upgrade() {
@@ -862,11 +880,47 @@ impl MaterializedView {
 
     /// Raises the query's TTL; a lower one is ignored.
     pub fn update_ttl(&self, ttl: &Ttl) {
-        (self.0.update_ttl)(ttl);
+        (self.0.binding.borrow().update_ttl)(ttl);
     }
 }
 
 impl ViewInner {
+    /// Passes what the bound view says on to the listeners.
+    fn forward(inner: &Rc<ViewInner>) {
+        let weak = Rc::downgrade(inner);
+        let view = inner.binding.borrow().view.clone();
+        let remove = view.add_listener(move |data, result_type| {
+            let Some(inner) = weak.upgrade() else { return };
+            let (error, notifications) = {
+                let b = inner.binding.borrow();
+                (b.view.listener_result_type().1, b.notifications.clone())
+            };
+            notifications.set(notifications.get() + 1);
+            inner.forwarding.set(inner.forwarding.get() + 1);
+            // Each listener in turn, reading the list again after every
+            // call, as JS iterates a `Set` that changes meanwhile.
+            let mut last: Option<u64> = None;
+            loop {
+                let next = inner
+                    .listeners
+                    .borrow()
+                    .iter()
+                    .find(|(id, _)| last.is_none_or(|l| *id > l))
+                    .cloned();
+                let Some((id, listener)) = next else { break };
+                last = Some(id);
+                listener(data, result_type, error.as_ref());
+            }
+            notifications.set(notifications.get() - 1);
+            inner.forwarding.set(inner.forwarding.get() - 1);
+            // Destroyed during the pass: its listeners went on hearing it.
+            if inner.destroyed.get() && inner.forwarding.get() == 0 {
+                inner.listeners.borrow_mut().clear();
+            }
+        });
+        *inner.remove_forward.borrow_mut() = Some(remove);
+    }
+
     fn destroy(&self) {
         if self.destroyed.replace(true) {
             return;
@@ -877,7 +931,8 @@ impl ViewInner {
         if self.forwarding.get() == 0 {
             self.listeners.borrow_mut().clear();
         }
-        self.view.destroy();
+        let view = self.binding.borrow().view.clone();
+        view.destroy();
     }
 }
 

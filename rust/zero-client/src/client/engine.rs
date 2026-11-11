@@ -180,8 +180,12 @@ pub struct ZeroOptions {
     pub query_headers: Option<Vec<(String, String)>>,
     /// The server needs a newer client. Defaults to doing nothing.
     pub on_update_needed: Option<UpdateNeededHandler>,
-    /// The server no longer has the client's state; the local store was
-    /// reset.
+    /// The server no longer has the client's state, or the stored replica
+    /// didn't decode and the local store was reset. Without it, a client
+    /// the server lost replaces itself by a new one on the same store, as
+    /// JS reloads the page (see [`Zero::new`]).
+    ///
+    /// [`Zero::new`]: crate::client::Zero::new
     pub on_client_state_not_found: Option<Rc<dyn Fn()>>,
     /// Where the client keeps its replica. Defaults to
     /// [`ZeroStorage::Memory`], which keeps nothing across restarts.
@@ -963,7 +967,13 @@ impl Engine {
             e.log.error(|| {
                 format!("Client state is corrupt; dropped database {name} and started a new one")
             });
-            e.micro(|e| e.client_state_not_found());
+            // Only the app's callback: this client is already on a new
+            // database, so it isn't replaced (as in Swift).
+            e.micro(|e| {
+                if let Some(f) = &e.options.on_client_state_not_found {
+                    f();
+                }
+            });
         }
         if let Some(f) = open_failure {
             e.log.warn(|| {
