@@ -7,6 +7,7 @@ on:
   push:
     branches: [main]
     paths:
+      - 'apps/zbugs-swift/server/**'
       - 'apps/zbugs-rune/**'
       - 'apps/zbugs-model/**'
       - 'rust/zero-client/**'
@@ -14,6 +15,7 @@ on:
   # Any base, so a PR stacked on another one gets checked too.
   pull_request:
     paths:
+      - 'apps/zbugs-swift/server/**'
       - 'apps/zbugs-rune/**'
       - 'apps/zbugs-model/**'
       - 'rust/zero-client/**'
@@ -63,9 +65,55 @@ jobs:
         run: |
           cargo run --locked -- --snap "$RUNNER_TEMP/zbugs-rune.png" --size 1180x760
           test -s "$RUNNER_TEMP/zbugs-rune.png"
+      # End to end: zbugs' backend (Postgres, zero-cache, and the API), and
+      # the app headless on the wall clock against it (e2e.sh).
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.11.0
+      # zero-cache runs from source, which needs Node 24 (`using`).
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+          package-manager-cache: false
+      - name: Install the backend
+        working-directory: .
+        run: pnpm install --frozen-lockfile
+      - name: Start Postgres
+        run: |
+          brew install postgresql@17
+          bin="$(brew --prefix postgresql@17)/bin"
+          echo "$bin" >> "$GITHUB_PATH"
+          "$bin/initdb" -D "$RUNNER_TEMP/pg" -U postgres --auth=trust
+          echo "wal_level = logical" >> "$RUNNER_TEMP/pg/postgresql.conf"
+          "$bin/pg_ctl" -D "$RUNNER_TEMP/pg" -l "$RUNNER_TEMP/pg.log" -o "-p 5432 -k /tmp" -w start
+      - name: Start the backend
+        working-directory: .
+        env:
+          ZBUGS_PG: postgresql://postgres@127.0.0.1:5432/postgres
+        run: |
+          node apps/zbugs-swift/server/server.ts > "$RUNNER_TEMP/server.log" 2>&1 &
+          for _ in $(seq 1 180); do
+            if grep -q '^ready ' "$RUNNER_TEMP/server.log"; then
+              echo "ZBUGS_TOKEN=$(grep '^token ' "$RUNNER_TEMP/server.log" | cut -d' ' -f2)" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/server.log"
+          exit 1
+      - name: End to end
+        env:
+          ZBUGS_DB_URL: postgresql://postgres@127.0.0.1:5432/zbugs_swift
+          ZBUGS_E2E_SNAP: ${{ runner.temp }}/zbugs-rune-e2e.png
+        run: ./e2e.sh
+      - name: Backend log
+        if: failure()
+        run: tail -100 "$RUNNER_TEMP/server.log"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: zbugs-rune-snapshot
-          path: ${{ runner.temp }}/zbugs-rune.png
+          path: |
+            ${{ runner.temp }}/zbugs-rune.png
+            ${{ runner.temp }}/zbugs-rune-e2e.png
           if-no-files-found: ignore
