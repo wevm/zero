@@ -44,23 +44,23 @@ machine: an 8-core Intel Xeon at 2.6 GHz with 16 GB, Linux 6.1, Rust 1.99.1
 the same run, with Swift 6.2.4; its cells marked † are from before Swift's
 last performance pass.
 
-In short: Rust is 2–5× faster than JS on views of up to 10,000 rows, 15×
-on an optimistic update, and 20–40× on hashing (where vitest flatters
-Rust), and at or ahead of Swift on small views and single-row changes. It
-is slower than JS at materializing 100,000 rows, behind Swift on big
-hydrations and big pokes, and uses about twice JS's memory, because a row
-is copied between the replica and the sources (see What they found).
+In short: Rust is 2–5× faster than JS on views of up to 10,000 rows, 1.3×
+on 100,000, 18× on an optimistic update, and 20–40× on hashing (where
+vitest flatters Rust), and uses about three quarters of JS's memory. It is
+at or ahead of Swift on views of up to 10,000 rows, single-row changes,
+and pokes, and behind Swift on materializing 100,000 rows and on reading
+rows as structs (see What they found).
 
 | Benchmark                                  | JS (Node)                   | Rust                     | Swift (Linux)  |
 | ------------------------------------------ | --------------------------- | ------------------------ | -------------- |
-| zero.bench: all 1000 rows x 10 columns     | 236 µs                      | 56.5 µs                  | 70.4 µs        |
-| zero.bench: pk = N                         | 11.0 µs                     | 4.56 µs                  | 8.39 µs        |
-| zero.bench: lower 500 rows                 | 152 µs                      | 58.7 µs                  | 89.7 µs        |
-| materialize 1,000 rows                     | 242 µs                      | 49.8 µs                  | 63.2 µs        |
-| materialize 10,000 rows                    | 2.15 ms                     | 887 µs                   | 757 µs         |
-| materialize 100,000 rows                   | 29.7 ms                     | 32.2 ms                  | 7.07 ms        |
-| memory for 100,000 rows and a view of them | 245 MB                      | 467 MB                   | 128 MB†        |
-| optimistic update with a 1000-row view     | 274 µs                      | 18.2 µs                  | 23 µs†         |
+| zero.bench: all 1000 rows x 10 columns     | 236 µs                      | 56.6 µs                  | 70.4 µs        |
+| zero.bench: pk = N                         | 11.0 µs                     | 4.58 µs                  | 8.39 µs        |
+| zero.bench: lower 500 rows                 | 152 µs                      | 58.6 µs                  | 89.7 µs        |
+| materialize 1,000 rows                     | 242 µs                      | 50.5 µs                  | 63.2 µs        |
+| materialize 10,000 rows                    | 2.15 ms                     | 716 µs                   | 757 µs         |
+| materialize 100,000 rows                   | 29.7 ms                     | 23.2 ms                  | 7.07 ms        |
+| memory for 100,000 rows and a view of them | 245 MB                      | 181 MB                   | 128 MB†        |
+| optimistic update with a 1000-row view     | 274 µs                      | 15.4 µs                  | 23 µs†         |
 | h32, 64 / 1024 / 8192 chars                | 433 ns / 3.87 µs / 32.3 µs  | 10 ns / 151 ns / 1.21 µs |                |
 | h64, 64 / 1024 / 8192 chars                | 703 ns / 6.37 µs / 51.5 µs  | 23 ns / 303 ns / 2.42 µs | – / 318 ns / – |
 | h128, 64 / 1024 / 8192 chars               | 1.29 µs / 12.5 µs / 95.3 µs | 42 ns / 606 ns / 5.60 µs |                |
@@ -74,15 +74,15 @@ Rust and Swift only:
 
 | Benchmark                                                 | Rust    | Swift (Linux) |
 | --------------------------------------------------------- | ------- | ------------- |
-| materialize 1,000 rows as structs                         | 171 µs  | 182 µs        |
-| materialize 10,000 rows as structs                        | 4.59 ms | 1.94 ms       |
-| materialize 100,000 rows as structs                       | 72.5 ms | 24.8 ms       |
-| poke putting 1 row, 1000-row view                         | 15.9 µs | 29 µs†        |
-| poke putting 100 rows, 1000-row view                      | 1.09 ms | 1.00 ms†      |
-| poke putting 1000 rows, 1000-row view                     | 15.0 ms | 9.82 ms†      |
-| round trip (update, push, confirming poke), 1000-row view | 43.1 µs | 80 µs†        |
-| first sync: zbugs poke of 2,058 rows, issue list view     | 25.7 ms |               |
-| first sync: the same poke, no view                        | 17.9 ms |               |
+| materialize 1,000 rows as structs                         | 142 µs  | 182 µs        |
+| materialize 10,000 rows as structs                        | 3.50 ms | 1.94 ms       |
+| materialize 100,000 rows as structs                       | 52.4 ms | 24.8 ms       |
+| poke putting 1 row, 1000-row view                         | 11.4 µs | 29 µs†        |
+| poke putting 100 rows, 1000-row view                      | 647 µs  | 1.00 ms†      |
+| poke putting 1000 rows, 1000-row view                     | 8.83 ms | 9.82 ms†      |
+| round trip (update, push, confirming poke), 1000-row view | 40.0 µs | 80 µs†        |
+| first sync: zbugs poke of 2,058 rows, issue list view     | 19.0 ms |               |
+| first sync: the same poke, no view                        | 9.91 ms |               |
 
 `first sync` replays zbugs' first sync as the zbugs-swift app got it, with
 the rows Swift's benchmark generates from the same seed: one poke of 21
@@ -108,17 +108,20 @@ timed from the poke's frames arriving to the view being flushed.
   16 keys now scan them: all 1000 rows went from 106 to 57 µs,
   materializing 100,000 rows from 64 to 31 ms, a poke of 1000 rows from 28
   to 15 ms, and the memory of 100,000 rows from 735 to 467 MB.
+- **Rows were copied, not shared.** A poke's row was cloned from the
+  parsed message into the patch, the replica, the diff, and the sources,
+  and the replica and the sources each kept their own copy, where JS
+  shares one object. A `json::Object` now keeps its entries behind an
+  `Arc` that its copies share until one is changed, so every clone of a
+  row is a reference count. The memory of 100,000 rows went from 467 to
+  181 MB, a first sync from 25.7 to 19.0 ms (17.9 to 9.9 ms without a
+  view), a poke of 1000 rows from 15.0 to 8.8 ms, and materializing
+  100,000 rows from 32 to 23 ms.
 
 Where Rust is still behind:
 
-- **Rows are copied, not shared.** A poke's row is cloned from the parsed
-  message into the patch, the replica, the diff, and the sources (five
-  places, about 3% of a first sync each), and the replica and the sources
-  each keep their own copy, which is most of the memory gap with JS, where
-  one object is shared. Sharing a row's object between them (an `Rc` in
-  `json::Value`) is the next step.
-- **Big views.** Materializing 100,000 rows takes about 3.6 times as long
+- **Big views.** Materializing 100,000 rows takes about 3.2 times as long
   per row as 10,000 do (JS's 1.4 times; Swift's scales linearly), and reading them
-  as structs is about 3 times Swift's. Swift keys a row's columns by index
+  as structs takes about twice Swift's time. Swift keys a row's columns by index
   into its table's layout (see `swift/BENCHMARKS.md`); Rust rows are still
   JSON objects keyed by name.
