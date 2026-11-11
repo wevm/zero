@@ -1,0 +1,8 @@
+{
+  "schema": "../zbugs/shared/schema.ts",
+  "output": "src/schema.rs",
+  "tables": {
+    "issue": {"columns": {"shortID": {"type": "int"}}},
+    "project": {"columns": {"issueCountEstimate": {"type": "int"}}}
+  }
+}

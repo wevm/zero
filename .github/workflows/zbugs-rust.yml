@@ -1,0 +1,41 @@
+name: zbugs (Rust)
+
+# CI for zbugs on the Rust client: apps/zbugs-model, the schema, queries,
+# and mutators both Rust apps share, checked against the TS ones by the
+# drift test. `rust.yml` checks that its generated schema is current
+# (`pnpm --filter zero-rust run test`), and `swift.yml` that the drift
+# record it replays is (`pnpm --filter zero-swift run test`).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: '${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}'
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  model:
+    name: zbugs model (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/zbugs-model
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      # rustup is preinstalled; rust-toolchain.toml picks the version.
+      - name: Install the toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Format
+        run: cargo fmt --check
+      - name: Lint
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Test
+        run: cargo test --locked
