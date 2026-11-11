@@ -25,6 +25,9 @@ tokio = { version = "1", default-features = false, features = [
   "sync",
   "time",
 ] }
+# The login token goes in the Keychain, the Credential Manager, or the
+# Secret Service (over zbus, so Linux needs no libdbus).
+keyring = "4"
 # Rune is pre-release: pinned to a rev of `dev`, which is never rewritten.
 rune = { git = "https://github.com/anomalyco/rune", rev = "0add0d576dfe85712ddbf8b51d2a24221b45e786", default-features = false, features = [
   "accessibility",

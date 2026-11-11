@@ -20,9 +20,14 @@ both), and Windows is next.
 - `src/login.rs` logs in through GitHub in the browser: the API server
   redirects back to a listener the app opens on 127.0.0.1 for that one
   login (a loopback redirect, RFC 8252 §7.3).
-- `src/settings.rs` keeps the servers, the token, and the selected issue in
-  `~/Library/Application Support/zbugs-rune/settings.json` (mode 0600); the
-  replica is SQLite, beside it in `replica/`.
+- `src/settings.rs` keeps the servers and the selected issue in
+  `~/Library/Application Support/zbugs-rune/settings.json`; the replica is
+  SQLite, beside it in `replica/`.
+- `src/token.rs` keeps the login token in the Keychain (service
+  `dev.rocicorp.zbugs-rune`, account `jwt`), like zbugs-swift: the
+  Credential Manager on Windows, the Secret Service on Linux. Where there's
+  no store, it's a `token` file (mode 0600) beside the settings. An expired
+  token is deleted at launch, and Log Out deletes it.
 
 Rune is pre-release and pinned to a rev of its `dev` branch. It needs Rust
 1.90 or later, so the app is a Cargo workspace of its own with Rune's
@@ -61,7 +66,8 @@ Log in from the sidebar with the printed token, or through GitHub when the
 API server has a GitHub app (zbugs' own backend); Servers… points the app
 elsewhere. `ZBUGS_TOKEN`, `ZBUGS_CACHE_URL`, and `ZBUGS_API_URL` in the
 environment override the saved ones for that launch, and `ZBUGS_RUNE_DIR`
-moves the settings and the replica.
+moves the settings, the replica, and the token (as a file, out of the
+Keychain), so a test leaves the real login alone.
 
 Like every Rune app, it renders headless too:
 `cargo run -- --snap zbugs.png --size 1180x760` (and `--tree`, `--script`;

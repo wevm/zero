@@ -8,6 +8,7 @@
 mod login;
 mod settings;
 mod sync;
+mod token;
 mod view;
 
 use rune::{AppSpec, TextEdit, Tx};
@@ -262,6 +263,16 @@ impl App {
             .token
             .as_deref()
             .and_then(|t| AuthData::from_jwt(t, now));
+        // A saved token that has expired is deleted.
+        if self
+            .saved
+            .token
+            .as_deref()
+            .is_some_and(|t| AuthData::from_jwt(t, now).is_none())
+        {
+            self.saved.token = None;
+            token::delete();
+        }
         if self.auth.is_none() {
             self.settings.token = None;
             self.filter.created_by_me = false;
@@ -761,9 +772,9 @@ impl App {
             self.sheet_error = Some("That isn't a current zbugs token.".into());
             return;
         }
+        token::save(&token);
         self.settings.token = Some(token.clone());
         self.saved.token = Some(token);
-        self.saved.save();
         self.sheet = None;
         self.restart();
     }
@@ -771,7 +782,7 @@ impl App {
     pub fn log_out(&mut self) {
         self.settings.token = None;
         self.saved.token = None;
-        self.saved.save();
+        token::delete();
         self.restart();
     }
 
