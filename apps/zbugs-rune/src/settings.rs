@@ -1,6 +1,6 @@
 //! What the app keeps across launches: the servers, the login, and where
-//! the list was. A JSON file in the app's support directory, readable only
-//! by the user, since it holds the token.
+//! the list was. A JSON file in the app's support directory, with the token
+//! kept apart in the platform's credential store (`token.rs`).
 
 use std::path::PathBuf;
 
@@ -10,6 +10,7 @@ use zero_client::json::{self, Object, Value};
 pub struct Settings {
     pub cache_url: String,
     pub api_url: String,
+    /// Loaded from and saved to `token.rs`, not the file.
     pub token: Option<String>,
     /// The selected issue's id.
     pub selection: Option<String>,
@@ -31,11 +32,20 @@ impl Settings {
     /// `ZBUGS_TOKEN` from the environment over them, for tests: those last
     /// only for the launch, as `save` leaves them out.
     pub fn load() -> (Settings, Settings) {
-        let saved = std::fs::read_to_string(path())
+        let json = std::fs::read_to_string(path())
             .ok()
-            .and_then(|t| json::parse(&t).ok())
-            .map(|v| Settings::from_json(&v))
-            .unwrap_or_default();
+            .and_then(|t| json::parse(&t).ok());
+        let mut saved = json.as_ref().map(Settings::from_json).unwrap_or_default();
+        // Earlier versions kept the token in the file: it moves to the store.
+        let legacy = json
+            .as_ref()
+            .and_then(|v| v.get("token"))
+            .and_then(Value::as_str);
+        if let Some(t) = legacy {
+            crate::token::save(t);
+            saved.save();
+        }
+        saved.token = crate::token::load();
         let mut current = saved.clone();
         if let Ok(v) = std::env::var("ZBUGS_CACHE_URL") {
             current.cache_url = v;
@@ -67,7 +77,7 @@ impl Settings {
         Settings {
             cache_url: s("cacheURL").unwrap_or(d.cache_url),
             api_url: s("apiURL").unwrap_or(d.api_url),
-            token: s("token"),
+            token: None,
             selection: s("selection"),
         }
     }
@@ -76,9 +86,6 @@ impl Settings {
         let mut o = Object::new();
         o.insert("cacheURL", Value::from(self.cache_url.as_str()));
         o.insert("apiURL", Value::from(self.api_url.as_str()));
-        if let Some(t) = &self.token {
-            o.insert("token", Value::from(t.as_str()));
-        }
         if let Some(id) = &self.selection {
             o.insert("selection", Value::from(id.as_str()));
         }
@@ -109,7 +116,7 @@ fn path() -> PathBuf {
 }
 
 #[cfg(unix)]
-fn write_private(path: &std::path::Path, text: &str) -> std::io::Result<()> {
+pub fn write_private(path: &std::path::Path, text: &str) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
     let mut f = std::fs::OpenOptions::new()
@@ -122,6 +129,6 @@ fn write_private(path: &std::path::Path, text: &str) -> std::io::Result<()> {
 }
 
 #[cfg(not(unix))]
-fn write_private(path: &std::path::Path, text: &str) -> std::io::Result<()> {
+pub fn write_private(path: &std::path::Path, text: &str) -> std::io::Result<()> {
     std::fs::write(path, text)
 }
