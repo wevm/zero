@@ -24,8 +24,8 @@ use std::ops::Range;
 use std::rc::Rc;
 use zbugs_model::args::*;
 use zbugs_model::mutators::{
-    ADD_COMMENT, ADD_EMOJI_TO_COMMENT, ADD_EMOJI_TO_ISSUE, ADD_LABEL, CREATE_ISSUE, MutateRequest,
-    REMOVE_EMOJI, REMOVE_LABEL, UPDATE_ISSUE,
+    ADD_COMMENT, ADD_EMOJI_TO_COMMENT, ADD_EMOJI_TO_ISSUE, ADD_LABEL, CREATE_ISSUE, EDIT_COMMENT,
+    MutateRequest, REMOVE_COMMENT, REMOVE_EMOJI, REMOVE_LABEL, UPDATE_ISSUE,
 };
 use zbugs_model::queries::{
     ALL_PROJECTS, COMMENTS_PAGE, ISSUE_DETAIL, ISSUE_LIST_COUNT, ISSUE_LIST_V2, LABELS, USER,
@@ -746,6 +746,116 @@ impl ZbugsApp {
             }
         })
         .detach();
+    }
+
+    /// Whether the user can edit or delete what `creator_id` made: their
+    /// own, or anything for the crew, as zbugs' mutators allow.
+    fn can_change(&self, creator_id: &str) -> bool {
+        self.session
+            .auth
+            .as_ref()
+            .is_some_and(|a| a.is_crew() || a.sub == creator_id)
+    }
+
+    /// Opens a dialog to edit `comment`'s Markdown.
+    fn open_comment_editor(
+        &mut self,
+        comment: Comment,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let body = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .rows(8)
+                .default_value(comment.body.clone())
+        });
+        let app = cx.entity().downgrade();
+        let (b0, id) = (body.clone(), comment.id);
+        window.open_dialog(cx, move |dialog, _, _| {
+            let (app, b, id) = (app.clone(), b0.clone(), id.clone());
+            let save = Rc::new(move |window: &mut Window, cx: &mut App| {
+                let body = b.read(cx).value().trim().to_owned();
+                let saved = app
+                    .update(cx, |this, cx| this.edit_comment(id.clone(), body, cx))
+                    .unwrap_or(false);
+                if saved {
+                    window.close_dialog(cx);
+                }
+            });
+            let on_ok = save.clone();
+            dialog
+                .w(px(640.))
+                .title("Edit comment")
+                .on_ok(move |_, window, cx| {
+                    on_ok(window, cx);
+                    false
+                })
+                .child(Textarea::new(&b0))
+                .footer(
+                    DialogFooter::new()
+                        .child(
+                            Button::new("comment-cancel")
+                                .outline()
+                                .label("Cancel")
+                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                        )
+                        .child(
+                            Button::new("comment-save")
+                                .primary()
+                                .label("Save")
+                                .on_click(move |_, window, cx| save(window, cx)),
+                        ),
+                )
+        });
+        window.defer(cx, move |window, cx| {
+            body.update(cx, |state, cx| state.focus(window, cx));
+        });
+    }
+
+    /// Saves comment `id`'s new body. Returns whether it went ahead; an
+    /// empty body doesn't.
+    fn edit_comment(&mut self, id: String, body: String, cx: &mut Context<Self>) -> bool {
+        if body.is_empty() {
+            self.error = Some("A comment can't be empty.".into());
+            cx.notify();
+            return false;
+        }
+        self.mutate(EDIT_COMMENT.with(&EditCommentArgs { id, body }), cx);
+        true
+    }
+
+    fn delete_comment(&mut self, id: &String, cx: &mut Context<Self>) {
+        self.mutate(REMOVE_COMMENT.with(id), cx);
+    }
+
+    /// Asks before deleting comment `id`.
+    fn confirm_delete_comment(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let app = cx.entity().downgrade();
+        window.open_dialog(cx, move |dialog, _, _| {
+            let (app, id) = (app.clone(), id.clone());
+            dialog
+                .w(px(420.))
+                .title("Delete this comment?")
+                .child("It's gone for everyone, and can't be undone.")
+                .footer(
+                    DialogFooter::new()
+                        .child(
+                            Button::new("delete-cancel")
+                                .outline()
+                                .label("Cancel")
+                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                        )
+                        .child(
+                            Button::new("delete-confirm")
+                                .danger()
+                                .label("Delete")
+                                .on_click(move |_, window, cx| {
+                                    let _ = app.update(cx, |this, cx| this.delete_comment(&id, cx));
+                                    window.close_dialog(cx);
+                                }),
+                        ),
+                )
+        });
     }
 
     fn toggle_open(&mut self, issue: &Issue, cx: &mut Context<Self>) {
@@ -1542,6 +1652,7 @@ impl ZbugsApp {
                     c.emoji.as_deref().unwrap_or_default(),
                     cx,
                 );
+                let (edit, remove) = (c.clone(), c.id.clone());
                 v_flex()
                     .gap_1()
                     .p_3()
@@ -1549,10 +1660,31 @@ impl ZbugsApp {
                     .border_1()
                     .border_color(cx.theme().border)
                     .child(
-                        div()
+                        h_flex()
+                            .gap_1()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child(who(&c.creator)),
+                            .child(div().flex_1().child(who(&c.creator)))
+                            .when(self.can_change(&c.creator_id), |row| {
+                                row.child(
+                                    Button::new(SharedString::from(format!("edit-{}", c.id)))
+                                        .xsmall()
+                                        .ghost()
+                                        .label("Edit")
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.open_comment_editor(edit.clone(), window, cx)
+                                        })),
+                                )
+                                .child(
+                                    Button::new(SharedString::from(format!("delete-{}", c.id)))
+                                        .xsmall()
+                                        .ghost()
+                                        .label("Delete")
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.confirm_delete_comment(remove.clone(), window, cx)
+                                        })),
+                                )
+                            }),
                     )
                     .child(TextView::markdown(
                         SharedString::from(format!("comment-{}", c.id)),
