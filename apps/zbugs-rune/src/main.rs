@@ -13,6 +13,7 @@ mod token;
 mod view;
 
 use rune::{AppSpec, TextEdit, Tx};
+use rune_kit::ComboboxState;
 use settings::Settings;
 use sync::{Session, Setup, SyncThread};
 use zbugs_model::args::{
@@ -84,14 +85,11 @@ pub struct Filter {
 /// A dropdown on the issue page.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Picker {
-    Assignee,
     Labels,
     Visibility,
     Notifications,
     /// The sidebar's.
     Project,
-    CreatorFilter,
-    AssigneeFilter,
     LabelFilter,
     /// Reactions to the issue (its ID) or to one of its comments.
     Emoji(String),
@@ -110,7 +108,6 @@ pub enum Confirm {
 pub enum Sheet {
     NewIssue,
     EditIssue,
-    NewLabel,
     Login,
     Servers,
 }
@@ -172,7 +169,13 @@ pub struct App {
     pub title_edit: TextEdit,
     pub description_edit: TextEdit,
     pub token_edit: TextEdit,
-    pub label_edit: TextEdit,
+    /// The label picker's filter, which also names a label to create.
+    pub label_search: TextEdit,
+    /// The searchable people pickers: the list's creator and assignee
+    /// filters, and the issue's assignee.
+    pub creator_combo: ComboboxState,
+    pub assignee_filter_combo: ComboboxState,
+    pub assignee_combo: ComboboxState,
     pub cache_edit: TextEdit,
     pub api_edit: TextEdit,
     pub sheet_error: Option<String>,
@@ -284,7 +287,10 @@ impl App {
             title_edit: TextEdit::new(""),
             description_edit: TextEdit::new(""),
             token_edit: TextEdit::new(""),
-            label_edit: TextEdit::new(""),
+            label_search: TextEdit::new(""),
+            creator_combo: ComboboxState::default(),
+            assignee_filter_combo: ComboboxState::default(),
+            assignee_combo: ComboboxState::default(),
             cache_edit: TextEdit::new(""),
             api_edit: TextEdit::new(""),
             sheet_error: None,
@@ -727,15 +733,17 @@ impl App {
         }
     }
 
-    /// Creates a label in the issue's project and adds it to the issue.
-    pub fn save_label(&mut self) {
-        let name = self.label_edit.text.trim().to_owned();
-        if name.is_empty() {
-            self.sheet_error = Some("A label needs a name.".into());
-            return;
-        }
-        if self.labels.iter().any(|l| l.name == name) {
-            self.sheet_error = Some(format!("There's already a label named {name}."));
+    /// Creates a label named as the label picker's filter, in the issue's
+    /// project, and adds it to the issue, unless a label has that name
+    /// (whatever its case), as the web picker does.
+    pub fn create_label(&mut self) {
+        let name = self.label_search.text.trim().to_owned();
+        if name.is_empty()
+            || self
+                .labels
+                .iter()
+                .any(|l| l.name.to_lowercase() == name.to_lowercase())
+        {
             return;
         }
         let Some(issue) = &self.detail else { return };
@@ -745,7 +753,8 @@ impl App {
             label_name: name,
             project_id: None,
         }));
-        self.sheet = None;
+        self.label_search = TextEdit::new("");
+        self.label_search.focused = true;
     }
 
     pub fn toggle_open(&mut self) {
@@ -845,9 +854,16 @@ impl App {
     }
 
     pub fn toggle_picker(&mut self, picker: Picker) {
-        if matches!(picker, Picker::Emoji(_)) {
-            self.emoji_search = TextEdit::new("");
-            self.emoji_search.focused = true;
+        match picker {
+            Picker::Emoji(_) => {
+                self.emoji_search = TextEdit::new("");
+                self.emoji_search.focused = true;
+            }
+            Picker::Labels => {
+                self.label_search = TextEdit::new("");
+                self.label_search.focused = true;
+            }
+            _ => {}
         }
         self.picker = (self.picker.as_ref() != Some(&picker)).then_some(picker);
     }
@@ -960,11 +976,6 @@ impl App {
                 let Some(issue) = &self.detail else { return };
                 self.title_edit = TextEdit::new(issue.title.clone());
                 self.description_edit = TextEdit::new(issue.description.clone());
-            }
-            Sheet::NewLabel => {
-                self.picker = None;
-                self.label_edit = TextEdit::new("");
-                self.label_edit.focused = true;
             }
             Sheet::Login => self.token_edit = TextEdit::new(""),
             Sheet::Servers => {
@@ -1104,8 +1115,9 @@ fn apply_issues(s: &mut App, rows: Vec<Issue>, result_type: ResultType, tx: &mut
     }
 }
 
-/// Keys no control took: j and k step through the list, and / starts a
-/// search, as on the web.
+/// Keys no control took: j and k step through the list, / starts a search,
+/// as on the web, and Escape closes an open picker (Rune's popovers leave
+/// Escape to the app).
 fn on_key(s: &mut App, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
     if s.sheet.is_some()
         || s.confirm.is_some()
@@ -1116,6 +1128,7 @@ fn on_key(s: &mut App, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
         return false;
     }
     match &event.key {
+        rune::Key::Escape if s.picker.is_some() => s.picker = None,
         rune::Key::Text(t) if t == "j" => s.step(1, tx),
         rune::Key::Text(t) if t == "k" => s.step(-1, tx),
         rune::Key::Text(t) if t == "/" => s.search.focused = true,

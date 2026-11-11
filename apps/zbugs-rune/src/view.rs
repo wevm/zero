@@ -4,10 +4,10 @@
 use std::borrow::Cow;
 use std::sync::OnceLock;
 
-use rune::{Cx, El, GrowthSpec, ScrollSpec, col, el, row, text};
+use rune::{Cx, El, GrowthSpec, ScrollSpec, Tx, col, el, row, text};
 use rune_kit::{
-    Button, ButtonVariant, Checkbox, Dialog, Kit, Markdown, Menu, MenuItem, Popover,
-    SegmentedControl, Select, TextArea, TextInput,
+    Button, ButtonVariant, Checkbox, Combobox, ComboboxOption, ComboboxState, Dialog, Kit,
+    Markdown, Menu, MenuItem, Popover, SegmentedControl, Select, TextArea, TextInput,
 };
 use zbugs_model::args::{SortDirection, SortField};
 use zbugs_model::schema::{Comment, Emoji, Issue, IssueVisibility, Label, User};
@@ -167,7 +167,7 @@ fn sidebar(s: &App, k: &Kit, layer: &mut Vec<El>) -> El {
             s,
             k,
             layer,
-            Picker::CreatorFilter,
+            true,
             &s.creators,
             &s.filter.creator,
         ))
@@ -176,7 +176,7 @@ fn sidebar(s: &App, k: &Kit, layer: &mut Vec<El>) -> El {
             s,
             k,
             layer,
-            Picker::AssigneeFilter,
+            false,
             &s.assignees,
             &s.filter.assignee,
         ))
@@ -257,34 +257,32 @@ fn project_picker(s: &App, k: &Kit, layer: &mut Vec<El>) -> El {
         .build(k, layer)
 }
 
-/// Filters the list by who created the issues, or who they're assigned to.
+/// Filters the list by who created the issues (`creator`), or who they're
+/// assigned to, searchable as the web app's user picker.
 fn user_filter(
     s: &App,
     k: &Kit,
     layer: &mut Vec<El>,
-    picker: Picker,
+    creator: bool,
     users: &[User],
     current: &Option<String>,
 ) -> El {
     const ANYONE: &str = "Anyone";
-    let mut options = vec![ANYONE];
-    options.extend(users.iter().map(|u| u.login.as_str()));
+    let mut logins = vec![ANYONE];
+    logins.extend(users.iter().map(|u| u.login.as_str()));
     // A login from before the users synced, or from the "me" shortcut.
-    if let Some(c) = current.as_deref().filter(|c| !options.contains(c)) {
-        options.push(c);
+    if let Some(c) = current.as_deref().filter(|c| !logins.contains(c)) {
+        logins.push(c);
     }
-    let creator = picker == Picker::CreatorFilter;
-    let key = if creator {
-        "creator"
+    let (key, state, access): (_, _, Combo) = if creator {
+        ("creator", &s.creator_combo, |s| &mut s.creator_combo)
     } else {
-        "assignee-filter"
+        ("assignee-filter", &s.assignee_filter_combo, |s| {
+            &mut s.assignee_filter_combo
+        })
     };
-    Select::new(key, &options)
-        .width(202.0)
-        .current(Some(current.as_deref().unwrap_or(ANYONE)))
-        .open(s.picker.as_ref() == Some(&picker))
-        .on_toggle(move |s: &mut App| s.toggle_picker(picker.clone()))
-        .on_close(|s: &mut App| s.picker = None)
+    let current = current.as_deref().unwrap_or(ANYONE);
+    people(k, (key, state, access), &logins, current, 202.0)
         .on_choose(move |s: &mut App, login: &str, _| {
             let login = (login != ANYONE).then(|| login.to_owned());
             if creator {
@@ -294,6 +292,30 @@ fn user_filter(
             }
         })
         .build(k, layer)
+}
+
+/// Where a people picker keeps its state in the app.
+type Combo = for<'a> fn(&'a mut App) -> &'a mut ComboboxState;
+
+/// A searchable picker of `logins`, its trigger `width` points wide and
+/// showing `current` as the other dropdowns do.
+fn people(
+    k: &Kit,
+    (key, state, access): (&str, &ComboboxState, Combo),
+    logins: &[&str],
+    current: &str,
+    width: f32,
+) -> Combobox<App> {
+    let options: Vec<ComboboxOption> = logins.iter().map(|l| ComboboxOption::new(*l, *l)).collect();
+    let trigger = Select::new(format!("{key}-value"), &[] as &[&str])
+        .width(width)
+        .current(Some(current))
+        .open(state.is_open())
+        .trigger(k);
+    Combobox::new(key, state, &options, access)
+        .current(Some(current))
+        .search_placeholder("Search people")
+        .trigger(trigger)
 }
 
 /// Filters the list by labels, checked when it does.
@@ -890,22 +912,23 @@ fn comment(s: &App, c: &Comment, k: &Kit, layer: &mut Vec<El>) -> El {
 /// Who the issue is assigned to, for those who can change it.
 fn assignee_picker(s: &App, issue: &Issue, k: &Kit, layer: &mut Vec<El>) -> El {
     const NOBODY: &str = "Nobody";
-    let mut options = vec![NOBODY];
-    options.extend(s.crew.iter().map(|u| u.login.as_str()));
+    let mut logins = vec![NOBODY];
+    logins.extend(s.crew.iter().map(|u| u.login.as_str()));
     let current = issue.assignee.as_ref().map_or(NOBODY, |u| u.login.as_str());
     row()
         .gap(8.0)
         .center_y()
         .child(field_label(k, "Assignee"))
         .child(
-            Select::new("assignee", &options)
-                .width(200.0)
-                .current(Some(current))
-                .open(s.picker == Some(Picker::Assignee))
-                .on_toggle(|s: &mut App| s.toggle_picker(Picker::Assignee))
-                .on_close(|s: &mut App| s.picker = None)
-                .on_choose(|s: &mut App, login: &str, _| s.assign(login))
-                .build(k, layer),
+            people(
+                k,
+                ("assignee", &s.assignee_combo, |s| &mut s.assignee_combo),
+                &logins,
+                current,
+                200.0,
+            )
+            .on_choose(|s: &mut App, login: &str, _| s.assign(login))
+            .build(k, layer),
         )
 }
 
@@ -935,10 +958,12 @@ fn choice(
         )
 }
 
-/// The project's labels, checked when the issue has them.
+/// The project's labels, the issue's first, filtered by what the user types
+/// as the web app's label picker. A filter no label matches offers to create
+/// a label with that name, and so does Enter.
 fn label_picker(s: &App, issue_labels: &[Label], k: &Kit, layer: &mut Vec<El>) -> El {
     let open = s.picker == Some(Picker::Labels);
-    let mut menu = Menu::new("labels")
+    let mut popover = Popover::new("labels")
         .trigger(
             Button::new("Labels…")
                 .variant(ButtonVariant::Ghost)
@@ -946,20 +971,65 @@ fn label_picker(s: &App, issue_labels: &[Label], k: &Kit, layer: &mut Vec<El>) -
                 .on_press(|s: &mut App| s.toggle_picker(Picker::Labels))
                 .build(k),
         )
-        .min_width(200.0)
+        .label("Labels")
         .open(open)
-        .on_close(|s: &mut App| s.picker = None)
-        .item(MenuItem::new("New Label…").on_select(|s: &mut App| s.open_sheet(Sheet::NewLabel)))
-        .separator();
-    for l in &s.labels {
+        .on_close(|s: &mut App| s.picker = None);
+    if !open {
+        return popover.build(k, layer);
+    }
+    let query = s.label_search.text.trim().to_lowercase();
+    let on = |l: &Label| issue_labels.iter().any(|x| x.id == l.id);
+    let (mine, others): (Vec<&Label>, Vec<&Label>) = s
+        .labels
+        .iter()
+        .filter(|l| l.name.to_lowercase().contains(&query))
+        .partition(|l| on(l));
+    let mut options = col().key("label-options").w_full().gap(4.0);
+    for l in mine.iter().chain(&others) {
         let id = l.id.clone();
-        menu = menu.item(
-            MenuItem::new(l.name.clone())
-                .checked(issue_labels.iter().any(|x| x.id == l.id))
-                .on_select(move |s: &mut App| s.toggle_label(&id)),
+        options = options.child(
+            Checkbox::new(on(l))
+                .label(l.name.clone())
+                .on_toggle(move |s: &mut App| s.toggle_label(&id))
+                .build(k)
+                .key(format!("label-{}", l.name)),
         );
     }
-    menu.build(k, layer)
+    if !query.is_empty() && mine.is_empty() && others.is_empty() {
+        options = options.child(
+            Button::new(format!("Create \"{}\"", s.label_search.text.trim()))
+                .variant(ButtonVariant::Ghost)
+                .on_press(|s: &mut App| s.create_label())
+                .build(k)
+                .key("create-label"),
+        );
+    }
+    popover = popover.child(
+        col()
+            .w(240.0)
+            .gap(8.0)
+            .child(
+                TextInput::new(&s.label_search)
+                    .placeholder("Filter or add label…")
+                    .width(None)
+                    .on_edit(|s: &mut App| &mut s.label_search)
+                    .on_submit(|s: &mut App, _| s.create_label())
+                    .on_key(close_on_escape)
+                    .build(k)
+                    .key("label-search"),
+            )
+            .child(
+                col()
+                    .key("label-scroll")
+                    .w_full()
+                    .max_h(240.0)
+                    .scroll(ScrollSpec {
+                        stick_bottom: false,
+                    })
+                    .child(options),
+            ),
+    );
+    popover.build(k, layer)
 }
 
 /// The reactions to an issue or a comment, one pill per emoji with its
@@ -1035,6 +1105,16 @@ fn reactions(s: &App, subject_id: &str, k: &Kit, layer: &mut Vec<El>) -> El {
         popover = popover.child(emoji_picker(s, subject_id, k));
     }
     r.child(popover.build(k, layer))
+}
+
+/// Escape in a picker's search field closes the picker, which the field
+/// would otherwise keep for itself.
+fn close_on_escape(s: &mut App, event: &rune::KeyEvent, _: &mut Tx) -> bool {
+    if !matches!(event.key, rune::Key::Escape) {
+        return false;
+    }
+    s.picker = None;
+    true
 }
 
 /// Who reacted with an emoji, as the web app's tooltip says it: "you, arv
@@ -1129,6 +1209,7 @@ fn emoji_picker(s: &App, subject_id: &str, k: &Kit) -> El {
             TextInput::new(&s.emoji_search)
                 .placeholder("Search")
                 .on_edit(|s: &mut App| &mut s.emoji_search)
+                .on_key(close_on_escape)
                 .build(k)
                 .key("emoji-search"),
         )
@@ -1244,25 +1325,6 @@ fn sheets(s: &App, k: &Kit, layer: &mut Vec<El>) {
             ));
             Dialog::new("issue-sheet", title)
                 .width(560.0)
-                .fit()
-                .open(true)
-                .on_close(close)
-                .child(form(fields))
-                .build(k, layer);
-        }
-        Some(Sheet::NewLabel) => {
-            let mut fields = vec![
-                TextInput::new(&s.label_edit)
-                    .placeholder("Name")
-                    .on_edit(|s: &mut App| &mut s.label_edit)
-                    .on_submit(|s: &mut App, _| s.save_label())
-                    .build(k)
-                    .key("label-field"),
-            ];
-            fields.extend(error(s));
-            fields.push(buttons("Create", App::save_label));
-            Dialog::new("label-sheet", "New Label")
-                .width(400.0)
                 .fit()
                 .open(true)
                 .on_close(close)
