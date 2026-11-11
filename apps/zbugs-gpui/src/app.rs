@@ -2,7 +2,7 @@
 //! issue on the right, as zbugs' list and issue pages.
 
 use crate::live::Live;
-use crate::session::{Session, app_dir, now_ms};
+use crate::session::{Session, app_dir, now_ms, save_setting};
 use futures::StreamExt;
 use futures::channel::mpsc;
 use gpui_kit::component::button::*;
@@ -25,11 +25,11 @@ use zbugs_model::mutators::{
     REMOVE_EMOJI, REMOVE_LABEL, UPDATE_ISSUE,
 };
 use zbugs_model::queries::{
-    ALL_PROJECTS, COMMENTS_PAGE, ISSUE_DETAIL, ISSUE_LIST_COUNT, ISSUE_LIST_V2, LABELS,
+    ALL_PROJECTS, COMMENTS_PAGE, ISSUE_DETAIL, ISSUE_LIST_COUNT, ISSUE_LIST_V2, LABELS, USER,
     USERS_FOR_PROJECT,
 };
 use zbugs_model::schema::{Comment, Emoji, Issue, Label, Project, User};
-use zbugs_model::{ZERO_PROJECT_NAME, make_id};
+use zbugs_model::{AuthData, ZERO_PROJECT_NAME, make_id};
 use zero_client::client::{ConnectionState, MutationOutcome};
 use zero_client::ttl::Ttl;
 
@@ -137,6 +137,8 @@ pub struct ZbugsApp {
     assignees: Live<Vec<User>>,
     crew: Live<Vec<User>>,
     labels: Live<Vec<Label>>,
+    /// The logged-in user.
+    me: Option<Live<Option<User>>>,
     selected: Option<String>,
     detail: Option<Live<Option<Issue>>>,
     /// How many of the selected issue's comments to show, newest first.
@@ -243,6 +245,10 @@ impl ZbugsApp {
             &ttl(),
             cx,
         );
+        let me = session
+            .auth
+            .as_ref()
+            .map(|a| Live::new(&session.zero, USER.call(&a.sub, Some(a)), &ttl(), cx));
         let mut app = ZbugsApp {
             session,
             filters,
@@ -254,6 +260,7 @@ impl ZbugsApp {
             assignees,
             crew,
             labels,
+            me,
             selected: None,
             detail: None,
             comments_limit: COMMENT_PAGE,
@@ -274,6 +281,203 @@ impl ZbugsApp {
             app.reveal_selected = true;
         }
         app
+    }
+
+    /// Starts over on another login or other servers.
+    fn replace_session(&mut self, session: Session, window: &mut Window, cx: &mut Context<Self>) {
+        *self = ZbugsApp::new(session, window, cx);
+        cx.notify();
+    }
+
+    /// Logs in with a zbugs token, or logs out with `None`. Returns whether
+    /// it went ahead; a token that isn't one doesn't.
+    fn log_in(
+        &mut self,
+        token: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if let Some(token) = &token
+            && AuthData::from_jwt(token, now_ms() / 1000.0).is_none()
+        {
+            self.error = Some("That isn't a zbugs token, or it has expired.".into());
+            cx.notify();
+            return false;
+        }
+        save_setting("token", token.as_deref());
+        let (cache_url, api_url) = (self.session.cache_url.clone(), self.session.api_url.clone());
+        self.replace_session(Session::new(cache_url, api_url, token, cx), window, cx);
+        true
+    }
+
+    fn set_servers(
+        &mut self,
+        cache_url: String,
+        api_url: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if cache_url.is_empty() || api_url.is_empty() {
+            self.error = Some("Both servers need a URL.".into());
+            cx.notify();
+            return false;
+        }
+        save_setting("cache-url", Some(&cache_url));
+        save_setting("api-url", Some(&api_url));
+        let token = self.session.token.clone();
+        self.replace_session(Session::new(cache_url, api_url, token, cx), window, cx);
+        true
+    }
+
+    /// A dialog of text fields; Save passes their values to `save`, which
+    /// returns whether the dialog can close.
+    fn open_form(
+        &mut self,
+        title: &'static str,
+        fields: Vec<(&'static str, String, bool)>,
+        save: impl Fn(&mut ZbugsApp, Vec<String>, &mut Window, &mut Context<ZbugsApp>) -> bool + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let labels: Vec<&'static str> = fields.iter().map(|f| f.0).collect();
+        let inputs: Vec<Entity<InputState>> = fields
+            .into_iter()
+            .map(|(placeholder, value, masked)| {
+                cx.new(|cx| {
+                    InputState::new(window, cx)
+                        .placeholder(placeholder)
+                        .masked(masked)
+                        .default_value(value)
+                })
+            })
+            .collect();
+        let first = inputs.first().cloned();
+        let app = cx.entity().downgrade();
+        let save = Rc::new(save);
+        window.open_dialog(cx, move |dialog, _, cx| {
+            let (app, inputs2, save) = (app.clone(), inputs.clone(), save.clone());
+            let submit = Rc::new(move |window: &mut Window, cx: &mut App| {
+                let values = inputs2
+                    .iter()
+                    .map(|i| i.read(cx).value().trim().to_owned())
+                    .collect();
+                let saved = app
+                    .update(cx, |this, cx| save(this, values, window, cx))
+                    .unwrap_or(false);
+                if saved {
+                    window.close_dialog(cx);
+                }
+            });
+            let on_ok = submit.clone();
+            dialog
+                .w(px(480.))
+                .title(title)
+                .on_ok(move |_, window, cx| {
+                    on_ok(window, cx);
+                    false
+                })
+                .child(v_flex().gap_3().children(inputs.iter().zip(&labels).map(
+                    |(input, label)| {
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(*label),
+                            )
+                            .child(Input::new(input))
+                    },
+                )))
+                .footer(
+                    DialogFooter::new()
+                        .child(
+                            Button::new("form-cancel")
+                                .outline()
+                                .label("Cancel")
+                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                        )
+                        .child(
+                            Button::new("form-save")
+                                .primary()
+                                .label("Save")
+                                .on_click(move |_, window, cx| submit(window, cx)),
+                        ),
+                )
+        });
+        if let Some(first) = first {
+            window.defer(cx, move |window, cx| {
+                first.update(cx, |state, cx| state.focus(window, cx));
+            });
+        }
+    }
+
+    fn open_login(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_form(
+            "Log in with a token",
+            vec![("zbugs token (a JWT)", String::new(), true)],
+            |this, values, window, cx| {
+                let token = values.into_iter().next().filter(|t| !t.is_empty());
+                token.is_some_and(|t| this.log_in(Some(t), window, cx))
+            },
+            window,
+            cx,
+        );
+    }
+
+    fn open_servers(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_form(
+            "Servers",
+            vec![
+                ("zero-cache URL", self.session.cache_url.clone(), false),
+                ("zbugs API URL", self.session.api_url.clone(), false),
+            ],
+            |this, values, window, cx| {
+                let mut values = values.into_iter();
+                let cache_url = values.next().unwrap_or_default();
+                let api_url = values.next().unwrap_or_default();
+                this.set_servers(cache_url, api_url, window, cx)
+            },
+            window,
+            cx,
+        );
+    }
+
+    fn render_account(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let login = self
+            .me
+            .as_ref()
+            .and_then(|me| me.snapshot().value.clone().flatten())
+            .map(|u| u.login);
+        let logged_in = self.session.auth.is_some();
+        let app = cx.entity().downgrade();
+        Button::new("account")
+            .small()
+            .ghost()
+            .label(match (&login, logged_in) {
+                (Some(login), _) => login.clone(),
+                (None, true) => "Account".into(),
+                (None, false) => "Log in".into(),
+            })
+            .dropdown_menu(move |menu: PopupMenu, _, _| {
+                let (a, b) = (app.clone(), app.clone());
+                let account = if logged_in {
+                    PopupMenuItem::new("Log out").on_click(move |_, window, cx| {
+                        let _ = a.update(cx, |this, cx| this.log_in(None, window, cx));
+                    })
+                } else {
+                    PopupMenuItem::new("Log in with a token…").on_click(move |_, window, cx| {
+                        let _ = a.update(cx, |this, cx| this.open_login(window, cx));
+                    })
+                };
+                menu.item(account)
+                    .separator()
+                    .item(
+                        PopupMenuItem::new("Servers…").on_click(move |_, window, cx| {
+                            let _ = b.update(cx, |this, cx| this.open_servers(window, cx));
+                        }),
+                    )
+            })
     }
 
     /// Keeps what the window shows for the next launch.
@@ -536,7 +740,11 @@ impl ZbugsApp {
     }
 
     fn post_comment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(issue_id) = self.selected.clone() else {
+        let Some(issue_id) = self
+            .selected
+            .clone()
+            .filter(|_| self.session.auth.is_some())
+        else {
             return;
         };
         let body = self.comment.read(cx).value().trim().to_owned();
@@ -723,7 +931,8 @@ impl ZbugsApp {
                             .text_color(cx.theme().muted_foreground)
                             .child(count),
                     )
-                    .child(self.render_connection(cx)),
+                    .child(self.render_connection(cx))
+                    .child(self.render_account(cx)),
             )
             .child(self.render_filters(cx))
             .child(
@@ -747,24 +956,20 @@ impl ZbugsApp {
             )
     }
 
-    /// A button that opens a menu of `choices`; picking one calls
-    /// `on_pick` with its value.
+    /// `button` opens a menu of `choices`; picking one calls `on_pick` with
+    /// its value.
     fn picker(
         &self,
-        id: impl Into<ElementId>,
-        label: String,
-        active: bool,
+        button: Button,
         choices: Vec<Choice>,
         on_pick: OnPick,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let app = cx.entity().downgrade();
         let choices = Rc::new(choices);
-        Button::new(id)
-            .label(label)
+        button
             .small()
             .ghost()
-            .selected(active)
             .dropdown_menu(move |menu: PopupMenu, _, _| {
                 let mut menu = menu.scrollable(true).max_h(px(360.)).min_w(px(200.));
                 for choice in choices.iter() {
@@ -806,21 +1011,25 @@ impl ZbugsApp {
     fn render_filters(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let f = &self.filters;
         let creator = self.picker(
-            "filter-creator",
-            f.creator
-                .as_ref()
-                .map_or("Creator".into(), |l| format!("Creator: {l}")),
-            f.creator.is_some(),
+            Button::new("filter-creator")
+                .label(
+                    f.creator
+                        .as_ref()
+                        .map_or("Creator".into(), |l| format!("Creator: {l}")),
+                )
+                .selected(f.creator.is_some()),
             Self::user_choices(&self.creators, "Anyone", f.creator.as_deref()),
             Rc::new(|this, login, cx| this.refilter(|f| f.creator = login, cx)),
             cx,
         );
         let assignee = self.picker(
-            "filter-assignee",
-            f.assignee
-                .as_ref()
-                .map_or("Assignee".into(), |l| format!("Assignee: {l}")),
-            f.assignee.is_some(),
+            Button::new("filter-assignee")
+                .label(
+                    f.assignee
+                        .as_ref()
+                        .map_or("Assignee".into(), |l| format!("Assignee: {l}")),
+                )
+                .selected(f.assignee.is_some()),
             Self::user_choices(&self.assignees, "Anyone", f.assignee.as_deref()),
             Rc::new(|this, login, cx| this.refilter(|f| f.assignee = login, cx)),
             cx,
@@ -845,13 +1054,13 @@ impl ZbugsApp {
             value: Some(name),
         }));
         let labels = self.picker(
-            "filter-labels",
-            match f.labels.as_slice() {
-                [] => "Labels".into(),
-                [one] => format!("Label: {one}"),
-                many => format!("Labels: {}", many.len()),
-            },
-            !f.labels.is_empty(),
+            Button::new("filter-labels")
+                .label(match f.labels.as_slice() {
+                    [] => "Labels".into(),
+                    [one] => format!("Label: {one}"),
+                    many => format!("Labels: {}", many.len()),
+                })
+                .selected(!f.labels.is_empty()),
             label_choices,
             Rc::new(|this, name, cx| this.toggle_label_filter(name, cx)),
             cx,
@@ -1044,9 +1253,7 @@ impl ZbugsApp {
             .collect();
         let (all, id) = (emoji.clone(), subject_id.to_owned());
         let add = self.picker(
-            SharedString::from(format!("react-{subject_id}")),
-            "☺︎ +".into(),
-            false,
+            Button::new(SharedString::from(format!("react-{subject_id}"))).label("☺︎ +"),
             choices,
             Rc::new(move |this, unicode, cx| {
                 if let Some(unicode) = unicode {
@@ -1119,14 +1326,15 @@ impl ZbugsApp {
             label: u.login,
             value: Some(u.id),
         }));
+        let logged_in = self.session.auth.is_some();
         let id = issue.id.clone();
         let assignee = self.picker(
-            "detail-assignee",
-            match &issue.assignee {
-                Some(u) => format!("Assigned to {}", u.login),
-                None => "Unassigned".into(),
-            },
-            false,
+            Button::new("detail-assignee")
+                .label(match &issue.assignee {
+                    Some(u) => format!("Assigned to {}", u.login),
+                    None => "Unassigned".into(),
+                })
+                .disabled(!logged_in),
             assignee_choices,
             Rc::new(move |this, user_id, cx| this.set_assignee(id.clone(), user_id, cx)),
             cx,
@@ -1143,9 +1351,9 @@ impl ZbugsApp {
             .collect();
         let labeled = issue.clone();
         let labels = self.picker(
-            "detail-labels",
-            "Labels…".into(),
-            false,
+            Button::new("detail-labels")
+                .label("Labels…")
+                .disabled(!logged_in),
             label_choices,
             Rc::new(move |this, label_id, cx| {
                 if let Some(label_id) = label_id {
@@ -1177,6 +1385,7 @@ impl ZbugsApp {
                             .small()
                             .outline()
                             .label("Edit")
+                            .disabled(!logged_in)
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.open_editor(Some(edit.clone()), window, cx)
                             })),
@@ -1185,6 +1394,7 @@ impl ZbugsApp {
                         Button::new("toggle-open")
                             .small()
                             .label(if issue.open { "Close issue" } else { "Reopen" })
+                            .disabled(!logged_in)
                             .on_click(
                                 cx.listener(move |this, _, _, cx| this.toggle_open(&toggle, cx)),
                             ),
@@ -1271,6 +1481,7 @@ impl ZbugsApp {
                         Button::new("post-comment")
                             .primary()
                             .label("Comment")
+                            .disabled(!logged_in)
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.post_comment(window, cx)),
                             ),

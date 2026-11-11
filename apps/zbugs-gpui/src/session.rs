@@ -15,6 +15,9 @@ use zero_client::ttl::Ttl;
 pub struct Session {
     pub zero: Rc<Zero<zbugs_model::Context>>,
     pub auth: Option<AuthData>,
+    pub cache_url: String,
+    pub api_url: String,
+    pub token: Option<String>,
     _preloads: Vec<Preload>,
 }
 
@@ -48,6 +51,15 @@ fn setting(env: &str, file: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// Keeps a setting for the next launch; `None` forgets it.
+pub fn save_setting(file: &str, value: Option<&str>) {
+    let path = app_dir().join(file);
+    let _ = match value {
+        Some(value) => std::fs::write(path, value),
+        None => std::fs::remove_file(path),
+    };
+}
+
 impl Session {
     /// The saved login and servers, or the environment's.
     pub fn load(cx: &App) -> Session {
@@ -70,9 +82,9 @@ impl Session {
             auth.clone(),
             client_mutators(),
             ZeroOptions {
-                cache_url: Some(cache_url),
+                cache_url: Some(cache_url.clone()),
                 user_id: auth.as_ref().map(|a| a.sub.clone()),
-                auth: token,
+                auth: token.clone(),
                 mutate_url: Some(format!("{api_url}/api/mutate")),
                 query_url: Some(format!("{api_url}/api/query")),
                 storage: ZeroStorage::Sqlite {
@@ -106,6 +118,9 @@ impl Session {
         Session {
             zero: Rc::new(zero),
             auth,
+            cache_url,
+            api_url,
+            token,
             _preloads: preloads,
         }
     }
