@@ -24,8 +24,9 @@ use std::ops::Range;
 use std::rc::Rc;
 use zbugs_model::args::*;
 use zbugs_model::mutators::{
-    ADD_COMMENT, ADD_EMOJI_TO_COMMENT, ADD_EMOJI_TO_ISSUE, ADD_LABEL, CREATE_ISSUE, EDIT_COMMENT,
-    MutateRequest, REMOVE_COMMENT, REMOVE_EMOJI, REMOVE_LABEL, UPDATE_ISSUE,
+    ADD_COMMENT, ADD_EMOJI_TO_COMMENT, ADD_EMOJI_TO_ISSUE, ADD_LABEL, CREATE_ISSUE, DELETE_ISSUE,
+    EDIT_COMMENT, MutateRequest, REMOVE_COMMENT, REMOVE_EMOJI, REMOVE_LABEL, SET_VIEW_STATE,
+    UPDATE_ISSUE, UPDATE_NOTIFICATION,
 };
 use zbugs_model::queries::{
     ALL_PROJECTS, COMMENTS_PAGE, ISSUE_DETAIL, ISSUE_LIST_COUNT, ISSUE_LIST_V2, LABELS, USER,
@@ -161,9 +162,23 @@ pub struct ZbugsApp {
     scroll: UniformListScrollHandle,
     connection: Rc<RefCell<ConnectionState>>,
     error: Option<String>,
+    /// Marks the selected issue viewed after a second (`mark_viewed`).
+    view_timer: Option<(String, Task<()>)>,
     _unsubscribe: Box<dyn Fn()>,
     _tasks: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
+}
+
+/// Whether the issue changed since the user last viewed it. Its
+/// `view_state` is the user's own.
+fn is_unread(issue: &Issue) -> bool {
+    let viewed = issue
+        .view_state
+        .iter()
+        .flatten()
+        .map(|v| v.viewed)
+        .fold(0.0, f64::max);
+    issue.modified > viewed
 }
 
 fn ttl() -> Ttl {
@@ -279,6 +294,7 @@ impl ZbugsApp {
             scroll: UniformListScrollHandle::new(),
             connection,
             error: None,
+            view_timer: None,
             _unsubscribe: unsubscribe,
             _tasks: vec![watch],
             _subscriptions: subscriptions,
@@ -828,14 +844,21 @@ impl ZbugsApp {
         self.mutate(REMOVE_COMMENT.with(id), cx);
     }
 
-    /// Asks before deleting comment `id`.
-    fn confirm_delete_comment(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+    /// Asks before a delete, which `delete` does.
+    fn confirm_delete(
+        &mut self,
+        title: &'static str,
+        delete: impl Fn(&mut ZbugsApp, &mut Context<ZbugsApp>) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let app = cx.entity().downgrade();
+        let delete = Rc::new(delete);
         window.open_dialog(cx, move |dialog, _, _| {
-            let (app, id) = (app.clone(), id.clone());
+            let (app, delete) = (app.clone(), delete.clone());
             dialog
                 .w(px(420.))
-                .title("Delete this comment?")
+                .title(title)
                 .child("It's gone for everyone, and can't be undone.")
                 .footer(
                     DialogFooter::new()
@@ -850,12 +873,77 @@ impl ZbugsApp {
                                 .danger()
                                 .label("Delete")
                                 .on_click(move |_, window, cx| {
-                                    let _ = app.update(cx, |this, cx| this.delete_comment(&id, cx));
+                                    let _ = app.update(cx, |this, cx| delete(this, cx));
                                     window.close_dialog(cx);
                                 }),
                         ),
                 )
         });
+    }
+
+    /// Deletes issue `id`, and leaves it if it's selected, as the web app
+    /// goes back to the list.
+    fn delete_issue(&mut self, id: &String, cx: &mut Context<Self>) {
+        self.mutate(DELETE_ISSUE.with(id), cx);
+        if self.selected.as_ref() == Some(id) {
+            self.selected = None;
+            self.detail = None;
+            self.comment_page = None;
+            self.save();
+        }
+        cx.notify();
+    }
+
+    fn set_subscribed(&mut self, issue_id: String, subscribe: bool, cx: &mut Context<Self>) {
+        let args = NotificationUpdateArgs {
+            issue_id,
+            subscribed: if subscribe {
+                NotificationType::Subscribe
+            } else {
+                NotificationType::Unsubscribe
+            },
+            created: now_ms(),
+        };
+        self.mutate(UPDATE_NOTIFICATION.with(&args), cx);
+    }
+
+    /// Marks the selected issue viewed once it has been on screen for a
+    /// second, if it changed since the user last viewed it, as the web
+    /// app's issue page does. The list shows the others as unread.
+    fn mark_viewed(&mut self, cx: &mut Context<Self>) {
+        let unread = self
+            .session
+            .auth
+            .as_ref()
+            .and(self.detail.as_ref())
+            .and_then(|d| {
+                let snapshot = d.snapshot();
+                let issue = snapshot.value.as_ref()?.as_ref()?;
+                is_unread(issue).then(|| issue.id.clone())
+            });
+        let Some(id) = unread else {
+            self.view_timer = None;
+            return;
+        };
+        if self.view_timer.as_ref().is_some_and(|(at, _)| *at == id) {
+            return;
+        }
+        let at = id.clone();
+        let timer = cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_secs(1))
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.selected.as_ref() == Some(&id) {
+                    let args = ViewStateArgs {
+                        issue_id: id,
+                        viewed: now_ms(),
+                    };
+                    this.mutate(SET_VIEW_STATE.with(&args), cx);
+                }
+            });
+        });
+        self.view_timer = Some((at, timer));
     }
 
     fn toggle_open(&mut self, issue: &Issue, cx: &mut Context<Self>) {
@@ -1330,6 +1418,7 @@ impl ZbugsApp {
 
     fn render_row(&self, issue: &Issue, cx: &mut Context<Self>) -> impl IntoElement {
         let selected = self.selected.as_deref() == Some(issue.id.as_str());
+        let unread = self.session.auth.is_some() && is_unread(issue);
         let id = issue.id.clone();
         let creator = issue
             .creator
@@ -1378,6 +1467,20 @@ impl ZbugsApp {
                                 .text_xs()
                                 .text_color(cx.theme().muted_foreground)
                                 .child("Closed"),
+                        )
+                    })
+                    .when(unread, |d| {
+                        d.child(
+                            div()
+                                .id(SharedString::from(format!("unread-{}", issue.id)))
+                                .flex_none()
+                                .size(px(7.))
+                                .rounded_full()
+                                .bg(cx.theme().blue)
+                                .tooltip(|window, cx| {
+                                    Tooltip::new("Changed since you last viewed it")
+                                        .build(window, cx)
+                                }),
                         )
                     }),
             )
@@ -1546,6 +1649,40 @@ impl ZbugsApp {
                 value: Some(l.id),
             })
             .collect();
+        let subscribed = issue
+            .notification_state
+            .as_ref()
+            .is_some_and(|n| n.subscribed);
+        let notify_id = issue.id.clone();
+        let notifications = self.picker(
+            Button::new("detail-notifications")
+                .label(if subscribed {
+                    "Subscribed"
+                } else {
+                    "Not subscribed"
+                })
+                .tooltip("Notifications")
+                .disabled(!logged_in),
+            vec![
+                Choice {
+                    label: "Subscribed".into(),
+                    value: Some("subscribe".into()),
+                    checked: subscribed,
+                },
+                Choice {
+                    label: "Unsubscribed".into(),
+                    value: Some("unsubscribe".into()),
+                    checked: !subscribed,
+                },
+            ],
+            Rc::new(move |this, value, cx| {
+                let subscribe = value.as_deref() == Some("subscribe");
+                if subscribe != subscribed {
+                    this.set_subscribed(notify_id.clone(), subscribe, cx);
+                }
+            }),
+            cx,
+        );
         let labeled = issue.clone();
         let labels = self.picker(
             Button::new("detail-labels")
@@ -1595,7 +1732,25 @@ impl ZbugsApp {
                             .on_click(
                                 cx.listener(move |this, _, _, cx| this.toggle_open(&toggle, cx)),
                             ),
-                    ),
+                    )
+                    .when(self.can_change(&issue.creator_id), |row| {
+                        let id = issue.id.clone();
+                        row.child(
+                            Button::new("delete-issue")
+                                .small()
+                                .outline()
+                                .label("Delete")
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    let id = id.clone();
+                                    this.confirm_delete(
+                                        "Delete this issue?",
+                                        move |this, cx| this.delete_issue(&id, cx),
+                                        window,
+                                        cx,
+                                    )
+                                })),
+                        )
+                    }),
             )
             .child(
                 h_flex()
@@ -1608,6 +1763,7 @@ impl ZbugsApp {
                     .child(format!("by {}", who(&issue.creator)))
                     .child(assignee)
                     .child(labels)
+                    .child(notifications)
                     .children(issue.labels.iter().flatten().map(|l| {
                         div()
                             .px_1()
@@ -1681,7 +1837,13 @@ impl ZbugsApp {
                                         .ghost()
                                         .label("Delete")
                                         .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.confirm_delete_comment(remove.clone(), window, cx)
+                                            let id = remove.clone();
+                                            this.confirm_delete(
+                                                "Delete this comment?",
+                                                move |this, cx| this.delete_comment(&id, cx),
+                                                window,
+                                                cx,
+                                            )
                                         })),
                                 )
                             }),
@@ -1726,6 +1888,7 @@ impl Render for ZbugsApp {
             }
         }
         self.keep_scroll_anchor();
+        self.mark_viewed(cx);
         h_flex()
             .size_full()
             .bg(cx.theme().background)

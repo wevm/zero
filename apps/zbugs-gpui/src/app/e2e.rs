@@ -3,9 +3,10 @@
 //! a user would through its own controls' handlers, and exits 0 when every
 //! step shows up, or 1 with the step that didn't.
 //!
-//! - `ZBUGS_E2E=online`: lists issues, creates one, comments, edits and
-//!   deletes comments, reacts, labels, assigns, filters, and closes it,
-//!   and waits for the server to confirm each mutation. CI then checks the
+//! - `ZBUGS_E2E=online`: lists issues, creates and deletes one, creates
+//!   another, unsubscribes from it, comments, edits and deletes comments,
+//!   reacts, labels, assigns, filters, closes it, and waits until it's
+//!   marked viewed, and for the server to confirm each mutation. CI then checks the
 //!   rows in Postgres.
 //! - `ZBUGS_E2E=offline`, with the backend stopped: the window reopens on
 //!   the filters and issue the online run left, from the local store.
@@ -21,6 +22,8 @@ pub const TITLE: &str = "Created by the zbugs-gpui end-to-end run";
 const COMMENT: &str = "Commented by the zbugs-gpui end-to-end run";
 /// The comment once edited, which CI looks for in Postgres.
 const EDITED: &str = "Edited by the zbugs-gpui end-to-end run";
+/// The issue the online run creates and deletes, which CI checks is gone.
+const DELETED: &str = "Deleted by the zbugs-gpui end-to-end run";
 
 type Step = Result<(), String>;
 
@@ -124,6 +127,25 @@ async fn online(window: AnyWindowHandle, app: &Entity<ZbugsApp>, cx: &mut AsyncA
     let open = app.read_with(cx, |app, _| app.count.snapshot().value.unwrap_or(0));
     shot("1-list");
 
+    // An issue created and deleted again: it leaves the list and the
+    // selection.
+    act(window, app, cx, |app, _, cx| {
+        until_ready(app.save_issue(None, DELETED.into(), String::new(), cx))
+    })??;
+    let doomed = app
+        .read_with(cx, |app, _| app.selected.clone())
+        .ok_or("creating an issue didn't select it")?;
+    until(app, cx, "the issue to delete, from the server", |app| {
+        issue(app).is_some_and(|i| i.title == DELETED && i.short_id.is_some())
+    })
+    .await?;
+    act(window, app, cx, |app, _, cx| app.delete_issue(&doomed, cx))?;
+    until(app, cx, "the deleted issue to leave the list", |app| {
+        app.selected.is_none() && !rows(app).iter().any(|i| i.id == doomed)
+    })
+    .await?;
+    settled(app, cx).await?;
+
     // A new issue, at the top of the list, numbered by the server.
     act(window, app, cx, |app, _, cx| {
         until_ready(app.save_issue(None, TITLE.into(), "Made by **e2e**.".into(), cx))
@@ -138,6 +160,19 @@ async fn online(window: AnyWindowHandle, app: &Entity<ZbugsApp>, cx: &mut AsyncA
     until(app, cx, "the new issue at the top of the list", |app| {
         rows(app).first().is_some_and(|i| i.id == id)
             && app.count.snapshot().value == Some(open + 1)
+    })
+    .await?;
+
+    // Its creator is subscribed to it; unsubscribed here.
+    until(app, cx, "the creator's subscription", |app| {
+        issue(app).is_some_and(|i| i.notification_state.is_some_and(|n| n.subscribed))
+    })
+    .await?;
+    act(window, app, cx, |app, _, cx| {
+        app.set_subscribed(id.clone(), false, cx)
+    })?;
+    until(app, cx, "the issue unsubscribed", |app| {
+        issue(app).is_some_and(|i| i.notification_state.is_some_and(|n| !n.subscribed))
     })
     .await?;
 
@@ -263,6 +298,11 @@ async fn online(window: AnyWindowHandle, app: &Entity<ZbugsApp>, cx: &mut AsyncA
     })?;
     until(app, cx, "the closed issue under All", |app| {
         rows(app).iter().any(|i| i.id == id)
+    })
+    .await?;
+    // Shown for a second since its last change, it's marked viewed.
+    until(app, cx, "the issue marked viewed", |app| {
+        issue(app).is_some_and(|i| !is_unread(&i))
     })
     .await?;
     settled(app, cx).await?;
