@@ -8,6 +8,7 @@ use crate::live::Live;
 use crate::session::{Session, app_dir, now_ms, save_setting};
 use futures::StreamExt;
 use futures::channel::mpsc;
+use gpui_kit::base::actions::Confirm;
 use gpui_kit::component::button::*;
 use gpui_kit::component::dialog::DialogFooter;
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
@@ -62,10 +63,17 @@ actions!(
 /// `/` goes to the search field, as on the web app's list. j/k also work
 /// on the issue, as on the web app's issue page, unless a text field or
 /// menu has the keys. Picking issues to delete, space checks the selected
-/// one and escape stops.
+/// one and escape stops. ⌘Enter (Ctrl+Enter elsewhere) in a text field
+/// posts the comment or saves the dialog, as the web app's composers.
 pub fn bind_keys(cx: &mut App) {
     const DETAIL: &str = "IssueDetail && !Input && !PopupMenu";
+    let submit = if cx.platform_info().is_mac() {
+        "cmd-enter"
+    } else {
+        "ctrl-enter"
+    };
     cx.bind_keys([
+        KeyBinding::new(submit, Confirm { secondary: true }, Some("Input")),
         KeyBinding::new("/", FocusSearch, Some("IssueList")),
         KeyBinding::new("j", SelectNext, Some("IssueList")),
         KeyBinding::new("down", SelectNext, Some("IssueList")),
@@ -206,6 +214,14 @@ fn relative_time(ms: f64, now: f64) -> String {
     }
 }
 
+/// The comments and reactions on the shown issue so far, to tell others'
+/// new ones, as zbugs' toasts.
+struct Seen {
+    issue_id: String,
+    comments: BTreeSet<String>,
+    emoji: BTreeSet<String>,
+}
+
 /// What a reaction is on.
 #[derive(Clone, Copy)]
 enum Subject {
@@ -258,12 +274,13 @@ pub struct ZbugsApp {
     /// screen when rows above them come and go.
     anchor: Vec<(String, usize)>,
     search: Entity<InputState>,
-    comment: Entity<InputState>,
+    comment: Entity<TextareaState>,
     scroll: UniformListScrollHandle,
     connection: Rc<RefCell<ConnectionState>>,
     error: Option<String>,
     /// Marks the selected issue viewed after a second (`mark_viewed`).
     view_timer: Option<(String, Task<()>)>,
+    seen: Option<Seen>,
     _unsubscribe: Box<dyn Fn()>,
     _tasks: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -307,17 +324,16 @@ impl ZbugsApp {
                 .placeholder("Search issues")
                 .default_value(filters.text.clone())
         });
-        let comment = cx.new(|cx| InputState::new(window, cx).placeholder("Add a comment…"));
+        let comment = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .auto_grow(2, 10)
+                .placeholder("Add a comment…")
+        });
         let subscriptions = vec![
             cx.subscribe_in(&search, window, |this, state, event, _, cx| {
                 if matches!(event, InputEvent::Change) {
                     let text = state.read(cx).value().to_string();
                     this.refilter(|f| f.text = text, cx);
-                }
-            }),
-            cx.subscribe_in(&comment, window, |this, _, event, window, cx| {
-                if matches!(event, InputEvent::PressEnter { .. }) {
-                    this.post_comment(window, cx);
                 }
             }),
         ];
@@ -379,6 +395,7 @@ impl ZbugsApp {
             connection,
             error: None,
             view_timer: None,
+            seen: None,
             _unsubscribe: unsubscribe,
             _tasks: vec![watch],
             _subscriptions: subscriptions,
@@ -1167,6 +1184,53 @@ impl ZbugsApp {
             created: now_ms(),
         };
         self.mutate(UPDATE_NOTIFICATION.with(&args), cx);
+    }
+
+    /// Tells the user when someone else comments on or reacts to the
+    /// issue they're looking at, as zbugs' toasts do. What the issue
+    /// brought once the server confirmed it is already seen.
+    fn notice_activity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(detail) = self.detail.as_ref().filter(|d| d.is_synced()) else {
+            return;
+        };
+        let snapshot = detail.snapshot();
+        let Some(issue) = snapshot.value.as_ref().and_then(Option::as_ref) else {
+            return;
+        };
+        let comments = issue.comments.as_deref().unwrap_or_default();
+        let emoji = issue.emoji.as_deref().unwrap_or_default();
+        let seen = self.seen.as_ref().filter(|s| s.issue_id == issue.id);
+        if let Some(seen) = seen {
+            let me = self.session.auth.as_ref().map(|a| a.sub.as_str());
+            let others = |id: &str| Some(id) != me;
+            let new_comments = comments
+                .iter()
+                .filter(|c| !seen.comments.contains(&c.id) && others(&c.creator_id))
+                .filter_map(|c| c.creator.as_ref())
+                .map(|u| format!("{} posted a new comment", u.login));
+            let new_emoji = emoji
+                .iter()
+                .filter(|e| !seen.emoji.contains(&e.id) && others(&e.creator_id))
+                .filter_map(|e| {
+                    let u = e.creator.as_ref()?;
+                    Some(format!("{} reacted on this issue: {}", u.login, e.value))
+                });
+            for message in new_comments.chain(new_emoji).collect::<Vec<_>>() {
+                window.push_notification(Notification::info(message), cx);
+            }
+            let unchanged = comments.len() == seen.comments.len()
+                && emoji.len() == seen.emoji.len()
+                && comments.iter().all(|c| seen.comments.contains(&c.id))
+                && emoji.iter().all(|e| seen.emoji.contains(&e.id));
+            if unchanged {
+                return;
+            }
+        }
+        self.seen = Some(Seen {
+            issue_id: issue.id.clone(),
+            comments: comments.iter().map(|c| c.id.clone()).collect(),
+            emoji: emoji.iter().map(|e| e.id.clone()).collect(),
+        });
     }
 
     /// Marks the selected issue viewed once it has been on screen for a
@@ -2377,11 +2441,25 @@ impl ZbugsApp {
             .child(
                 h_flex()
                     .gap_2()
-                    .child(div().flex_1().child(Input::new(&self.comment)))
+                    .items_end()
+                    .child(
+                        div()
+                            .flex_1()
+                            .key_context("CommentBox")
+                            .on_action(cx.listener(|this, _: &Confirm, window, cx| {
+                                this.post_comment(window, cx)
+                            }))
+                            .child(Textarea::new(&self.comment)),
+                    )
                     .child(
                         Button::new("post-comment")
                             .primary()
                             .label("Comment")
+                            .tooltip(if cx.platform_info().is_mac() {
+                                "⌘↩"
+                            } else {
+                                "Ctrl+Enter"
+                            })
                             .disabled(!logged_in)
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.post_comment(window, cx)),
@@ -2409,6 +2487,7 @@ impl Render for ZbugsApp {
         }
         self.keep_scroll_anchor();
         self.mark_viewed(cx);
+        self.notice_activity(window, cx);
         h_flex()
             .size_full()
             .bg(cx.theme().background)
