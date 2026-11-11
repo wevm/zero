@@ -81,7 +81,22 @@ struct Filters {
     /// Oldest first.
     #[serde(default)]
     ascending: bool,
+    /// The project's name, as the web app's project picker.
+    #[serde(default = "zero_project")]
+    project: String,
 }
+
+fn zero_project() -> String {
+    ZERO_PROJECT_NAME.into()
+}
+
+/// The users and labels the pickers offer: the project's.
+type ProjectLives = (
+    Live<Vec<User>>,
+    Live<Vec<User>>,
+    Live<Vec<User>>,
+    Live<Vec<Label>>,
+);
 
 /// What the window shows, kept across launches as zbugs keeps it in the
 /// URL.
@@ -205,6 +220,7 @@ impl ZbugsApp {
                 labels: Vec::new(),
                 by_created: false,
                 ascending: false,
+                project: zero_project(),
             },
             |s| s.filters.clone(),
         );
@@ -248,34 +264,8 @@ impl ZbugsApp {
         let (list, count) = Self::queries(&session, &filters, limit, cx);
         let auth = session.auth.as_ref();
         let projects = Live::new(&session.zero, ALL_PROJECTS.call(&(), auth), &ttl(), cx);
-        let users = |filter, cx: &mut Context<Self>| {
-            let args = UsersForProjectArgs {
-                disabled: false,
-                login: None,
-                project_name: ZERO_PROJECT_NAME.into(),
-                filter: Some(filter),
-            };
-            Live::new(
-                &session.zero,
-                USERS_FOR_PROJECT.call(&args, auth),
-                &ttl(),
-                cx,
-            )
-        };
-        let creators = users(UsersFilter::Creators, cx);
-        let assignees = users(UsersFilter::Assignees, cx);
-        let crew = users(UsersFilter::Crew, cx);
-        let labels = Live::new(
-            &session.zero,
-            LABELS.call(
-                &ProjectArgs {
-                    project_name: ZERO_PROJECT_NAME.into(),
-                },
-                auth,
-            ),
-            &ttl(),
-            cx,
-        );
+        let (creators, assignees, crew, labels) =
+            Self::project_lives(&session, &filters.project, cx);
         let me = session
             .auth
             .as_ref()
@@ -604,6 +594,56 @@ impl ZbugsApp {
         }
     }
 
+    /// The creators, assignees, crew, and labels of `project`.
+    fn project_lives(session: &Session, project: &str, cx: &mut Context<Self>) -> ProjectLives {
+        let auth = session.auth.as_ref();
+        let mut users = |filter| {
+            let args = UsersForProjectArgs {
+                disabled: false,
+                login: None,
+                project_name: project.into(),
+                filter: Some(filter),
+            };
+            Live::new(
+                &session.zero,
+                USERS_FOR_PROJECT.call(&args, auth),
+                &ttl(),
+                cx,
+            )
+        };
+        let creators = users(UsersFilter::Creators);
+        let assignees = users(UsersFilter::Assignees);
+        let crew = users(UsersFilter::Crew);
+        let args = ProjectArgs {
+            project_name: project.into(),
+        };
+        let labels = Live::new(&session.zero, LABELS.call(&args, auth), &ttl(), cx);
+        (creators, assignees, crew, labels)
+    }
+
+    /// Switches to another project's issues: a new list, as the web app's
+    /// project picker goes to, without the user and label filters or a
+    /// selection.
+    fn set_project(&mut self, name: String, cx: &mut Context<Self>) {
+        if name == self.filters.project {
+            return;
+        }
+        (self.creators, self.assignees, self.crew, self.labels) =
+            Self::project_lives(&self.session, &name, cx);
+        self.selected = None;
+        self.detail = None;
+        self.comment_page = None;
+        self.refilter(
+            |f| {
+                f.project = name;
+                f.creator = None;
+                f.assignee = None;
+                f.labels.clear();
+            },
+            cx,
+        );
+    }
+
     fn list_context(f: &Filters) -> ListContextParams {
         ListContextParams {
             open: match f.status {
@@ -611,7 +651,7 @@ impl ZbugsApp {
                 Status::Closed => Some(false),
                 Status::All => None,
             },
-            project_name: Some(ZERO_PROJECT_NAME.into()),
+            project_name: Some(f.project.clone()),
             assignee: f.assignee.clone(),
             creator: f.creator.clone(),
             labels: (!f.labels.is_empty()).then(|| f.labels.clone()),
@@ -1081,7 +1121,7 @@ impl ZbugsApp {
 
     /// The id of the project new issues go in.
     fn project_id(&self) -> Option<String> {
-        let name = ZERO_PROJECT_NAME.to_lowercase();
+        let name = self.filters.project.to_lowercase();
         self.projects
             .snapshot()
             .value
@@ -1190,7 +1230,10 @@ impl ZbugsApp {
             }
             None => {
                 let Some(project_id) = self.project_id() else {
-                    self.error = Some("The Zero project hasn't synced yet.".into());
+                    self.error = Some(format!(
+                        "The {} project hasn't synced yet.",
+                        self.filters.project
+                    ));
                     cx.notify();
                     return false;
                 };
@@ -1211,6 +1254,28 @@ impl ZbugsApp {
     }
 
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let current = self.filters.project.to_lowercase();
+        let mut projects = self.projects.snapshot().value.clone().unwrap_or_default();
+        projects.sort_by(|a, b| a.lower_case_name.cmp(&b.lower_case_name));
+        let project = self.picker(
+            Button::new("project")
+                .label(self.filters.project.clone())
+                .tooltip("Project"),
+            projects
+                .into_iter()
+                .map(|p| Choice {
+                    checked: p.lower_case_name == current,
+                    label: p.name.clone(),
+                    value: Some(p.name),
+                })
+                .collect(),
+            Rc::new(|this, name, cx| {
+                if let Some(name) = name {
+                    this.set_project(name, cx);
+                }
+            }),
+            cx,
+        );
         let status_button = |id: &'static str, label: &'static str, status: Status| {
             Button::new(id)
                 .label(label)
@@ -1237,6 +1302,7 @@ impl ZbugsApp {
             .child(
                 h_flex()
                     .gap_1()
+                    .child(project)
                     .child(status_button("status-open", "Open", Status::Open))
                     .child(status_button("status-closed", "Closed", Status::Closed))
                     .child(status_button("status-all", "All", Status::All))
