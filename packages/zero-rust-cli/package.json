@@ -1,6 +1,6 @@
 {
   "name": "zero-rust",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Generates the Rust row types, schema, and query builder of a Zero app for the Zero Rust client.",
   "license": "Apache-2.0",
   "repository": {
