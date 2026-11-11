@@ -175,6 +175,7 @@ impl Transaction {
                 row.insert(column.clone(), Value::Null);
             }
         }
+        self.branch.layouts.share(table_name, &mut row);
         let row: Row = Rc::new(row);
         self.write
             .borrow_mut()
@@ -209,6 +210,7 @@ impl Transaction {
         for (k, v) in value.iter() {
             next.insert(k.clone(), v.clone());
         }
+        self.branch.layouts.share(table_name, &mut next);
         self.write
             .borrow_mut()
             .set(&key, Value::Object(next.clone()));

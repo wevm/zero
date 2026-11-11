@@ -1,3 +1,4 @@
+use super::value::{ObjectBuilder, RecentKeys};
 use super::{Object, Value};
 use std::fmt;
 
@@ -37,6 +38,7 @@ pub fn parse(text: &str) -> Result<Value, ParseError> {
     let mut p = Parser {
         b: text.as_bytes(),
         i: 0,
+        recent: RecentKeys::default(),
     };
     p.skip_whitespace();
     let value = p.parse_value()?;
@@ -50,13 +52,15 @@ pub fn parse(text: &str) -> Result<Value, ParseError> {
 struct Parser<'a> {
     b: &'a [u8],
     i: usize,
+    recent: RecentKeys,
 }
 
 /// An array or object that the value being parsed is in.
 enum Container {
     Array(Vec<Value>),
-    /// An object and the key of the value being parsed.
-    Object(Object, String),
+    /// An object and the key of the value being parsed: `None` for the key
+    /// the layout it follows has next (see `Parser::next_key`).
+    Object(ObjectBuilder, Option<String>),
 }
 
 impl Parser<'_> {
@@ -102,8 +106,9 @@ impl Parser<'_> {
                         }
                     } else {
                         if is_object {
-                            let key = self.parse_key()?;
-                            stack.push(Container::Object(Object::new(), key));
+                            let mut builder = ObjectBuilder::default();
+                            let key = self.next_key(&mut builder)?;
+                            stack.push(Container::Object(builder, key));
                         } else {
                             stack.push(Container::Array(Vec::new()));
                         }
@@ -149,12 +154,17 @@ impl Parser<'_> {
                     }
                     Some(Container::Object(o, key)) => {
                         // A repeated key keeps its first place and its last value.
-                        o.insert(std::mem::take(key), value);
+                        match key.take() {
+                            Some(k) => {
+                                o.insert(k, value);
+                            }
+                            None => o.push_expected(value),
+                        }
                         match self.peek() {
                             None => return Err(self.error("Unexpected end of JSON input")),
                             Some(b',') => {
                                 self.i += 1;
-                                *key = self.parse_key()?;
+                                *key = self.next_key(o)?;
                                 break;
                             }
                             Some(b'}') => self.i += 1,
@@ -166,7 +176,11 @@ impl Parser<'_> {
                 }
                 value = match stack.pop() {
                     Some(Container::Array(a)) => Value::Array(a),
-                    Some(Container::Object(o, _)) => Value::Object(o),
+                    Some(Container::Object(o, _)) => {
+                        let mut o = o.build();
+                        self.recent.remember(&mut o);
+                        Value::Object(o)
+                    }
                     None => unreachable!(),
                 };
             }
@@ -189,6 +203,56 @@ impl Parser<'_> {
         self.i += 1;
         self.skip_whitespace();
         Ok(key)
+    }
+
+    /// Reads `o`'s next key. When it is the next key of the layout `o`
+    /// follows, or of a recent layout with `o`'s keys before it, `o` follows
+    /// that layout and the key, which is the layout's, isn't allocated:
+    /// `None`. Otherwise the key as [`Parser::parse_key`] reads it.
+    fn next_key(&mut self, o: &mut ObjectBuilder) -> Result<Option<String>, ParseError> {
+        self.skip_whitespace();
+        let found = o.prefix().and_then(|(prefix, next)| match next {
+            Some(k) if self.is_raw_key(k) => Some((None, k.len())),
+            _ => self
+                .recent
+                .find_next(prefix, |k| self.is_raw_key(k))
+                .map(|layout| {
+                    let len = layout.names[prefix.len()].len();
+                    (Some(layout), len)
+                }),
+        });
+        let Some((layout, len)) = found else {
+            return Ok(Some(self.parse_key()?));
+        };
+        if let Some(layout) = layout {
+            o.follow(layout);
+        }
+        self.skip_raw_key(len)?;
+        Ok(None)
+    }
+
+    /// Whether the input is at `key` as a string without escapes, which then
+    /// parses as `key`.
+    fn is_raw_key(&self, key: &str) -> bool {
+        let k = key.as_bytes();
+        let start = self.i + 1;
+        self.peek() == Some(b'"')
+            && self.b.get(start..start + k.len()) == Some(k)
+            && self.b.get(start + k.len()) == Some(&b'"')
+            && k.iter().all(|&c| c >= 0x20 && c != b'"' && c != b'\\')
+    }
+
+    /// Skips a key of `len` bytes that [`Parser::is_raw_key`] accepted, and
+    /// the colon after it, as [`Parser::parse_key`] does.
+    fn skip_raw_key(&mut self, len: usize) -> Result<(), ParseError> {
+        self.i += len + 2;
+        self.skip_whitespace();
+        if self.peek() != Some(b':') {
+            return Err(self.error("Expected ':' after property name"));
+        }
+        self.i += 1;
+        self.skip_whitespace();
+        Ok(())
     }
 
     fn expect_literal(&mut self, literal: &[u8]) -> Result<(), ParseError> {

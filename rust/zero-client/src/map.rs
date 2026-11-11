@@ -17,17 +17,67 @@ const INDEX_THRESHOLD: usize = 16;
 /// any order.
 #[derive(Clone)]
 pub struct OrderedMap<V> {
-    entries: Vec<(String, V)>,
-    /// Each key's position in `entries`, once there are more than
+    keys: Keys,
+    values: Vec<V>,
+}
+
+/// The keys of an [`OrderedMap`] or a JSON object, in order, apart from the
+/// values, so that objects can share them.
+#[derive(Clone, Default)]
+pub(crate) struct Keys {
+    pub(crate) names: Vec<String>,
+    /// Each key's position in `names`, once there are more than
     /// `INDEX_THRESHOLD`.
     index: Option<HashMap<String, usize>>,
+}
+
+impl Keys {
+    pub(crate) fn position(&self, key: &str) -> Option<usize> {
+        match &self.index {
+            Some(index) => index.get(key).copied(),
+            None => self.names.iter().position(|k| k == key),
+        }
+    }
+
+    /// Inserts `key`, which must not be present yet, at position `at`.
+    pub(crate) fn insert(&mut self, at: usize, key: String) {
+        if let Some(index) = &mut self.index {
+            if at < self.names.len() {
+                for i in index.values_mut().filter(|i| **i >= at) {
+                    *i += 1;
+                }
+            }
+            index.insert(key.clone(), at);
+        }
+        self.names.insert(at, key);
+        if self.index.is_none() && self.names.len() > INDEX_THRESHOLD {
+            self.index = Some(
+                self.names
+                    .iter()
+                    .enumerate()
+                    .map(|(i, k)| (k.clone(), i))
+                    .collect(),
+            );
+        }
+    }
+
+    /// Removes the key at `at`.
+    pub(crate) fn remove(&mut self, at: usize) {
+        let key = self.names.remove(at);
+        if let Some(index) = &mut self.index {
+            index.remove(&key);
+            for i in index.values_mut().filter(|i| **i > at) {
+                *i -= 1;
+            }
+        }
+    }
 }
 
 impl<V> Default for OrderedMap<V> {
     fn default() -> Self {
         OrderedMap {
-            entries: Vec::new(),
-            index: None,
+            keys: Keys::default(),
+            values: Vec::new(),
         }
     }
 }
@@ -39,33 +89,33 @@ impl<V> OrderedMap<V> {
 
     pub fn with_capacity(capacity: usize) -> Self {
         OrderedMap {
-            entries: Vec::with_capacity(capacity),
-            index: None,
+            keys: Keys {
+                names: Vec::with_capacity(capacity),
+                index: None,
+            },
+            values: Vec::with_capacity(capacity),
         }
     }
 
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.values.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.values.is_empty()
     }
 
     /// The position of `key`.
     pub fn position(&self, key: &str) -> Option<usize> {
-        match &self.index {
-            Some(index) => index.get(key).copied(),
-            None => self.entries.iter().position(|(k, _)| k == key),
-        }
+        self.keys.position(key)
     }
 
     pub fn get(&self, key: &str) -> Option<&V> {
-        self.position(key).map(|i| &self.entries[i].1)
+        self.position(key).map(|i| &self.values[i])
     }
 
     pub fn get_mut(&mut self, key: &str) -> Option<&mut V> {
-        self.position(key).map(|i| &mut self.entries[i].1)
+        self.position(key).map(|i| &mut self.values[i])
     }
 
     pub fn contains_key(&self, key: &str) -> bool {
@@ -74,7 +124,7 @@ impl<V> OrderedMap<V> {
 
     /// The entry at `index`, in order.
     pub fn get_index(&self, index: usize) -> Option<(&String, &V)> {
-        self.entries.get(index).map(|(k, v)| (k, v))
+        Some((self.keys.names.get(index)?, &self.values[index]))
     }
 
     /// Sets `key` to `value`, returning the value it replaced. A new key goes
@@ -82,9 +132,9 @@ impl<V> OrderedMap<V> {
     pub fn insert(&mut self, key: impl Into<String>, value: V) -> Option<V> {
         let key = key.into();
         if let Some(i) = self.position(&key) {
-            return Some(std::mem::replace(&mut self.entries[i].1, value));
+            return Some(std::mem::replace(&mut self.values[i], value));
         }
-        let at = self.entries.len();
+        let at = self.values.len();
         self.insert_new(at, key, value);
         None
     }
@@ -101,37 +151,16 @@ impl<V> OrderedMap<V> {
     }
 
     fn insert_new(&mut self, at: usize, key: String, value: V) {
-        if let Some(index) = &mut self.index {
-            if at < self.entries.len() {
-                for i in index.values_mut().filter(|i| **i >= at) {
-                    *i += 1;
-                }
-            }
-            index.insert(key.clone(), at);
-        }
-        self.entries.insert(at, (key, value));
-        if self.index.is_none() && self.entries.len() > INDEX_THRESHOLD {
-            self.index = Some(
-                self.entries
-                    .iter()
-                    .enumerate()
-                    .map(|(i, (k, _))| (k.clone(), i))
-                    .collect(),
-            );
-        }
+        self.keys.insert(at, key);
+        self.values.insert(at, value);
     }
 
     /// Removes `key`, returning its position and value. The other keys keep
     /// their order.
     pub fn remove_full(&mut self, key: &str) -> Option<(usize, V)> {
         let at = self.position(key)?;
-        if let Some(index) = &mut self.index {
-            index.remove(key);
-            for i in index.values_mut().filter(|i| **i > at) {
-                *i -= 1;
-            }
-        }
-        Some((at, self.entries.remove(at).1))
+        self.keys.remove(at);
+        Some((at, self.values.remove(at)))
     }
 
     /// Removes `key`, returning its value. The other keys keep their order.
@@ -141,24 +170,24 @@ impl<V> OrderedMap<V> {
 
     /// The entries, in order.
     pub fn iter(&self) -> Iter<'_, V> {
-        Iter(self.entries.iter())
+        Iter::new(&self.keys.names, &self.values)
     }
 
     /// The entries, in order, with mutable values.
     pub fn iter_mut(&mut self) -> impl ExactSizeIterator<Item = (&String, &mut V)> {
-        self.entries.iter_mut().map(|(k, v)| (&*k, v))
+        self.keys.names.iter().zip(self.values.iter_mut())
     }
 
     pub fn keys(&self) -> impl DoubleEndedIterator<Item = &String> + ExactSizeIterator + Clone {
-        self.entries.iter().map(|(k, _)| k)
+        self.keys.names.iter()
     }
 
     pub fn values(&self) -> impl DoubleEndedIterator<Item = &V> + ExactSizeIterator + Clone {
-        self.entries.iter().map(|(_, v)| v)
+        self.values.iter()
     }
 
     pub fn values_mut(&mut self) -> impl ExactSizeIterator<Item = &mut V> {
-        self.entries.iter_mut().map(|(_, v)| v)
+        self.values.iter_mut()
     }
 }
 
@@ -188,13 +217,20 @@ impl<K: Into<String>, V> FromIterator<(K, V)> for OrderedMap<V> {
 
 /// The entries of an [`OrderedMap`], in order.
 #[derive(Clone)]
-pub struct Iter<'a, V>(std::slice::Iter<'a, (String, V)>);
+pub struct Iter<'a, V>(std::iter::Zip<std::slice::Iter<'a, String>, std::slice::Iter<'a, V>>);
+
+impl<'a, V> Iter<'a, V> {
+    /// The entries of `keys` with `values`, which have the same length.
+    pub(crate) fn new(keys: &'a [String], values: &'a [V]) -> Self {
+        Iter(keys.iter().zip(values))
+    }
+}
 
 impl<'a, V> Iterator for Iter<'a, V> {
     type Item = (&'a String, &'a V);
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(|(k, v)| (k, v))
+        self.0.next()
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -204,14 +240,21 @@ impl<'a, V> Iterator for Iter<'a, V> {
 
 impl<V> DoubleEndedIterator for Iter<'_, V> {
     fn next_back(&mut self) -> Option<Self::Item> {
-        self.0.next_back().map(|(k, v)| (k, v))
+        self.0.next_back()
     }
 }
 
 impl<V> ExactSizeIterator for Iter<'_, V> {}
 
 /// The entries of an [`OrderedMap`], in order, by value.
-pub struct IntoIter<V>(std::vec::IntoIter<(String, V)>);
+pub struct IntoIter<V>(std::iter::Zip<std::vec::IntoIter<String>, std::vec::IntoIter<V>>);
+
+impl<V> IntoIter<V> {
+    /// The entries of `keys` with `values`, which have the same length.
+    pub(crate) fn new(keys: Vec<String>, values: Vec<V>) -> Self {
+        IntoIter(keys.into_iter().zip(values))
+    }
+}
 
 impl<V> Iterator for IntoIter<V> {
     type Item = (String, V);
@@ -247,7 +290,7 @@ impl<V> IntoIterator for OrderedMap<V> {
     type IntoIter = IntoIter<V>;
 
     fn into_iter(self) -> IntoIter<V> {
-        IntoIter(self.entries.into_iter())
+        IntoIter::new(self.keys.names, self.values)
     }
 }
 

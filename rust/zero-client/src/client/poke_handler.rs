@@ -3,6 +3,7 @@
 //! (`packages/zero-client/src/client/zero-poke-handler.ts`). The engine
 //! schedules the applies.
 
+use super::ivm_branch::Layouts;
 use super::replica_store::KvPatchOp;
 use crate::decode::JsonCodable;
 use crate::json::{self, Value, number};
@@ -82,6 +83,8 @@ pub(crate) struct PokeHandler {
     client_id: String,
     schema: Arc<Schema>,
     server_to_client: NameMapper,
+    /// The layout of each table's rows from the server.
+    layouts: Layouts,
     receiving: Option<Receiving>,
     buffer: Vec<Received>,
     pub(crate) playback_running: bool,
@@ -91,6 +94,7 @@ impl PokeHandler {
     pub(crate) fn new(client_id: String, schema: Arc<Schema>) -> Self {
         PokeHandler {
             server_to_client: NameMapper::server_to_client(&schema),
+            layouts: Layouts::default(),
             client_id,
             schema,
             receiving: None,
@@ -293,10 +297,11 @@ impl PokeHandler {
                 let Some(table) = self.server_to_client.table_name_if_known(table_name) else {
                     return Ok(None);
                 };
-                let row = self
+                let mut row = self
                     .server_to_client
                     .row(table_name, value)
                     .map_err(mapping)?;
+                self.layouts.share(&table, &mut row);
                 KvPatchOp::Put {
                     key: self.key(&table, &row)?,
                     value: Value::Object(row),

@@ -5,6 +5,7 @@ use super::Row;
 use crate::ast::{Direction, OrderPart};
 use crate::compare;
 use crate::json::Value;
+use std::cell::Cell;
 use std::cmp::Ordering;
 use std::rc::Rc;
 
@@ -47,13 +48,13 @@ pub fn identical(a: Option<&Value>, b: Option<&Value>) -> bool {
 
 /// `makeComparator(order, reverse)`.
 pub fn make_comparator(order: &[OrderPart], reverse: bool) -> Comparator {
-    let parts: Vec<(String, bool)> = order
+    let parts: Vec<(String, bool, Cell<usize>)> = order
         .iter()
-        .map(|p| (p.field.clone(), p.direction == Direction::Asc))
+        .map(|p| (p.field.clone(), p.direction == Direction::Asc, Cell::new(0)))
         .collect();
     Rc::new(move |a: &Row, b: &Row| {
-        for (field, asc) in &parts {
-            let c = compare_values(a.get(field), b.get(field));
+        for (field, asc, hint) in &parts {
+            let c = compare_values(a.get_hinted(field, hint), b.get_hinted(field, hint));
             if c != Ordering::Equal {
                 let c = if *asc { c } else { c.reverse() };
                 return if reverse { c.reverse() } else { c };

@@ -7,6 +7,7 @@ use crate::compare;
 use crate::json::{Value, number};
 use crate::like::LikePattern;
 use crate::query::simplify_condition;
+use std::cell::Cell;
 use std::cmp::Ordering;
 use std::rc::Rc;
 
@@ -69,15 +70,15 @@ fn simple_predicate(
                 Rc::new(move |_| result)
             }
             ValuePosition::Json { column, path } => {
-                let (column, path) = (column.clone(), path.clone());
+                let (column, path, hint) = (column.clone(), path.clone(), Cell::new(0));
                 Rc::new(move |row| {
-                    let v = json_value_at(&path, row.get(&column));
+                    let v = json_value_at(&path, row.get_hinted(&column, &hint));
                     identical(Some(v), rhs.as_ref()) != is_not
                 })
             }
             ValuePosition::Column(name) => {
-                let name = name.clone();
-                Rc::new(move |row| identical(row.get(&name), rhs.as_ref()) != is_not)
+                let (name, hint) = (name.clone(), Cell::new(0));
+                Rc::new(move |row| identical(row.get_hinted(&name, &hint), rhs.as_ref()) != is_not)
             }
             ValuePosition::Static { .. } => unreachable!("checked above"),
         });
@@ -107,9 +108,9 @@ fn simple_predicate(
                 },
             };
             let negated = matches!(op, Ne | NotLike | NotIlike | NotIn);
-            let (column, path) = (column.clone(), path.clone());
+            let (column, path, hint) = (column.clone(), path.clone(), Cell::new(0));
             Rc::new(move |row| {
-                let lhs = json_value_at(&path, row.get(&column));
+                let lhs = json_value_at(&path, row.get_hinted(&column, &hint));
                 if lhs.is_null() {
                     return false;
                 }
@@ -120,8 +121,8 @@ fn simple_predicate(
             })
         }
         ValuePosition::Column(name) => {
-            let name = name.clone();
-            Rc::new(move |row| match row.get(&name) {
+            let (name, hint) = (name.clone(), Cell::new(0));
+            Rc::new(move |row| match row.get_hinted(&name, &hint) {
                 None | Some(Value::Null) => false,
                 Some(lhs) => imp(lhs),
             })
