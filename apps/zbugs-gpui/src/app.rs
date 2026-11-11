@@ -336,6 +336,9 @@ impl ZbugsApp {
                     this.refilter(|f| f.text = text, cx);
                 }
             }),
+            // On every change, drawn or not: a window that isn't drawing
+            // still marks the issue it shows viewed.
+            cx.observe_self(|this, cx| this.mark_viewed(cx)),
         ];
 
         // The connection badge.
@@ -1260,13 +1263,25 @@ impl ZbugsApp {
                 .timer(std::time::Duration::from_secs(1))
                 .await;
             let _ = this.update(cx, |this, cx| {
-                if this.selected.as_ref() == Some(&id) {
+                // Done: a change the server confirms after this one, such
+                // as its own `modified` for a close, starts another.
+                this.view_timer = None;
+                let modified = this
+                    .detail
+                    .as_ref()
+                    .and_then(|d| d.snapshot().value.clone().flatten())
+                    .filter(|issue| issue.id == id)
+                    .map(|issue| issue.modified);
+                if let Some(modified) = modified {
+                    // Viewed no earlier than the change it saw, whatever
+                    // the server's clock says.
                     let args = ViewStateArgs {
                         issue_id: id,
-                        viewed: now_ms(),
+                        viewed: now_ms().max(modified),
                     };
                     this.mutate(SET_VIEW_STATE.with(&args), cx);
                 }
+                this.mark_viewed(cx);
             });
         });
         self.view_timer = Some((at, timer));
@@ -2486,7 +2501,6 @@ impl Render for ZbugsApp {
             }
         }
         self.keep_scroll_anchor();
-        self.mark_viewed(cx);
         self.notice_activity(window, cx);
         h_flex()
             .size_full()
