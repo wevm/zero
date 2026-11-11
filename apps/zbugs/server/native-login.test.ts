@@ -1,5 +1,5 @@
 import {expect, test} from 'vitest';
-import {nativeAppRedirect} from './native-login.ts';
+import {isLocalHostname, nativeAppRedirect} from './native-login.ts';
 
 const jwt = 'a.b+c/d=';
 
@@ -38,5 +38,19 @@ test('anything else is the web app’s redirect', () => {
     'not a url',
   ]) {
     expect(nativeAppRedirect(redirect, jwt), String(redirect)).toBe(undefined);
+  }
+});
+
+test('the API is local at localhost and the loopback addresses', () => {
+  for (const hostname of ['localhost', '127.0.0.1', '[::1]']) {
+    expect(isLocalHostname(hostname)).toBe(true);
+  }
+  for (const hostname of [
+    'bugs.rocicorp.dev',
+    '127.0.0.2',
+    '::1',
+    '10.0.0.1',
+  ]) {
+    expect(isLocalHostname(hostname)).toBe(false);
   }
 });
