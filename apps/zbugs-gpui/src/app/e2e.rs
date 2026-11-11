@@ -6,7 +6,7 @@
 //! - `ZBUGS_E2E=online`: lists issues, creates and deletes one, creates
 //!   two more and deletes them together, creates another, goes to the
 //!   next issue and back with j and k, unsubscribes from it, comments,
-//!   edits and deletes comments, reacts, labels it (with a label it makes
+//!   edits and deletes comments, reacts in a skin tone, labels it (with a label it makes
 //!   too), assigns it, makes it internal, sorts the list, filters, closes it, and waits until it's
 //!   marked viewed, and for the server to confirm each mutation. CI then
 //!   checks the rows in Postgres.
@@ -283,17 +283,21 @@ async fn online(window: AnyWindowHandle, app: &Entity<ZbugsApp>, cx: &mut AsyncA
         })
     })
     .await?;
+    // The reaction in a skin tone, picked first.
+    act(window, app, cx, |app, _, cx| app.set_skin_tone(3, cx))?;
+    until(app, cx, "the skin tone", |app| app.skin_tone() == 3).await?;
     act(window, app, cx, |app, _, cx| {
         let issue = issue(app).expect("the issue is shown");
         let emoji = issue.emoji.clone().unwrap_or_default();
-        app.toggle_emoji(Subject::Issue, &issue.id, &emoji, "👍", cx);
+        let thumbs_up = with_skin_tone("👍", app.skin_tone(), false);
+        app.toggle_emoji(Subject::Issue, &issue.id, &emoji, &thumbs_up, cx);
     })?;
     until(app, cx, "the reaction", |app| {
         issue(app).is_some_and(|i| {
             i.emoji
                 .iter()
                 .flatten()
-                .any(|e| e.value == "👍" && e.creator_id == me.sub)
+                .any(|e| e.value == "👍🏽" && e.creator_id == me.sub)
         })
     })
     .await?;

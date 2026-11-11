@@ -27,13 +27,13 @@ use zbugs_model::args::*;
 use zbugs_model::mutators::{
     ADD_COMMENT, ADD_EMOJI_TO_COMMENT, ADD_EMOJI_TO_ISSUE, ADD_LABEL, CREATE_AND_ADD_LABEL,
     CREATE_ISSUE, DELETE_ISSUE, DELETE_ISSUES, EDIT_COMMENT, MutateRequest, REMOVE_COMMENT,
-    REMOVE_EMOJI, REMOVE_LABEL, SET_VIEW_STATE, UPDATE_ISSUE, UPDATE_NOTIFICATION,
+    REMOVE_EMOJI, REMOVE_LABEL, SET_USER_PREF, SET_VIEW_STATE, UPDATE_ISSUE, UPDATE_NOTIFICATION,
 };
 use zbugs_model::queries::{
     ALL_PROJECTS, COMMENTS_PAGE, ISSUE_DETAIL, ISSUE_LIST_COUNT, ISSUE_LIST_V2, LABELS, USER,
-    USERS_FOR_PROJECT,
+    USER_PREF, USERS_FOR_PROJECT,
 };
-use zbugs_model::schema::{Comment, Emoji, Issue, IssueVisibility, Label, Project, User};
+use zbugs_model::schema::{Comment, Emoji, Issue, IssueVisibility, Label, Project, User, UserPref};
 use zbugs_model::{AuthData, ZERO_PROJECT_NAME, make_id};
 use zero_client::client::{ConnectionState, MutationOutcome};
 use zero_client::ttl::Ttl;
@@ -155,6 +155,57 @@ const REACTIONS: [(&str, &str); 6] = [
     ("👀", "eyes"),
 ];
 
+/// The user's skin tone for reactions, as zbugs' emoji picker keeps it:
+/// 0 for none, 1 to 5 for U+1F3FB to U+1F3FF.
+const SKIN_TONE_PREF: &str = "emojiSkinTone";
+const SKIN_TONES: [&str; 6] = [
+    "No skin tone",
+    "Light",
+    "Medium-light",
+    "Medium",
+    "Medium-dark",
+    "Dark",
+];
+
+/// `emoji` in skin tone `tone`, as zbugs' `setSkinTone`, when it takes
+/// one: 👍, or an emoji someone already reacted with in a tone (`toned`).
+fn with_skin_tone(emoji: &str, tone: u32, toned: bool) -> String {
+    let base = normalize_emoji(emoji);
+    match char::from_u32(0x1F3FA + tone) {
+        Some(modifier) if tone > 0 && (toned || base == "👍") => format!("{base}{modifier}"),
+        _ => base,
+    }
+}
+
+/// When `ms` was, as zbugs' `RelativeTime` shows it: "just now" to "1
+/// day ago", then the date and time, with the year from past years.
+fn relative_time(ms: f64, now: f64) -> String {
+    use chrono::{Datelike, Local, TimeZone};
+    const MINUTE: f64 = 60_000.;
+    const HOUR: f64 = 60. * MINUTE;
+    let (Some(at), Some(today)) = (
+        Local.timestamp_millis_opt(ms as i64).single(),
+        Local.timestamp_millis_opt(now as i64).single(),
+    ) else {
+        return String::new();
+    };
+    let delta = now - ms;
+    if at.year() < today.year() {
+        return at.format("%Y/%m/%d, %-I:%M %p").to_string();
+    }
+    if delta > 48. * HOUR {
+        return at.format("%b %-d, %-I:%M %p").to_string();
+    }
+    match delta {
+        d if d < MINUTE => "just now".into(),
+        d if d < 2. * MINUTE => "1 minute ago".into(),
+        d if d < HOUR => format!("{} minutes ago", (d / MINUTE) as i64),
+        d if d < 2. * HOUR => "1 hour ago".into(),
+        d if d < 24. * HOUR => format!("{} hours ago", (d / HOUR) as i64),
+        _ => "1 day ago".into(),
+    }
+}
+
 /// What a reaction is on.
 #[derive(Clone, Copy)]
 enum Subject {
@@ -186,6 +237,8 @@ pub struct ZbugsApp {
     labels: Live<Vec<Label>>,
     /// The logged-in user.
     me: Option<Live<Option<User>>>,
+    /// Their skin tone for reactions (`SKIN_TONE_PREF`).
+    skin_tone: Option<Live<Option<UserPref>>>,
     selected: Option<String>,
     detail: Option<Live<Option<Issue>>>,
     /// How many of the selected issue's comments to show, newest first.
@@ -294,6 +347,10 @@ impl ZbugsApp {
             .auth
             .as_ref()
             .map(|a| Live::new(&session.zero, USER.call(&a.sub, Some(a)), &ttl(), cx));
+        let skin_tone = session.auth.as_ref().map(|a| {
+            let q = USER_PREF.call(&SKIN_TONE_PREF.to_owned(), Some(a));
+            Live::new(&session.zero, q, &ttl(), cx)
+        });
         let mut app = ZbugsApp {
             session,
             filters,
@@ -306,6 +363,7 @@ impl ZbugsApp {
             crew,
             labels,
             me,
+            skin_tone,
             selected: None,
             detail: None,
             comments_limit: COMMENT_PAGE,
@@ -329,6 +387,17 @@ impl ZbugsApp {
             app.select(id, cx);
             app.reveal_selected = true;
         }
+        // Keeps the relative times ("5 minutes ago") current.
+        app._tasks.push(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_secs(30))
+                    .await;
+                if this.update(cx, |_, cx| cx.notify()).is_err() {
+                    break;
+                }
+            }
+        }));
         app
     }
 
@@ -1172,6 +1241,25 @@ impl ZbugsApp {
     }
 
     /// Takes back the user's reaction with `unicode`, or adds it.
+    /// The user's skin tone for reactions, 0 for none.
+    fn skin_tone(&self) -> u32 {
+        let pref = self
+            .skin_tone
+            .as_ref()
+            .and_then(|live| live.snapshot().value.clone().flatten());
+        pref.and_then(|p| p.value.parse().ok())
+            .filter(|tone| *tone < SKIN_TONES.len() as u32)
+            .unwrap_or(0)
+    }
+
+    fn set_skin_tone(&mut self, tone: u32, cx: &mut Context<Self>) {
+        let args = UserPrefArgs {
+            key: SKIN_TONE_PREF.to_owned(),
+            value: tone.to_string(),
+        };
+        self.mutate(SET_USER_PREF.with(&args), cx);
+    }
+
     fn toggle_emoji(
         &mut self,
         subject: Subject,
@@ -1194,12 +1282,12 @@ impl ZbugsApp {
         }
         let annotation = REACTIONS
             .iter()
-            .find(|(u, _)| *u == unicode)
+            .find(|(u, _)| normalize_emoji(u) == key)
             .map(|(_, a)| a.to_string())
             .or_else(|| {
                 emoji
                     .iter()
-                    .find(|e| e.value == unicode)
+                    .find(|e| normalize_emoji(&e.value) == key)
                     .map(|e| e.annotation.clone())
             })
             .unwrap_or_default();
@@ -1789,7 +1877,15 @@ impl ZbugsApp {
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
                     .child(creator)
-                    .child(div().min_w_0().truncate().child(labels)),
+                    .child(div().flex_1().min_w_0().truncate().child(labels))
+                    .child(div().flex_none().child(relative_time(
+                        if self.filters.by_created {
+                            issue.created
+                        } else {
+                            issue.modified
+                        },
+                        now_ms(),
+                    ))),
             );
         h_flex()
             .id(SharedString::from(format!("issue-{}", issue.id)))
@@ -1859,8 +1955,11 @@ impl ZbugsApp {
         }
         let mine = |e: &Emoji| me.as_deref() == Some(e.creator_id.as_str());
         let emoji = Rc::new(emoji);
+        let tone = self.skin_tone();
         let pills = groups.into_iter().map(|(key, group)| {
-            let value = group[0].value.clone();
+            // Adds the reaction in the user's skin tone, as zbugs' pills do.
+            let toned = group.iter().any(|e| e.value != key);
+            let value = with_skin_tone(&key, tone, toned);
             let names = group
                 .iter()
                 .filter_map(|e| {
@@ -1877,34 +1976,63 @@ impl ZbugsApp {
                 .small()
                 .outline()
                 .selected(group.iter().any(mine))
-                .label(format!("{value} {}", group.len()))
+                .label(format!("{} {}", group[0].value, group.len()))
                 .tooltip(format!("{names} reacted with {}", group[0].annotation))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.toggle_emoji(subject, &id, &all, &value, cx)
                 }))
         });
         let pills = pills.collect::<Vec<_>>();
-        let choices = REACTIONS
+        // The reactions in the user's skin tone, and the skin tone, as
+        // zbugs' emoji picker.
+        let reacted = REACTIONS
             .iter()
-            .map(|(unicode, annotation)| Choice {
-                label: format!("{unicode}  {annotation}"),
-                value: Some((*unicode).to_owned()),
-                checked: emoji
+            .map(|(unicode, _)| {
+                emoji
                     .iter()
-                    .any(|e| mine(e) && normalize_emoji(&e.value) == normalize_emoji(unicode)),
+                    .any(|e| mine(e) && normalize_emoji(&e.value) == normalize_emoji(unicode))
             })
-            .collect();
+            .collect::<Vec<_>>();
         let (all, id) = (emoji.clone(), subject_id.to_owned());
-        let add = self.picker(
-            Button::new(SharedString::from(format!("react-{subject_id}"))).label("☺︎ +"),
-            choices,
-            Rc::new(move |this, unicode, _, cx| {
-                if let Some(unicode) = unicode {
-                    this.toggle_emoji(subject, &id, &all, &unicode, cx);
+        let app = cx.entity().downgrade();
+        let add = Button::new(SharedString::from(format!("react-{subject_id}")))
+            .label("☺︎ +")
+            .small()
+            .ghost()
+            .dropdown_menu(move |menu: PopupMenu, window, cx| {
+                let mut menu = menu.min_w(px(200.));
+                for ((unicode, annotation), checked) in REACTIONS.iter().zip(&reacted) {
+                    let unicode = with_skin_tone(unicode, tone, false);
+                    let (app, all, id) = (app.clone(), all.clone(), id.clone());
+                    menu = menu.item(
+                        PopupMenuItem::new(format!("{unicode}  {annotation}"))
+                            .checked(*checked)
+                            .on_click(move |_, _, cx| {
+                                let _ = app.update(cx, |this, cx| {
+                                    this.toggle_emoji(subject, &id, &all, &unicode, cx)
+                                });
+                            }),
+                    );
                 }
-            }),
-            cx,
-        );
+                let app = app.clone();
+                menu.separator()
+                    .submenu("Skin tone", window, cx, move |mut menu, _, _| {
+                        for (t, name) in (0..).zip(SKIN_TONES) {
+                            let app = app.clone();
+                            menu = menu.item(
+                                PopupMenuItem::new(format!(
+                                    "{}  {name}",
+                                    with_skin_tone("👍", t, false)
+                                ))
+                                .checked(t == tone)
+                                .on_click(move |_, _, cx| {
+                                    let _ = app.update(cx, |this, cx| this.set_skin_tone(t, cx));
+                                }),
+                            );
+                        }
+                        menu
+                    })
+            });
         h_flex()
             .gap_1()
             .flex_wrap()
@@ -2147,6 +2275,10 @@ impl ZbugsApp {
                     .children(issue.short_id.map(|n| format!("#{n}")))
                     .child(if issue.open { "Open" } else { "Closed" })
                     .child(format!("by {}", who(&issue.creator)))
+                    .child(format!(
+                        "updated {}",
+                        relative_time(issue.modified, now_ms())
+                    ))
                     .child(assignee)
                     .child(labels)
                     .child(notifications)
@@ -2207,7 +2339,8 @@ impl ZbugsApp {
                             .gap_1()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child(div().flex_1().child(who(&c.creator)))
+                            .child(who(&c.creator))
+                            .child(div().flex_1().child(relative_time(c.created, now_ms())))
                             .when(self.can_change(&c.creator_id), |row| {
                                 row.child(
                                     Button::new(SharedString::from(format!("edit-{}", c.id)))
