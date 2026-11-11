@@ -73,22 +73,29 @@ merges a Version Packages PR that carries a `zero-rust` version.
   (`indexmap` was dropped), and no third-party type is in the public API.
 - Queries read in-memory IVM sources. Persistence is behind a storage
   trait; see [Storage](#storage-planned-m5).
-- The socket is behind a `Transport` trait that the core defines (tmm's
-  decision): by default `zero-client` depends on no async runtime and no
+- The socket is behind a transport trait that the core defines (tmm's
+  decision), `SocketFactory` and `SocketConnection` with `SocketEvents`, the
+  shape of the browser `WebSocket`; the clock and timers are behind
+  `Scheduler`. By default `zero-client` depends on no async runtime and no
   WebSocket crate, so an app can bring its own transport without
-  downloading crates it doesn't use. A reference transport,
-  `tokio-tungstenite` with rustls, comes behind an opt-in Cargo feature of
-  `zero-client` for a quick start. Its public API exposes no tungstenite
-  types, so a tungstenite major bump doesn't make a `zero-client` one. To
-  keep downloads small, `tokio-tungstenite` is declared with
-  `default-features = false` and only the features the transport uses, and
-  TLS is a feature of its own: rustls pulls in a crypto provider (`ring`,
-  or `aws-lc-rs`, whose `aws-lc-sys` needs cmake and a C toolchain), so an
-  app on `ws://` or behind its own TLS pulls in none of it. The quick-start
-  path (`cargo add zero-client --features tokio-transport,tls,sqlite`) goes in the
-  README with M4.
-- The tests already speak to a real `zero-cache` through
-  `tokio-tungstenite`, as a dev-dependency only (M1.5).
+  downloading crates it doesn't use; `zero_client::testing` has a manual
+  scheduler and mock sockets.
+- The reference transport (M4), `zero_client::tokio_transport` behind the
+  `tokio-transport` feature, runs the client on a tokio `LocalSet`: timers
+  and each socket are local tasks, and the follow-ups to an API call run as
+  a local task spawned once the call returns, where JS runs microtasks. Its
+  public API exposes no tokio or tungstenite types, so a tungstenite major
+  bump doesn't make a `zero-client` one. `tokio-tungstenite` is declared
+  with `default-features = false` and only `connect`, and TLS is the `tls`
+  feature: rustls on `ring` with the Mozilla roots (`webpki-roots`), so it
+  needs no cmake or system certificates, and an app on `ws://` or behind
+  its own TLS pulls in none of it. A socket that can't open, or that drops
+  without a close frame, closes with 1006, as a browser reports it.
+  `tests/client_e2e.rs` runs the whole client on it against `zero-cache`.
+- The quick start (`cargo add zero-client --features
+  tokio-transport,tls,sqlite`) goes in the README with M5.
+- The walking skeleton (M1.5) speaks the protocol to `zero-cache` itself,
+  over `tokio-tungstenite`, without the client.
 - Snapshots and subscriptions that don't depend on a UI framework, bridged
   into GPUI entities and Rune state by the apps.
 
@@ -235,7 +242,8 @@ in [PARITY.md](PARITY.md).
 - **Conformance Vectors**: the checked-in vectors match current JS, and the
   seeded fuzz corpora are generated for the next job; the checked-in
   generated Rust matches `zero-rust codegen`, whose types and lints pass.
-- **Rust (Linux)**: rustfmt, clippy with warnings denied, the tests, the
+- **Rust (Linux)**: rustfmt, clippy with warnings denied and every
+  feature, the tests with the default features and with all of them, the
   conformance report (in the job summary), rustdoc with warnings denied, and
   `cargo package`, which builds the crate as crates.io would get it, outside
   the workspace, a check that the default build of `zero-client` has no
@@ -243,9 +251,11 @@ in [PARITY.md](PARITY.md).
   `rust-version` the manifest names.
 - **Rust end-to-end (Linux)**: Postgres and `zero-cache` from this repo's
   source over the fixture database (`packages/zero-conformance/src/e2e/`),
-  and `zero-client/tests/walking_skeleton.rs` against them, with
-  `ZERO_E2E_URL` set. Without it the test skips, so `cargo test` needs no
-  server.
+  and `zero-client/tests/walking_skeleton.rs` and `client_e2e.rs` (the
+  whole client on the tokio transport: sync, optimistic mutations the
+  server confirms, a relaunch, two clients of a group, synced aggregates)
+  against them, with `ZERO_E2E_URL` set. Without it the tests skip, so
+  `cargo test` needs no server.
 - **Rust API breaks**: `cargo semver-checks` against the last release, at the
   bump the pending changesets declare. It does nothing until `zero-client` is
   on crates.io.

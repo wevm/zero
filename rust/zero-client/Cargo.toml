@@ -10,14 +10,57 @@ readme = "README.md"
 keywords = ["zero", "sync", "local-first", "ivm"]
 categories = ["database", "web-programming::websocket"]
 
-# The end-to-end tests' WebSocket client. Which transport the client ships
-# is decided with the engine (M4).
+# The default build has no dependencies (rust/DESIGN.md); each one is behind
+# an opt-in feature.
+[features]
+# `tokio_transport`: a scheduler and a WebSocket transport on tokio.
+tokio-transport = ["dep:tokio", "dep:tokio-tungstenite", "dep:futures-util"]
+# `wss://` for the tokio transport: rustls on `ring`, with webpki roots.
+tls = [
+  "tokio-transport",
+  "tokio-tungstenite/rustls-tls-webpki-roots",
+  "dep:rustls",
+]
+
+[dependencies]
+futures-util = { version = "0.3", default-features = false, features = [
+  "sink",
+], optional = true }
+rustls = { version = "0.23", default-features = false, features = [
+  "ring",
+  "std",
+  "tls12",
+], optional = true }
+tokio = { version = "1", default-features = false, features = [
+  "macros",
+  "rt",
+  "sync",
+  "time",
+], optional = true }
+tokio-tungstenite = { version = "0.30", default-features = false, features = [
+  "connect",
+], optional = true }
+
+[package.metadata.docs.rs]
+all-features = true
+
+# The end-to-end tests' WebSocket client and server.
 [dev-dependencies]
-futures-util = { version = "0.3", default-features = false }
-tokio = { version = "1", features = ["macros", "rt", "time"] }
+futures-util = { version = "0.3", default-features = false, features = [
+  "sink",
+] }
+tokio = { version = "1", features = ["macros", "net", "rt", "time"] }
 tokio-tungstenite = { version = "0.30", default-features = false, features = [
   "connect",
 ] }
+
+[[test]]
+name = "tokio_transport"
+required-features = ["tokio-transport"]
+
+[[test]]
+name = "client_e2e"
+required-features = ["tokio-transport"]
 
 [lints]
 workspace = true

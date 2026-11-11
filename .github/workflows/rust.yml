@@ -79,10 +79,15 @@ jobs:
         run: rustup show active-toolchain || rustup toolchain install
       - name: Format
         run: cargo fmt --all --check
+      # With every opt-in feature, so the tokio transport is linted too.
       - name: Lint
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - name: Test
         run: cargo test --workspace --locked
+      # The opt-in features' tests, such as the tokio transport against a
+      # local WebSocket server.
+      - name: Test (all features)
+        run: cargo test --workspace --all-features --locked
       # The report: every vector file, how many cases match JS, match under a
       # documented exception, or fail, and which files aren't replayed yet.
       - name: Conformance
@@ -91,7 +96,7 @@ jobs:
       - name: Docs
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo doc --workspace --no-deps --locked
+        run: cargo doc --workspace --all-features --no-deps --locked
       # The crate as crates.io would get it, built on its own, outside the
       # workspace: what a consumer without path overrides compiles.
       - name: Package
@@ -114,6 +119,7 @@ jobs:
           msrv="$(sed -nE 's/^rust-version = "(.*)"/\1/p' Cargo.toml)"
           rustup toolchain install "$msrv" --profile minimal
           cargo "+$msrv" check -p zero-client --locked
+          cargo "+$msrv" check -p zero-client --all-features --locked
 
   e2e:
     name: Rust end-to-end (Linux)
@@ -143,7 +149,7 @@ jobs:
         run: rustup show active-toolchain || rustup toolchain install
       - name: Build
         working-directory: rust
-        run: cargo test -p zero-client --test walking_skeleton --locked --no-run
+        run: cargo test -p zero-client --features tokio-transport --test walking_skeleton --test client_e2e --locked --no-run
       - name: Start zero-cache
         env:
           ZERO_E2E_PG: postgresql://postgres:postgres@127.0.0.1:5432/postgres
@@ -159,7 +165,7 @@ jobs:
         working-directory: rust
         env:
           ZERO_E2E_URL: ws://127.0.0.1:4848
-        run: cargo test -p zero-client --test walking_skeleton --locked -- --nocapture
+        run: cargo test -p zero-client --features tokio-transport --test walking_skeleton --test client_e2e --locked -- --nocapture
       - name: zero-cache log
         if: failure()
         run: cat "$RUNNER_TEMP/server.log"

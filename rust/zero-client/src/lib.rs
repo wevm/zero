@@ -5,14 +5,24 @@
 //! `packages/zero-conformance`. See `rust/PARITY.md` for what is ported so
 //! far and what is planned.
 //!
+//! # Features
+//!
+//! The default build has no dependencies. It has the whole client,
+//! [`client::Zero`], which an app drives with its own
+//! [`Scheduler`](client::Scheduler) and
+//! [`SocketFactory`](client::SocketFactory). Opt-in features add:
+//!
+//! - `tokio-transport`: the `tokio_transport` module, a scheduler and a
+//!   WebSocket transport on tokio and `tokio-tungstenite`.
+//! - `tls`: `wss://` for that transport, with rustls on `ring`.
+//!
 //! # Storage
 //!
-//! **A default build persists nothing across restarts**: its storage is
-//! memory only, and the crate has no dependencies. SQLite storage, which
-//! keeps synced rows and pending mutations across restarts, comes behind the
-//! opt-in `sqlite` feature, and an app can bring its own store. The quick
-//! start, `cargo add zero-client --features tokio-transport,tls,sqlite`,
-//! enables it. (Storage and the transport arrive with the client engine.)
+//! **The client persists nothing across restarts yet**: its storage is
+//! memory only, kept for the life of the process by database name, like JS
+//! `kvStore: 'mem'`. SQLite storage, which keeps synced rows and pending
+//! mutations across restarts, comes behind the opt-in `sqlite` feature, and
+//! an app will be able to bring its own store.
 
 pub mod ast;
 pub mod builder;
@@ -32,5 +42,7 @@ pub mod schema;
 pub mod sort;
 pub mod strings;
 pub mod testing;
+#[cfg(feature = "tokio-transport")]
+pub mod tokio_transport;
 pub mod ttl;
 pub mod typed;
