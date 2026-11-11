@@ -1,6 +1,7 @@
 //! zbugs on the Zero Rust client, in GPUI.
 
 mod app;
+mod http;
 mod live;
 mod login;
 mod session;
@@ -8,10 +9,12 @@ mod token;
 mod transport;
 
 use gpui_kit::*;
+use std::sync::Arc;
 
 fn main() {
     gpui_kit::application()
         .with_assets(gpui_kit::assets::Assets)
+        .with_http_client(Arc::new(http::UreqClient::new()))
         .run(|cx| {
             gpui_kit::init(cx);
             app::bind_keys(cx);
