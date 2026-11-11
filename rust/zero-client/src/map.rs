@@ -6,7 +6,7 @@ use std::fmt;
 
 /// Maps up to this many keys are searched linearly, which beats hashing for
 /// the few columns of a row; larger ones keep a hash index.
-const INDEX_THRESHOLD: usize = 8;
+const INDEX_THRESHOLD: usize = 16;
 
 /// A map from strings to `V` that keeps its keys in the order they were
 /// inserted. Lookups are O(1): small maps scan their few entries, and larger

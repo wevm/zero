@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["zero-client", "conformance", "codegen-tests"]
+members = ["zero-client", "conformance", "codegen-tests", "benchmarks"]
 
 [workspace.package]
 version = "0.0.0"
