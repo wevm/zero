@@ -177,6 +177,35 @@ fn with_skin_tone(emoji: &str, tone: u32, toned: bool) -> String {
     }
 }
 
+/// When `ms` was, as zbugs' `RelativeTime` shows it: "just now" to "1
+/// day ago", then the date and time, with the year from past years.
+fn relative_time(ms: f64, now: f64) -> String {
+    use chrono::{Datelike, Local, TimeZone};
+    const MINUTE: f64 = 60_000.;
+    const HOUR: f64 = 60. * MINUTE;
+    let (Some(at), Some(today)) = (
+        Local.timestamp_millis_opt(ms as i64).single(),
+        Local.timestamp_millis_opt(now as i64).single(),
+    ) else {
+        return String::new();
+    };
+    let delta = now - ms;
+    if at.year() < today.year() {
+        return at.format("%Y/%m/%d, %-I:%M %p").to_string();
+    }
+    if delta > 48. * HOUR {
+        return at.format("%b %-d, %-I:%M %p").to_string();
+    }
+    match delta {
+        d if d < MINUTE => "just now".into(),
+        d if d < 2. * MINUTE => "1 minute ago".into(),
+        d if d < HOUR => format!("{} minutes ago", (d / MINUTE) as i64),
+        d if d < 2. * HOUR => "1 hour ago".into(),
+        d if d < 24. * HOUR => format!("{} hours ago", (d / HOUR) as i64),
+        _ => "1 day ago".into(),
+    }
+}
+
 /// What a reaction is on.
 #[derive(Clone, Copy)]
 enum Subject {
@@ -358,6 +387,17 @@ impl ZbugsApp {
             app.select(id, cx);
             app.reveal_selected = true;
         }
+        // Keeps the relative times ("5 minutes ago") current.
+        app._tasks.push(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_secs(30))
+                    .await;
+                if this.update(cx, |_, cx| cx.notify()).is_err() {
+                    break;
+                }
+            }
+        }));
         app
     }
 
@@ -1837,7 +1877,15 @@ impl ZbugsApp {
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
                     .child(creator)
-                    .child(div().min_w_0().truncate().child(labels)),
+                    .child(div().flex_1().min_w_0().truncate().child(labels))
+                    .child(div().flex_none().child(relative_time(
+                        if self.filters.by_created {
+                            issue.created
+                        } else {
+                            issue.modified
+                        },
+                        now_ms(),
+                    ))),
             );
         h_flex()
             .id(SharedString::from(format!("issue-{}", issue.id)))
@@ -2227,6 +2275,10 @@ impl ZbugsApp {
                     .children(issue.short_id.map(|n| format!("#{n}")))
                     .child(if issue.open { "Open" } else { "Closed" })
                     .child(format!("by {}", who(&issue.creator)))
+                    .child(format!(
+                        "updated {}",
+                        relative_time(issue.modified, now_ms())
+                    ))
                     .child(assignee)
                     .child(labels)
                     .child(notifications)
@@ -2287,7 +2339,8 @@ impl ZbugsApp {
                             .gap_1()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child(div().flex_1().child(who(&c.creator)))
+                            .child(who(&c.creator))
+                            .child(div().flex_1().child(relative_time(c.created, now_ms())))
                             .when(self.can_change(&c.creator_id), |row| {
                                 row.child(
                                     Button::new(SharedString::from(format!("edit-{}", c.id)))
