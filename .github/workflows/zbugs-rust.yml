@@ -1,6 +1,7 @@
 name: zbugs (Rust)
 
-# CI for zbugs on the Rust client: apps/zbugs-model, the schema, queries,
+# CI for zbugs on the Rust client: apps/zbugs-gpui, the GPUI app (macOS), and
+# apps/zbugs-model, the schema, queries,
 # and mutators both Rust apps share, checked against the TS ones by the
 # drift test. `rust.yml` checks that its generated schema is current
 # (`pnpm --filter zero-rust run test`), and `swift.yml` that the drift
@@ -39,3 +40,23 @@ jobs:
         run: cargo clippy --all-targets --locked -- -D warnings
       - name: Test
         run: cargo test --locked
+
+  gpui:
+    name: zbugs GPUI app (macOS)
+    runs-on: macos-26
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: apps/zbugs-gpui
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Install the toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Format
+        run: cargo fmt --check
+      - name: Lint
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Build
+        run: cargo build --locked

@@ -1,0 +1,39 @@
+[package]
+name = "zbugs-gpui"
+version = "0.0.0"
+description = "zbugs, a native desktop app on the Zero Rust client and GPUI."
+edition = "2024"
+rust-version = "1.88"
+license = "Apache-2.0"
+publish = false
+
+# Its own workspace, beside apps/zbugs-model and rust/.
+[workspace]
+
+[dependencies]
+futures = "0.3"
+gpui-kit = "0.9.1"
+rustls = { version = "0.23", default-features = false, features = [
+  "ring",
+  "std",
+  "tls12",
+] }
+tokio = { version = "1", default-features = false, features = [
+  "rt-multi-thread",
+  "sync",
+  "macros",
+] }
+# The sockets: tokio-tungstenite on the app's own tokio thread, with TLS.
+tokio-tungstenite = { version = "0.30", default-features = false, features = [
+  "connect",
+  "rustls-tls-webpki-roots",
+] }
+zbugs-model = { path = "../zbugs-model" }
+# SQLite storage, so the app keeps its data across launches.
+zero-client = { path = "../../rust/zero-client", features = ["sqlite"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
