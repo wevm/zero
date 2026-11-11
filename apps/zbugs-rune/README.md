@@ -16,7 +16,8 @@ both), and Windows is next.
   and the filters (status, sort, creator, assignee, and labels, as the web
   app's list params),
   the issue list (virtual rows, paged as it scrolls, with a dot on issues
-  changed since you looked), the issue with its Markdown, comments, and
+  changed since you looked, and Select to delete several; j and k step
+  through it, as on the web), the issue with its Markdown, comments, and
   reactions, its assignee, visibility, notifications, and labels, and sheets
   to create, edit, and delete an issue, edit and delete comments, create
   a label, log in, and set the servers.

@@ -23,8 +23,8 @@ use zbugs_model::args::{
 };
 use zbugs_model::mutators::{
     ADD_COMMENT, ADD_EMOJI_TO_COMMENT, ADD_EMOJI_TO_ISSUE, ADD_LABEL, CREATE_AND_ADD_LABEL,
-    CREATE_ISSUE, DELETE_ISSUE, EDIT_COMMENT, REMOVE_COMMENT, REMOVE_EMOJI, REMOVE_LABEL,
-    SET_VIEW_STATE, UPDATE_ISSUE, UPDATE_NOTIFICATION,
+    CREATE_ISSUE, DELETE_ISSUE, DELETE_ISSUES, EDIT_COMMENT, REMOVE_COMMENT, REMOVE_EMOJI,
+    REMOVE_LABEL, SET_VIEW_STATE, UPDATE_ISSUE, UPDATE_NOTIFICATION,
 };
 use zbugs_model::schema::{Comment, Emoji, Issue, IssueVisibility, Label, Project, User};
 use zbugs_model::{AuthData, Context, MutateRequest, ZERO_PROJECT_NAME, make_id, queries};
@@ -113,6 +113,8 @@ pub enum Picker {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Confirm {
     DeleteIssue(String),
+    /// The list's checked issues.
+    DeleteIssues(Vec<String>),
     DeleteComment(String),
 }
 
@@ -151,6 +153,9 @@ pub struct App {
     pub project_labels: Vec<Label>,
 
     pub selected: Option<String>,
+    /// Picking issues in the list to delete them together, and those picked.
+    pub select_mode: bool,
+    pub checked: Vec<String>,
     /// Scroll the list to the selected issue once it's there (a relaunch).
     reveal_selected: bool,
     pub detail: Option<Issue>,
@@ -260,6 +265,8 @@ impl App {
             assignees: Vec::new(),
             project_labels: Vec::new(),
             selected: None,
+            select_mode: false,
+            checked: Vec::new(),
             reveal_selected: false,
             detail: None,
             detail_result: ResultType::Unknown,
@@ -615,6 +622,52 @@ impl App {
             .is_some_and(|a| a.is_crew() || a.sub == creator_id)
     }
 
+    /// Starts or stops picking issues to delete, with none picked.
+    pub fn toggle_select_mode(&mut self) {
+        self.select_mode = !self.select_mode;
+        self.checked.clear();
+    }
+
+    /// Picks the issue to delete, or unpicks it. The user can delete what
+    /// they created; the crew can delete anything.
+    pub fn toggle_checked(&mut self, id: &str) {
+        let Some(issue) = self.issues.iter().find(|i| i.id == id) else {
+            return;
+        };
+        if !self.can_edit(&issue.creator_id) {
+            return;
+        }
+        match self.checked.iter().position(|c| c == id) {
+            Some(i) => {
+                self.checked.remove(i);
+            }
+            None => self.checked.push(id.to_owned()),
+        }
+    }
+
+    /// Selects the issue `by` rows after (or before) the selected one in the
+    /// list, as the web issue page's j and k do.
+    fn step(&mut self, by: isize, tx: &mut Tx) {
+        let at = self
+            .selected
+            .as_ref()
+            .and_then(|id| self.issues.iter().position(|i| &i.id == id));
+        let to = match at {
+            Some(i) => i.checked_add_signed(by),
+            None => Some(0),
+        };
+        let Some(issue) = to.and_then(|i| self.issues.get(i)) else {
+            return;
+        };
+        let id = issue.id.clone();
+        tx.scroll_into_view(id.clone());
+        self.select(id);
+        // Near the end of what's loaded: the next page.
+        if let Some(i) = to {
+            self.list_visible(i + 1);
+        }
+    }
+
     pub fn is_crew(&self) -> bool {
         self.auth.as_ref().is_some_and(AuthData::is_crew)
     }
@@ -647,6 +700,13 @@ impl App {
                 if self.selected.as_ref() == Some(&id) {
                     self.deselect();
                 }
+            }
+            Some(Confirm::DeleteIssues(ids)) => {
+                if self.selected.as_ref().is_some_and(|id| ids.contains(id)) {
+                    self.deselect();
+                }
+                self.mutate(DELETE_ISSUES.with(&ids));
+                self.toggle_select_mode();
             }
             Some(Confirm::DeleteComment(id)) => {
                 if self.editing_comment.as_ref() == Some(&id) {
@@ -1021,6 +1081,24 @@ fn apply_issues(s: &mut App, rows: Vec<Issue>, result_type: ResultType, tx: &mut
     }
 }
 
+/// Keys no control took: j and k step through the list, as on the web.
+fn on_key(s: &mut App, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
+    if s.sheet.is_some()
+        || s.confirm.is_some()
+        || event.mods.cmd
+        || event.mods.ctrl
+        || event.mods.alt
+    {
+        return false;
+    }
+    match &event.key {
+        rune::Key::Text(t) if t == "j" => s.step(1, tx),
+        rune::Key::Text(t) if t == "k" => s.step(-1, tx),
+        _ => return false,
+    }
+    true
+}
+
 fn on_close(s: &mut App, _: &mut Tx) {
     s.sync.close();
 }
@@ -1028,6 +1106,7 @@ fn on_close(s: &mut App, _: &mut Tx) {
 fn main() {
     let spec = AppSpec {
         min_size: Some((900.0, 520.0)),
+        on_key: Some(on_key),
         ..AppSpec::new("Zero Bugs", (1180.0, 760.0), placeholder, view::view)
     };
     let app = rune::App::new(spec);
