@@ -6,7 +6,8 @@ use crate::session::{Session, now_ms};
 use futures::StreamExt;
 use futures::channel::mpsc;
 use gpui_kit::component::button::*;
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::dialog::DialogFooter;
+use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::text::TextView;
 use gpui_kit::component::tooltip::Tooltip;
@@ -17,9 +18,9 @@ use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
 use zbugs_model::args::*;
-use zbugs_model::mutators::{ADD_COMMENT, MutateRequest, UPDATE_ISSUE};
-use zbugs_model::queries::{ISSUE_DETAIL, ISSUE_LIST_COUNT, ISSUE_LIST_V2};
-use zbugs_model::schema::{Comment, Issue};
+use zbugs_model::mutators::{ADD_COMMENT, CREATE_ISSUE, MutateRequest, UPDATE_ISSUE};
+use zbugs_model::queries::{ALL_PROJECTS, ISSUE_DETAIL, ISSUE_LIST_COUNT, ISSUE_LIST_V2};
+use zbugs_model::schema::{Comment, Issue, Project};
 use zbugs_model::{ZERO_PROJECT_NAME, make_id};
 use zero_client::client::{ConnectionState, MutationOutcome};
 use zero_client::ttl::Ttl;
@@ -42,6 +43,7 @@ pub struct ZbugsApp {
     limit: i64,
     list: Live<Vec<Issue>>,
     count: Live<i64>,
+    projects: Live<Vec<Project>>,
     selected: Option<String>,
     detail: Option<Live<Option<Issue>>>,
     search: Entity<InputState>,
@@ -94,6 +96,12 @@ impl ZbugsApp {
 
         let status = Status::Open;
         let (list, count) = Self::queries(&session, status, "", PAGE, cx);
+        let projects = Live::new(
+            &session.zero,
+            ALL_PROJECTS.call(&(), session.auth.as_ref()),
+            &ttl(),
+            cx,
+        );
         ZbugsApp {
             session,
             status,
@@ -101,6 +109,7 @@ impl ZbugsApp {
             limit: PAGE,
             list,
             count,
+            projects,
             selected: None,
             detail: None,
             search,
@@ -251,6 +260,137 @@ impl ZbugsApp {
             .update(cx, |state, cx| state.set_value("", window, cx));
     }
 
+    /// The id of the project new issues go in.
+    fn project_id(&self) -> Option<String> {
+        let name = ZERO_PROJECT_NAME.to_lowercase();
+        self.projects
+            .snapshot()
+            .value
+            .iter()
+            .flatten()
+            .find(|p| p.lower_case_name == name)
+            .map(|p| p.id.clone())
+    }
+
+    /// Opens the new issue dialog, or the edit dialog of `issue`.
+    fn open_editor(&mut self, issue: Option<Issue>, window: &mut Window, cx: &mut Context<Self>) {
+        let title = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Title")
+                .default_value(issue.as_ref().map_or(String::new(), |i| i.title.clone()))
+        });
+        let description = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .rows(10)
+                .placeholder("Description (Markdown)")
+                .default_value(
+                    issue
+                        .as_ref()
+                        .map_or(String::new(), |i| i.description.clone()),
+                )
+        });
+        let app = cx.entity().downgrade();
+        let id = issue.map(|i| i.id);
+        let (t0, d0) = (title.clone(), description.clone());
+        window.open_dialog(cx, move |dialog, _, _| {
+            let editing = id.is_some();
+            let (app, t, d, i) = (app.clone(), t0.clone(), d0.clone(), id.clone());
+            let save = move |window: &mut Window, cx: &mut App| {
+                let title = t.read(cx).value().trim().to_owned();
+                let description = d.read(cx).value().to_string();
+                let saved = app
+                    .update(cx, |this, cx| {
+                        this.save_issue(i.clone(), title, description, cx)
+                    })
+                    .unwrap_or(false);
+                if saved {
+                    window.close_dialog(cx);
+                }
+            };
+            let save = Rc::new(save);
+            let on_ok = save.clone();
+            dialog
+                .w(px(640.))
+                .title(if editing { "Edit issue" } else { "New issue" })
+                .on_ok(move |_, window, cx| {
+                    on_ok(window, cx);
+                    false
+                })
+                .child(
+                    v_flex()
+                        .gap_3()
+                        .child(Input::new(&t0))
+                        .child(Textarea::new(&d0)),
+                )
+                .footer(
+                    DialogFooter::new()
+                        .child(
+                            Button::new("editor-cancel")
+                                .outline()
+                                .label("Cancel")
+                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                        )
+                        .child(
+                            Button::new("editor-save")
+                                .primary()
+                                .label(if editing { "Save" } else { "Create issue" })
+                                .on_click(move |_, window, cx| save(window, cx)),
+                        ),
+                )
+        });
+        // Once the dialog is up: opening it moves the focus into it.
+        let focus = title.clone();
+        window.defer(cx, move |window, cx| {
+            focus.update(cx, |state, cx| state.focus(window, cx));
+        });
+    }
+
+    /// Creates an issue, or saves the title and description of `id`.
+    /// Returns whether it went ahead; a missing title doesn't.
+    fn save_issue(
+        &mut self,
+        id: Option<String>,
+        title: String,
+        description: String,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if title.is_empty() {
+            self.error = Some("An issue needs a title.".into());
+            cx.notify();
+            return false;
+        }
+        let now = now_ms();
+        match id {
+            Some(id) => {
+                let args = UpdateIssueArgs {
+                    title: Some(title),
+                    description: Some(description),
+                    ..UpdateIssueArgs::new(id, now)
+                };
+                self.mutate(UPDATE_ISSUE.with(&args), cx);
+            }
+            None => {
+                let Some(project_id) = self.project_id() else {
+                    self.error = Some("The Zero project hasn't synced yet.".into());
+                    cx.notify();
+                    return false;
+                };
+                let id = make_id();
+                let args = CreateIssueArgs {
+                    id: id.clone(),
+                    title,
+                    description: Some(description),
+                    created: now,
+                    modified: now,
+                    project_id,
+                };
+                self.mutate(CREATE_ISSUE.with(&args), cx);
+                self.select(id, cx);
+            }
+        }
+        true
+    }
+
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let status_button = |id: &'static str, label: &'static str, status: Status| {
             Button::new(id)
@@ -289,7 +429,25 @@ impl ZbugsApp {
                     )
                     .child(self.render_connection(cx)),
             )
-            .child(Input::new(&self.search).small().cleanable(true))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .child(Input::new(&self.search).small().cleanable(true)),
+                    )
+                    .child(
+                        Button::new("new-issue")
+                            .small()
+                            .primary()
+                            .label("New issue")
+                            .disabled(self.session.auth.is_none())
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_editor(None, window, cx)
+                            })),
+                    ),
+            )
     }
 
     fn render_connection(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -435,6 +593,7 @@ impl ZbugsApp {
             u.as_ref().map_or("nobody".to_owned(), |u| u.login.clone())
         };
         let toggle = issue.clone();
+        let edit = issue.clone();
         v_flex()
             .id("detail")
             .size_full()
@@ -452,6 +611,15 @@ impl ZbugsApp {
                             .text_xl()
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(issue.title.clone()),
+                    )
+                    .child(
+                        Button::new("edit-issue")
+                            .small()
+                            .outline()
+                            .label("Edit")
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.open_editor(Some(edit.clone()), window, cx)
+                            })),
                     )
                     .child(
                         Button::new("toggle-open")
