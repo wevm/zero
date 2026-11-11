@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # zbugs-rune against zbugs' backend, end to end: the app runs headless on
 # the wall clock (`--realtime`), opens an open issue, comments on it, reacts
-# to it, labels it, closes it, edits the comment, and creates a label for
-# it, pressing its controls as a person would. Then Postgres must have each
+# to it, labels it, closes it, edits the comment, creates a label for it,
+# makes it internal, and unsubscribes from it, pressing its controls as a
+# person would. Opening it marks it viewed. Then Postgres must have each
 # change, and the app's last frame must show the edited comment.
 #
 # It needs the backend running (apps/zbugs-swift/server/server.ts), its
@@ -27,6 +28,9 @@ first_label=$(sql "select l.name from label l join issue i on i.\"projectID\" = 
   where i.id = '$issue' order by l.name collate \"C\" limit 1")
 sql "delete from \"issueLabel\" where \"issueID\" = '$issue'"
 sql "delete from emoji where \"subjectID\" = '$issue'"
+sql "update issue set visibility = 'public' where id = '$issue'"
+me=$(node -e 'console.log(JSON.parse(Buffer.from(process.argv[1].split(".")[1], "base64url")).sub)' "$ZBUGS_TOKEN")
+sql "delete from \"viewState\" where \"issueID\" = '$issue' and \"userID\" = '$me'"
 body="e2e-$(date +%s)"
 new_label="zz-$body"
 
@@ -52,12 +56,16 @@ cat > "$out/script.json" <<EOF
   {"t": 21.5, "type": "tap", "key": "labels-trigger"},
   {"t": 22.0, "type": "tap", "key": "labels-item0"},
   {"t": 22.5, "type": "type", "text": "$new_label"},
-  {"t": 24.0, "type": "tap", "key": "save"}
+  {"t": 24.0, "type": "tap", "key": "save"},
+  {"t": 25.0, "type": "tap", "key": "visibility-trigger"},
+  {"t": 25.5, "type": "tap", "key": "option1"},
+  {"t": 26.5, "type": "tap", "key": "notifications-trigger"},
+  {"t": 27.0, "type": "tap", "key": "option1"}
 ]}
 EOF
 
 ZBUGS_RUNE_DIR="$out/app" cargo run --locked --quiet -- --realtime \
-  --script "$out/script.json" --at 26 --size 1180x760 \
+  --script "$out/script.json" --at 29 --size 1180x760 \
   --tree "$out/tree.json" --snap "${ZBUGS_E2E_SNAP:-$out/e2e.png}"
 
 fail=0
@@ -72,5 +80,11 @@ check "the labels" "$(sql "select string_agg(l.name, ',' order by l.name collate
   from \"issueLabel\" il join label l on l.id = il.\"labelID\" where il.\"issueID\" = '$issue'")" \
   "$first_label,$new_label"
 check "closed" "$(sql "select open from issue where id = '$issue'")" f
+check "internal" "$(sql "select visibility from issue where id = '$issue'")" internal
+# Commenting subscribed the user; then they unsubscribed.
+check "unsubscribed" "$(sql "select subscribed from \"issueNotifications\"
+  where \"issueID\" = '$issue' and \"userID\" = '$me'")" f
+check "viewed" "$(sql "select v.viewed >= i.modified from \"viewState\" v
+  join issue i on i.id = v.\"issueID\" where i.id = '$issue' and v.\"userID\" = '$me'")" t
 check "the comment on screen" "$(grep -q "$body edited" "$out/tree.json" && echo yes)" yes
 exit $fail
