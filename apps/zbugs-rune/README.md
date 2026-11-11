@@ -13,8 +13,9 @@ both), and Windows is next.
   executor. The UI sends it commands, and it sends back each query's rows,
   read as the generated row types, through Rune's `AppHandle::update`.
 - `src/view.rs` has the screens, with `rune-kit`'s controls: the filters,
-  the issue list (virtual rows, paged as it scrolls), the issue with its
-  Markdown, comments, and reactions, its assignee and labels, and sheets
+  the issue list (virtual rows, paged as it scrolls, with a dot on issues
+  changed since you looked), the issue with its Markdown, comments, and
+  reactions, its assignee, visibility, notifications, and labels, and sheets
   to create, edit, and delete an issue, edit and delete comments, create
   a label, log in, and set the servers.
 - `src/login.rs` logs in through GitHub in the browser: the API server

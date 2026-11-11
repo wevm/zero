@@ -17,15 +17,16 @@ use sync::{Session, Setup, SyncThread};
 use zbugs_model::args::{
     AddCommentArgs, AddEmojiArgs, CommentsPageArgs, CreateAndAddLabelArgs, CreateIssueArgs,
     EditCommentArgs, IdField, IssueDetailArgs, IssueKey, IssueLabelArgs, IssueListCountArgs,
-    IssueListV2Args, LabelsOrderByNameArgs, ListContextParams, PageDirection, ProjectArgs,
-    RemoveLabelArgs, SortDirection, SortField, UpdateIssueArgs, UsersFilter, UsersForProjectArgs,
+    IssueListV2Args, LabelsOrderByNameArgs, ListContextParams, NotificationType,
+    NotificationUpdateArgs, PageDirection, ProjectArgs, RemoveLabelArgs, SortDirection, SortField,
+    UpdateIssueArgs, UsersFilter, UsersForProjectArgs, ViewStateArgs,
 };
 use zbugs_model::mutators::{
     ADD_COMMENT, ADD_EMOJI_TO_COMMENT, ADD_EMOJI_TO_ISSUE, ADD_LABEL, CREATE_AND_ADD_LABEL,
     CREATE_ISSUE, DELETE_ISSUE, EDIT_COMMENT, REMOVE_COMMENT, REMOVE_EMOJI, REMOVE_LABEL,
-    UPDATE_ISSUE,
+    SET_VIEW_STATE, UPDATE_ISSUE, UPDATE_NOTIFICATION,
 };
-use zbugs_model::schema::{Comment, Emoji, Issue, Label, Project, User};
+use zbugs_model::schema::{Comment, Emoji, Issue, IssueVisibility, Label, Project, User};
 use zbugs_model::{AuthData, Context, MutateRequest, ZERO_PROJECT_NAME, make_id, queries};
 use zero_client::client::ConnectionState;
 use zero_client::ivm::ResultType;
@@ -92,6 +93,8 @@ pub const REACTIONS: [(&str, &str); 8] = [
 pub enum Picker {
     Assignee,
     Labels,
+    Visibility,
+    Notifications,
     /// Reactions to the issue (its ID) or to one of its comments.
     Emoji(String),
 }
@@ -163,6 +166,20 @@ pub struct App {
     pub error: Option<String>,
     /// A GitHub login waiting for the browser.
     pub github_login: Option<login::LoopbackLogin>,
+}
+
+/// The choices of the issue page's Visibility and Notifications menus.
+pub const VISIBILITY: [&str; 2] = ["Public", "Internal"];
+pub const NOTIFICATIONS: [&str; 2] = ["Subscribed", "Unsubscribed"];
+
+/// When the user last looked at the issue (the query has only their row).
+fn viewed(issue: &Issue) -> f64 {
+    issue
+        .view_state
+        .iter()
+        .flatten()
+        .map(|v| v.viewed)
+        .fold(0.0, f64::max)
 }
 
 fn now_ms() -> f64 {
@@ -422,6 +439,7 @@ impl App {
                 }
                 s.detail = issue;
                 s.detail_result = result_type;
+                s.view_later();
             },
         );
         self.watch_comments(id);
@@ -562,6 +580,81 @@ impl App {
     }
 
     /// Opens `picker`, or closes it when it's open.
+    /// Whether the issue changed since the user last looked at it, as the
+    /// web app's list marks it.
+    pub fn is_unread(&self, issue: &Issue) -> bool {
+        self.auth.is_some() && issue.modified > viewed(issue)
+    }
+
+    /// Marks the selected issue viewed once the user has looked at it for a
+    /// second, if it changed since they last did, as the web app does.
+    fn view_later(&mut self) {
+        let Some(issue) = self.detail.as_ref().filter(|i| self.is_unread(i)) else {
+            return;
+        };
+        let (ui, id, modified) = (self.ui.clone(), issue.id.clone(), issue.modified);
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            ui.update(move |s, _| {
+                let Some(issue) = s.detail.as_ref().filter(|i| i.id == id) else {
+                    return;
+                };
+                // Not if another change came in the meantime: its own timer will.
+                if issue.modified == modified && s.is_unread(issue) {
+                    let args = ViewStateArgs {
+                        issue_id: id,
+                        viewed: now_ms(),
+                    };
+                    s.mutate(SET_VIEW_STATE.with(&args));
+                }
+            });
+        });
+    }
+
+    pub fn set_visibility(&mut self, choice: &str) {
+        self.picker = None;
+        let Some(issue) = &self.detail else { return };
+        let visibility = if choice == VISIBILITY[1] {
+            IssueVisibility::Internal
+        } else {
+            IssueVisibility::Public
+        };
+        if visibility == issue.visibility {
+            return;
+        }
+        let args = UpdateIssueArgs {
+            visibility: Some(visibility),
+            ..UpdateIssueArgs::new(issue.id.clone(), now_ms())
+        };
+        self.mutate(UPDATE_ISSUE.with(&args));
+    }
+
+    /// Whether the user gets notifications about the issue.
+    pub fn is_subscribed(&self, issue: &Issue) -> bool {
+        issue
+            .notification_state
+            .as_ref()
+            .is_some_and(|n| n.subscribed)
+    }
+
+    pub fn set_subscribed(&mut self, choice: &str) {
+        self.picker = None;
+        let Some(issue) = &self.detail else { return };
+        // Sent even when it's the current choice, as on the web: an explicit
+        // unsubscribe keeps a later comment or assignment from subscribing.
+        let subscribe = choice == NOTIFICATIONS[0];
+        let args = NotificationUpdateArgs {
+            issue_id: issue.id.clone(),
+            subscribed: if subscribe {
+                NotificationType::Subscribe
+            } else {
+                NotificationType::Unsubscribe
+            },
+            created: now_ms(),
+        };
+        self.mutate(UPDATE_NOTIFICATION.with(&args));
+    }
+
     pub fn toggle_picker(&mut self, picker: Picker) {
         self.picker = (self.picker.as_ref() != Some(&picker)).then_some(picker);
     }

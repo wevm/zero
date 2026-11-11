@@ -14,7 +14,7 @@ use zbugs_model::schema::{Comment, Issue, IssueVisibility, Label};
 use zero_client::client::ConnectionState;
 use zero_client::ivm::ResultType;
 
-use crate::{App, Confirm, Picker, REACTIONS, Sheet, Status};
+use crate::{App, Confirm, NOTIFICATIONS, Picker, REACTIONS, Sheet, Status, VISIBILITY};
 
 /// The rows' estimated height, for the virtual list.
 const ROW: f32 = 58.0;
@@ -49,6 +49,12 @@ pub fn view(s: &App, cx: &mut Cx<App>) -> El {
 
 fn label_text(k: &Kit, t: impl Into<String>) -> El {
     text(t).font(k.ty.small_medium).color(k.c.text_faint)
+}
+
+/// The label of a menu on the issue page, as wide as the others so the
+/// menus line up.
+fn field_label(k: &Kit, t: &str) -> El {
+    label_text(k, t).w(96.0)
 }
 
 /// A dialog's explanation. `Dialog::description` doesn't wrap, so a long
@@ -362,6 +368,25 @@ fn issue_row(s: &App, issue: &Issue, k: &Kit) -> El {
     } else {
         k.c.text_muted
     };
+    let mut title = row().w_full().gap(8.0).center_y().child(
+        text(issue.title.clone())
+            .font(k.ty.ui_medium)
+            .color(title_color)
+            .truncate()
+            .grow(1.0)
+            .min_w(0.0),
+    );
+    // Changed since the user last looked, as the web app's list marks it.
+    if s.is_unread(issue) {
+        title = title.child(
+            el().key("unread")
+                .label("Unread")
+                .w(6.0)
+                .h(6.0)
+                .radius(3.0)
+                .fill(k.c.icon_accent),
+        );
+    }
     let mut r = col()
         .key(issue.id.clone())
         .role("button")
@@ -371,12 +396,7 @@ fn issue_row(s: &App, issue: &Issue, k: &Kit) -> El {
         .py(9.0)
         .gap(3.0)
         .on_press(move |s: &mut App| s.select(id.clone()))
-        .child(
-            text(issue.title.clone())
-                .font(k.ty.ui_medium)
-                .color(title_color)
-                .truncate(),
-        )
+        .child(title)
         .child(meta);
     if selected {
         r = r.fill(k.c.layer_02);
@@ -492,6 +512,37 @@ fn detail(s: &App, k: &Kit, layer: &mut Vec<El>) -> El {
         .child(status);
     if editable {
         column = column.child(assignee_picker(s, issue, k, layer));
+    }
+    // Visibility is the crew's, as on the web.
+    if editable && s.is_crew() {
+        let current = match issue.visibility {
+            IssueVisibility::Public => VISIBILITY[0],
+            IssueVisibility::Internal => VISIBILITY[1],
+        };
+        column = column.child(choice(
+            k,
+            layer,
+            ("Visibility", "visibility"),
+            &VISIBILITY,
+            current,
+            (s.picker == Some(Picker::Visibility), Picker::Visibility),
+            |s, v| s.set_visibility(v),
+        ));
+    }
+    if s.auth.is_some() {
+        let current = NOTIFICATIONS[usize::from(!s.is_subscribed(issue))];
+        column = column.child(choice(
+            k,
+            layer,
+            ("Notifications", "notifications"),
+            &NOTIFICATIONS,
+            current,
+            (
+                s.picker == Some(Picker::Notifications),
+                Picker::Notifications,
+            ),
+            |s, v| s.set_subscribed(v),
+        ));
     }
     let issue_labels = issue.labels.as_deref().unwrap_or_default();
     // Labels are the crew's, as on the web.
@@ -630,7 +681,7 @@ fn assignee_picker(s: &App, issue: &Issue, k: &Kit, layer: &mut Vec<El>) -> El {
     row()
         .gap(8.0)
         .center_y()
-        .child(label_text(k, "Assignee"))
+        .child(field_label(k, "Assignee"))
         .child(
             Select::new("assignee", &options)
                 .width(200.0)
@@ -639,6 +690,32 @@ fn assignee_picker(s: &App, issue: &Issue, k: &Kit, layer: &mut Vec<El>) -> El {
                 .on_toggle(|s: &mut App| s.toggle_picker(Picker::Assignee))
                 .on_close(|s: &mut App| s.picker = None)
                 .on_choose(|s: &mut App, login: &str, _| s.assign(login))
+                .build(k, layer),
+        )
+}
+
+/// A labeled menu of fixed choices on the issue page.
+fn choice(
+    k: &Kit,
+    layer: &mut Vec<El>,
+    (title, key): (&str, &'static str),
+    options: &[&str],
+    current: &str,
+    (open, picker): (bool, Picker),
+    on_choose: fn(&mut App, &str),
+) -> El {
+    row()
+        .gap(8.0)
+        .center_y()
+        .child(field_label(k, title))
+        .child(
+            Select::new(key, options)
+                .width(200.0)
+                .current(Some(current))
+                .open(open)
+                .on_toggle(move |s: &mut App| s.toggle_picker(picker.clone()))
+                .on_close(|s: &mut App| s.picker = None)
+                .on_choose(move |s: &mut App, v: &str, _| on_choose(s, v))
                 .build(k, layer),
         )
 }
