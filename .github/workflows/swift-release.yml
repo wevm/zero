@@ -55,8 +55,9 @@ jobs:
         with:
           # One PR versions both clients: Rust Release (rust-release.yml)
           # has no version job of its own, since two would race for the
-          # same changeset-release/main branch.
-          version-script: pnpm --filter zero-swift version-packages && pnpm --filter zero-rust sync-version
+          # same changeset-release/main branch. The action runs the script
+          # without a shell (@actions/exec), so `&&` needs `sh -c`.
+          version-script: sh -c "pnpm --filter zero-swift version-packages && pnpm --filter zero-rust sync-version"
           commit-message: 'chore: version packages'
           pr-title: 'chore: version packages'
 
