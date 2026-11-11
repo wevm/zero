@@ -247,6 +247,32 @@ fn avatar(user: &User, size: Pixels) -> impl IntoElement {
         .with_fallback(move || div().size(size).into_any_element())
 }
 
+/// `text` as markdown, with its images. TextView measures a block once, so
+/// a block whose image arrives later keeps the empty height it had; keyed
+/// by how many of its images have loaded, it's laid out again as each one
+/// does. `use_asset` starts the loads and redraws the window as they end.
+fn markdown(id: String, text: &str, window: &mut Window, cx: &mut App) -> TextView {
+    let loaded = image_urls(text)
+        .filter(|url| {
+            let url = Resource::Uri(SharedUri::from(url.to_owned()));
+            window.use_asset::<ImgResourceLoader>(&url, cx).is_some()
+        })
+        .count();
+    TextView::markdown(
+        SharedString::from(format!("{id}-{loaded}")),
+        text.to_owned(),
+    )
+}
+
+/// The URLs of the images in markdown `text`: `![alt](url "title")`.
+fn image_urls(text: &str) -> impl Iterator<Item = &str> {
+    text.split("![").skip(1).filter_map(|rest| {
+        let (_, after) = rest.split_once("](")?;
+        let url = after.split([')', ' ']).next()?;
+        url.starts_with("http").then_some(url)
+    })
+}
+
 /// What a reaction is on.
 #[derive(Clone, Copy)]
 enum Subject {
@@ -2130,7 +2156,7 @@ impl ZbugsApp {
             .into_any_element()
     }
 
-    fn render_detail(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_detail(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let empty = |text: &'static str, cx: &mut Context<Self>| {
             div()
                 .size_full()
@@ -2386,9 +2412,11 @@ impl ZbugsApp {
                             .child(l.name.clone())
                     })),
             )
-            .child(TextView::markdown(
-                SharedString::from(format!("description-{}", issue.id)),
-                issue.description.clone(),
+            .child(markdown(
+                format!("description-{}", issue.id),
+                &issue.description,
+                window,
+                cx,
             ))
             .child(self.render_reactions(
                 Subject::Issue,
@@ -2464,10 +2492,7 @@ impl ZbugsApp {
                                 )
                             }),
                     )
-                    .child(TextView::markdown(
-                        SharedString::from(format!("comment-{}", c.id)),
-                        c.body,
-                    ))
+                    .child(markdown(format!("comment-{}", c.id), &c.body, window, cx))
                     .child(reactions)
             }))
             .child(
@@ -2540,7 +2565,7 @@ impl Render for ZbugsApp {
                     .min_w_0()
                     .h_full()
                     .overflow_hidden()
-                    .child(self.render_detail(cx)),
+                    .child(self.render_detail(window, cx)),
             )
     }
 }
