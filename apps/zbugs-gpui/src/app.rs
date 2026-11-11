@@ -311,7 +311,7 @@ impl ZbugsApp {
             cx.notify();
             return false;
         }
-        save_setting("token", token.as_deref());
+        crate::token::save(token.as_deref());
         let (cache_url, api_url) = (self.session.cache_url.clone(), self.session.api_url.clone());
         self.replace_session(Session::new(cache_url, api_url, token, cx), window, cx);
         true

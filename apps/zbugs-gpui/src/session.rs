@@ -46,8 +46,8 @@ pub fn app_dir() -> PathBuf {
     dir
 }
 
-/// A saved setting, overridden by `env` for the launch (`ZBUGS_TOKEN`,
-/// `ZBUGS_CACHE_URL`, `ZBUGS_API_URL`), as UI tests pass them.
+/// A saved setting, overridden by `env` for the launch (`ZBUGS_CACHE_URL`,
+/// `ZBUGS_API_URL`, and `ZBUGS_TOKEN` for the token), as UI tests pass them.
 fn setting(env: &str, file: &str) -> Option<String> {
     std::env::var(env)
         .ok()
@@ -72,7 +72,22 @@ impl Session {
             .unwrap_or_else(|| "http://127.0.0.1:4848".into());
         let api_url =
             setting("ZBUGS_API_URL", "api-url").unwrap_or_else(|| "http://127.0.0.1:5173".into());
-        let token = setting("ZBUGS_TOKEN", "token");
+        let token = match std::env::var("ZBUGS_TOKEN") {
+            Ok(token) => Some(token.trim().to_owned()).filter(|t| !t.is_empty()),
+            Err(_) => {
+                let token = crate::token::load();
+                // An expired one is gone for good, so it's deleted.
+                if token
+                    .as_deref()
+                    .is_some_and(|t| AuthData::from_jwt(t, now_ms() / 1000.0).is_none())
+                {
+                    crate::token::save(None);
+                    None
+                } else {
+                    token
+                }
+            }
+        };
         Session::new(cache_url, api_url, token, cx)
     }
 
