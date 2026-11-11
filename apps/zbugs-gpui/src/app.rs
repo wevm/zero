@@ -374,6 +374,8 @@ impl ZbugsApp {
             InputState::new(window, cx)
                 .placeholder("Search issues")
                 .default_value(filters.text.clone())
+                // Escape clears the search, as in zbugs' list.
+                .clean_on_escape()
         });
         let comment = cx.new(|cx| {
             TextareaState::new(window, cx)
