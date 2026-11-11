@@ -16,36 +16,43 @@ pub const TOO_DEEP: &str = "nesting: JSON deeper than json::MAX_DEPTH is rejecte
 pub fn suites() -> Vec<Suite> {
     vec![
         Suite {
+            variant: None,
             file: "number-format",
             source: Source::Checked,
             check: number_format,
         },
         Suite {
+            variant: None,
             file: "number-parse",
             source: Source::Checked,
             check: number_parse,
         },
         Suite {
+            variant: None,
             file: "json-parse",
             source: Source::Checked,
             check: parse_and_stringify,
         },
         Suite {
+            variant: None,
             file: "sweep-json",
             source: Source::Checked,
             check: parse_and_stringify,
         },
         Suite {
+            variant: None,
             file: "harden-json",
             source: Source::Checked,
             check: parse_and_stringify,
         },
         Suite {
+            variant: None,
             file: "harden-json-fuzz",
             source: Source::Generated,
             check: parse_and_stringify,
         },
         Suite {
+            variant: None,
             file: "json-stringify-strings",
             source: Source::Checked,
             check: stringify_strings,

@@ -18,36 +18,43 @@ use zero_client::schema::{NameMapper, Schema};
 pub fn suites() -> Vec<Suite> {
     vec![
         Suite {
+            variant: None,
             file: "ast",
             source: Source::Checked,
             check: ast,
         },
         Suite {
+            variant: None,
             file: "ast-fuzz",
             source: Source::Generated,
             check: ast,
         },
         Suite {
+            variant: None,
             file: "ast-features",
             source: Source::Checked,
             check: features,
         },
         Suite {
+            variant: None,
             file: "query-internals-hash",
             source: Source::Checked,
             check: query_internals_hash,
         },
         Suite {
+            variant: None,
             file: "name-args-hash",
             source: Source::Checked,
             check: name_args_hash,
         },
         Suite {
+            variant: None,
             file: "sweep-name-args-hash",
             source: Source::Checked,
             check: sweep_name_args_hash,
         },
         Suite {
+            variant: None,
             file: "sweep-query-hash",
             source: Source::Checked,
             check: sweep_query_hash,

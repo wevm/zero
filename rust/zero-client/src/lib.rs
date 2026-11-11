@@ -1,6 +1,6 @@
 //! A native Rust client for [Zero](https://zero.rocicorp.dev).
 //!
-//! This is the start of a port of the JS client (`packages/zero-client`),
+//! A port of the JS client (`packages/zero-client`),
 //! checked against the JS implementation by the conformance vectors in
 //! `packages/zero-conformance`. See `rust/PARITY.md` for what is ported so
 //! far and what is planned.
@@ -15,14 +15,17 @@
 //! - `tokio-transport`: the `tokio_transport` module, a scheduler and a
 //!   WebSocket transport on tokio and `tokio-tungstenite`.
 //! - `tls`: `wss://` for that transport, with rustls on `ring`.
+//! - `sqlite`: SQLite storage, `ZeroStorage::Sqlite`, on the system
+//!   `libsqlite3`; `sqlite-bundled` compiles SQLite in.
 //!
 //! # Storage
 //!
-//! **The client persists nothing across restarts yet**: its storage is
-//! memory only, kept for the life of the process by database name, like JS
-//! `kvStore: 'mem'`. SQLite storage, which keeps synced rows and pending
-//! mutations across restarts, comes behind the opt-in `sqlite` feature, and
-//! an app will be able to bring its own store.
+//! **A default build persists nothing across restarts**: its storage is
+//! [`ZeroStorage::Memory`](client::ZeroStorage::Memory), kept for the life
+//! of the thread by database name, like JS `kvStore: 'mem'`. SQLite storage,
+//! which keeps synced rows and pending mutations across restarts, is behind
+//! the `sqlite` feature, and an app can bring its own store with
+//! [`ZeroStorage::Custom`](client::ZeroStorage::Custom).
 
 pub mod ast;
 pub mod builder;

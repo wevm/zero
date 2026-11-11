@@ -12,26 +12,31 @@ use zero_client::{compare, keys};
 pub fn suites() -> Vec<Suite> {
     vec![
         Suite {
+            variant: None,
             file: "compare-values",
             source: Source::Checked,
             check: compare_values,
         },
         Suite {
+            variant: None,
             file: "primary-key-string",
             source: Source::Checked,
             check: primary_key_string,
         },
         Suite {
+            variant: None,
             file: "aggregate-row-key",
             source: Source::Checked,
             check: aggregate_row_key,
         },
         Suite {
+            variant: None,
             file: "like",
             source: Source::Checked,
             check: like,
         },
         Suite {
+            variant: None,
             file: "ttl",
             source: Source::Checked,
             check: ttl,

@@ -1,131 +1,66 @@
-//! The database a client keeps its replica in: its client groups, clients,
-//! and each group's snapshot and pending mutations (what Replicache keeps in
-//! IndexedDB, as zero-swift's `ReplicaDatabase` keeps it). A memory
-//! database lives for the thread and is shared by name, so a client started
-//! again on the same name finds what the last one left, as JS's `kvStore:
-//! 'mem'` does.
+//! The database a client keeps its replica in (zero-swift's
+//! `ReplicaDatabase`): the client groups and clients, kept in memory, and
+//! each group's snapshot and pending mutations, kept in memory too for
+//! [`ZeroStorage::Memory`] and written to a [`StoredDatabase`] otherwise.
+//!
+//! Databases are shared by location and name for the thread, so a client
+//! started again on the same name finds what the last one left (JS's
+//! `kvStore: 'mem'` for memory), and two clients of one group (two windows)
+//! share one open database.
 
-use super::replica_store::KvMap;
-use super::replica_store::compare_cookies;
+use super::replica_store::{KvMap, compare_cookies};
+pub(crate) use super::storage::{
+    AggregateWrites, ClientGroupRecord, ClientIdPair, ClientRecord, StorageOp, StoredMutation,
+};
+use super::storage::{
+    DroppedDatabases, LoadError, StorageBackend, StorageFailure, StoredDatabase, StoredGroup,
+    ZeroStorage,
+};
 use crate::hash::xxhash32;
 use crate::json::{self, Value};
-use crate::strings;
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 
-/// A client group: the clients that share a replica because they register
-/// the same mutators (`ClientGroup`).
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct ClientGroupRecord {
-    pub(crate) id: String,
-    pub(crate) mutator_names: Vec<String>,
-    /// The server lost the group, so no new client joins it.
-    pub(crate) disabled: bool,
-}
-
-/// A client that used the database (`ClientV6`).
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct ClientRecord {
-    pub(crate) id: String,
-    pub(crate) client_group_id: String,
-    /// When the client last showed it was running, in ms since 1970.
-    pub(crate) heartbeat: f64,
-}
-
-/// A deleted client the server may not know about yet.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ClientIdPair {
-    pub(crate) client_group_id: String,
-    pub(crate) client_id: String,
-}
-
-impl ClientIdPair {
-    /// `normalizeDeletedClients`: sorted by group then client, deduplicated.
-    fn normalize(mut pairs: Vec<ClientIdPair>) -> Vec<ClientIdPair> {
-        pairs.sort_by(|a, b| {
-            strings::utf16(&a.client_group_id, &b.client_group_id)
-                .then_with(|| strings::utf16(&a.client_id, &b.client_id))
-        });
-        pairs.dedup();
-        pairs
-    }
-}
-
-/// The synced aggregate rows (`a/` keys) a mutation's last run wrote, with
-/// their values after it (`None` for deleted).
-pub(crate) type AggregateWrites = Vec<(String, Option<Value>)>;
-
-/// A mutation that ran on a client and the server has not confirmed.
-#[derive(Clone, Debug)]
-pub(crate) struct StoredMutation {
-    pub(crate) client_id: String,
-    pub(crate) id: f64,
-    pub(crate) name: String,
-    pub(crate) args: Value,
-    pub(crate) timestamp: f64,
-    /// JS persists these in the mutation's commit; the client runs the
-    /// mutation again at launch, before any query registers the aggregates
-    /// it moves, and puts these back.
-    pub(crate) aggregate_writes: AggregateWrites,
-}
-
-/// What a client group keeps: the last server snapshot and the mutations
-/// not yet in it.
+/// What a client group holds, as the client reads it.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct StoredGroup {
+pub(crate) struct GroupData {
     pub(crate) entries: KvMap,
     pub(crate) cookie: Value,
     pub(crate) last_mutation_ids: BTreeMap<String, f64>,
     pub(crate) mutations: Vec<StoredMutation>,
 }
 
-/// A change to the database, applied in order.
-pub(crate) enum StorageOp {
-    PutGroup(ClientGroupRecord),
-    /// Deletes the group with its snapshot and mutations.
-    DeleteGroup(String),
-    PutClient(ClientRecord),
-    DeleteClients(Vec<String>),
-    SetDeletedClients(Vec<ClientIdPair>),
-    /// The snapshot after a poke: the keys it changed (`None` for deleted),
-    /// whether it cleared every key first, and its cookie and last mutation
-    /// IDs. Drops the mutations the IDs confirm.
-    UpdateSnapshot {
-        group: String,
-        changes: Vec<(String, Option<Value>)>,
-        cleared: bool,
-        cookie: Value,
-        last_mutation_ids: BTreeMap<String, f64>,
-    },
-    AddMutation {
-        group: String,
-        mutation: StoredMutation,
-    },
-    /// What a rebase of a pending mutation wrote to synced aggregate rows.
-    SetAggregateWrites {
-        group: String,
-        client_id: String,
-        id: f64,
-        writes: AggregateWrites,
-    },
-    /// Drops the mutations the IDs confirm, keeping the snapshot.
-    DeleteConfirmedMutations {
-        group: String,
-        last_mutation_ids: BTreeMap<String, f64>,
-    },
+impl From<StoredGroup> for GroupData {
+    fn from(g: StoredGroup) -> Self {
+        GroupData {
+            entries: g.entries.into(),
+            cookie: g.cookie,
+            last_mutation_ids: g.last_mutation_ids,
+            mutations: g.mutations,
+        }
+    }
 }
 
 type OnDelete = Rc<dyn Fn(&str)>;
+type FailureListener = Rc<dyn Fn(&StorageFailure)>;
 
 pub(crate) struct ReplicaDatabase {
     /// The JS name of the database (`rep:<name>:<format>:<schemaVersion>`).
     pub(crate) name: String,
+    /// The location and name it is shared by.
+    key: String,
     groups: RefCell<Vec<ClientGroupRecord>>,
     clients: RefCell<Vec<ClientRecord>>,
     deleted_clients: RefCell<Vec<ClientIdPair>>,
-    pub(crate) profile_id: String,
-    data: RefCell<HashMap<String, StoredGroup>>,
+    profile_id: RefCell<String>,
+    /// The groups' data, for a memory database.
+    memory_groups: Option<RefCell<HashMap<String, GroupData>>>,
+    store: Option<(Rc<dyn StorageBackend>, Box<dyn StoredDatabase>)>,
+    /// Set once the store failed; nothing more is written.
+    failure: RefCell<Option<StorageFailure>>,
+    /// The clients that hear about the first write failure.
+    failure_listeners: RefCell<Vec<(String, FailureListener)>>,
     dropped: Cell<bool>,
     users: Cell<u32>,
     /// The clients running on this database, in the order they started
@@ -139,41 +74,248 @@ thread_local! {
     static OPEN: RefCell<HashMap<String, Rc<ReplicaDatabase>>> = RefCell::default();
     /// The profile ID of memory databases, one per process as in JS.
     static MEMORY_PROFILE_ID: RefCell<Option<String>> = const { RefCell::new(None) };
+    /// The memory databases clients fell back to after their store failed
+    /// (`fellBack` in `mem-fallback-store.ts`), with the locations they
+    /// stand in for. Drops from those locations drop these too.
+    static FELL_BACK: RefCell<HashMap<String, HashSet<String>>> = RefCell::default();
+}
+
+fn memory_key(name: &str) -> String {
+    format!("memory:{name}")
+}
+
+fn store_key(location: &str, name: &str) -> String {
+    format!("{location}\0{name}")
+}
+
+/// The backend of `storage`; `None` for memory.
+fn backend(storage: &ZeroStorage) -> Result<Option<Rc<dyn StorageBackend>>, StorageFailure> {
+    match storage {
+        ZeroStorage::Memory => Ok(None),
+        #[cfg(feature = "sqlite")]
+        ZeroStorage::Sqlite { directory } => Ok(Some(Rc::new(super::sqlite::SqliteBackend::new(
+            directory.clone(),
+        )?))),
+        ZeroStorage::Custom(b) => Ok(Some(b.clone())),
+    }
 }
 
 impl ReplicaDatabase {
-    /// The memory database named `name`, shared by name for the thread.
+    fn new(
+        name: &str,
+        key: String,
+        store: Option<(Rc<dyn StorageBackend>, Box<dyn StoredDatabase>)>,
+    ) -> ReplicaDatabase {
+        ReplicaDatabase {
+            name: name.to_owned(),
+            key,
+            groups: RefCell::default(),
+            clients: RefCell::default(),
+            deleted_clients: RefCell::default(),
+            profile_id: RefCell::default(),
+            memory_groups: store.is_none().then(RefCell::default),
+            store,
+            failure: RefCell::default(),
+            failure_listeners: RefCell::default(),
+            dropped: Cell::new(false),
+            users: Cell::new(1),
+            running: RefCell::default(),
+            snapshot_cookies: RefCell::default(),
+        }
+    }
+
+    /// Opens the database named `name` in `storage`, or the one already
+    /// open on this thread. A database that can't be opened is replaced by
+    /// the memory one of its name, and the failure returned. One whose data
+    /// doesn't decode is deleted and a new one started, and `corrupt` set.
+    pub(crate) fn open(
+        storage: &ZeroStorage,
+        name: &str,
+    ) -> (Rc<ReplicaDatabase>, Option<StorageFailure>, bool) {
+        let backend = match backend(storage) {
+            Ok(None) => return (Self::memory(name), None, false),
+            Ok(Some(b)) => b,
+            Err(f) => return (Self::fallback(name, storage), Some(f), false),
+        };
+        let key = store_key(&backend.location(), name);
+        if let Some(db) = OPEN.with(|o| o.borrow().get(&key).cloned()) {
+            db.users.set(db.users.get() + 1);
+            return (db, None, false);
+        }
+        let mut corrupt = false;
+        let loaded = match Self::load(&backend, name, &key) {
+            Err(LoadError::Corrupt(_)) => {
+                corrupt = true;
+                Self::load(&backend, name, &key)
+            }
+            r => r,
+        };
+        match loaded {
+            Ok(db) => {
+                let db = Rc::new(db);
+                OPEN.with(|o| o.borrow_mut().insert(key, db.clone()));
+                (db, None, corrupt)
+            }
+            Err(LoadError::Failure(f)) => (Self::fallback(name, storage), Some(f), false),
+            Err(LoadError::Corrupt(m)) => (
+                Self::fallback(name, storage),
+                Some(StorageFailure::new(
+                    super::storage::StorageFailureKind::IoError,
+                    m,
+                )),
+                false,
+            ),
+        }
+    }
+
+    /// Opens and reads the database. One whose data doesn't decode is
+    /// deleted.
+    fn load(
+        backend: &Rc<dyn StorageBackend>,
+        name: &str,
+        key: &str,
+    ) -> Result<ReplicaDatabase, LoadError> {
+        let store = backend.open(name)?;
+        let clients = match store.load() {
+            Ok(c) => c,
+            Err(e) => {
+                if matches!(e, LoadError::Corrupt(_)) {
+                    store.drop_database();
+                } else {
+                    let _ = store.close();
+                }
+                return Err(e);
+            }
+        };
+        let db = ReplicaDatabase::new(name, key.to_owned(), Some((backend.clone(), store)));
+        *db.groups.borrow_mut() = clients.groups;
+        *db.clients.borrow_mut() = clients.clients;
+        *db.deleted_clients.borrow_mut() = ClientIdPair::normalize(clients.deleted_clients);
+        *db.profile_id.borrow_mut() = clients.profile_id;
+        Ok(db)
+    }
+
+    /// The memory database named `name`, which lives for the thread and is
+    /// shared by name: [`ZeroStorage::Memory`] and the fallback of a
+    /// database that fails (`MemStore`).
     pub(crate) fn memory(name: &str) -> Rc<ReplicaDatabase> {
+        let key = memory_key(name);
         OPEN.with(|open| {
-            if let Some(db) = open.borrow().get(name) {
+            if let Some(db) = open.borrow().get(&key) {
                 db.users.set(db.users.get() + 1);
                 return db.clone();
             }
-            let profile_id = MEMORY_PROFILE_ID.with(|p| {
+            let db = ReplicaDatabase::new(name, key.clone(), None);
+            *db.profile_id.borrow_mut() = MEMORY_PROFILE_ID.with(|p| {
                 p.borrow_mut()
                     .get_or_insert_with(|| format!("p{}", super::engine::random_id()))
                     .clone()
             });
-            let db = Rc::new(ReplicaDatabase {
-                name: name.to_owned(),
-                groups: RefCell::default(),
-                clients: RefCell::default(),
-                deleted_clients: RefCell::default(),
-                profile_id,
-                data: RefCell::default(),
-                dropped: Cell::new(false),
-                users: Cell::new(1),
-                running: RefCell::default(),
-                snapshot_cookies: RefCell::default(),
-            });
-            open.borrow_mut().insert(name.to_owned(), db.clone());
+            let db = Rc::new(db);
+            open.borrow_mut().insert(key, db.clone());
             db
         })
     }
 
-    /// Gives up a user's hold. Memory databases live on.
+    /// The memory database a client whose database in `storage` failed
+    /// runs on.
+    pub(crate) fn fallback(name: &str, storage: &ZeroStorage) -> Rc<ReplicaDatabase> {
+        let location = match storage {
+            ZeroStorage::Memory => None,
+            #[cfg(feature = "sqlite")]
+            ZeroStorage::Sqlite { directory } => Some(super::sqlite::SqliteBackend::location_of(
+                directory.as_deref(),
+            )),
+            ZeroStorage::Custom(b) => Some(b.location()),
+        };
+        if let Some(location) = location {
+            FELL_BACK.with(|f| {
+                f.borrow_mut()
+                    .entry(name.to_owned())
+                    .or_default()
+                    .insert(location)
+            });
+        }
+        Self::memory(name)
+    }
+
+    pub(crate) fn profile_id(&self) -> String {
+        self.profile_id.borrow().clone()
+    }
+
+    /// Gives up a user's hold. The last user of a stored database closes it
+    /// once its writes are done; memory databases live on.
     pub(crate) fn release(&self) {
-        self.users.set(self.users.get().saturating_sub(1));
+        let users = self.users.get().saturating_sub(1);
+        self.users.set(users);
+        let Some((_, store)) = &self.store else {
+            return;
+        };
+        if users > 0 {
+            return;
+        }
+        self.unregister();
+        if self.dropped.get() {
+            return;
+        }
+        if let Err(f) = store.close() {
+            self.fail(f);
+        }
+    }
+
+    /// Takes this database out of the shared ones, unless another of its
+    /// name took its place.
+    fn unregister(&self) {
+        OPEN.with(|open| {
+            let mut open = open.borrow_mut();
+            if open
+                .get(&self.key)
+                .is_some_and(|db| std::ptr::eq(Rc::as_ptr(db), self))
+            {
+                open.remove(&self.key);
+            }
+        });
+    }
+
+    /// Waits for the writes so far. A failure to write them is a storage
+    /// failure.
+    pub(crate) fn flush(&self) {
+        if let Some((_, store)) = &self.store
+            && self.failure.borrow().is_none()
+            && !self.dropped.get()
+            && let Err(f) = store.flush()
+        {
+            self.fail(f);
+        }
+    }
+
+    /// Tells `client_id` about the first storage failure, until removed.
+    pub(crate) fn add_failure_listener(&self, client_id: &str, listener: FailureListener) {
+        self.failure_listeners
+            .borrow_mut()
+            .push((client_id.to_owned(), listener));
+    }
+
+    pub(crate) fn remove_failure_listener(&self, client_id: &str) {
+        self.failure_listeners
+            .borrow_mut()
+            .retain(|(c, _)| c != client_id);
+    }
+
+    fn fail(&self, f: StorageFailure) {
+        if self.failure.borrow().is_some() {
+            return;
+        }
+        *self.failure.borrow_mut() = Some(f.clone());
+        let listeners: Vec<FailureListener> = self
+            .failure_listeners
+            .borrow()
+            .iter()
+            .map(|(_, l)| l.clone())
+            .collect();
+        for l in listeners {
+            l(&f);
+        }
     }
 
     pub(crate) fn deleted_clients(&self) -> Vec<ClientIdPair> {
@@ -225,14 +367,29 @@ impl ReplicaDatabase {
             .collect()
     }
 
-    /// Applies `ops` in order.
+    /// Applies `ops` in order: to the clients in memory now, and to the
+    /// groups' data in memory or in the store.
     pub(crate) fn apply(&self, ops: Vec<StorageOp>) {
         if self.dropped.get() {
             return;
         }
-        for op in ops {
-            let op = self.skipping_older_snapshot(op);
-            self.apply_op(op);
+        let ops: Vec<StorageOp> = ops
+            .into_iter()
+            .map(|op| self.skipping_older_snapshot(op))
+            .collect();
+        for op in &ops {
+            self.apply_to_mirror(op);
+        }
+        if let Some(memory) = &self.memory_groups {
+            let mut memory = memory.borrow_mut();
+            for op in ops {
+                apply_to_memory(&mut memory, op);
+            }
+        } else if let Some((_, store)) = &self.store
+            && self.failure.borrow().is_none()
+            && let Err(f) = store.write(&ops)
+        {
+            self.fail(f);
         }
     }
 
@@ -269,103 +426,72 @@ impl ReplicaDatabase {
         }
     }
 
-    fn apply_op(&self, op: StorageOp) {
-        let confirmed = |m: &StoredMutation, lmids: &BTreeMap<String, f64>| {
-            m.id <= lmids.get(&m.client_id).copied().unwrap_or(0.0)
-        };
+    fn apply_to_mirror(&self, op: &StorageOp) {
         match op {
             StorageOp::PutGroup(g) => {
-                self.data.borrow_mut().entry(g.id.clone()).or_default();
                 let mut groups = self.groups.borrow_mut();
                 match groups.iter_mut().find(|x| x.id == g.id) {
-                    Some(x) => *x = g,
-                    None => groups.push(g),
+                    Some(x) => *x = g.clone(),
+                    None => groups.push(g.clone()),
                 }
             }
             StorageOp::DeleteGroup(id) => {
-                self.groups.borrow_mut().retain(|g| g.id != id);
-                self.snapshot_cookies.borrow_mut().remove(&id);
-                self.data.borrow_mut().remove(&id);
+                self.groups.borrow_mut().retain(|g| g.id != *id);
+                self.snapshot_cookies.borrow_mut().remove(id);
             }
             StorageOp::PutClient(c) => {
                 let mut clients = self.clients.borrow_mut();
                 match clients.iter_mut().find(|x| x.id == c.id) {
-                    Some(x) => *x = c,
-                    None => clients.push(c),
+                    Some(x) => *x = c.clone(),
+                    None => clients.push(c.clone()),
                 }
             }
             StorageOp::DeleteClients(ids) => {
-                let ids: HashSet<String> = ids.into_iter().collect();
+                let ids: HashSet<&String> = ids.iter().collect();
                 self.clients.borrow_mut().retain(|c| !ids.contains(&c.id));
             }
-            StorageOp::SetDeletedClients(pairs) => *self.deleted_clients.borrow_mut() = pairs,
-            StorageOp::UpdateSnapshot {
-                group,
-                changes,
-                cleared,
-                cookie,
-                last_mutation_ids,
-            } => {
-                let mut data = self.data.borrow_mut();
-                let g = data.entry(group).or_default();
-                if cleared {
-                    g.entries.clear();
-                }
-                for (k, v) in changes {
-                    match v {
-                        Some(v) => g.entries.set(k, v),
-                        None => {
-                            g.entries.delete(&k);
-                        }
-                    }
-                }
-                g.cookie = cookie;
-                g.mutations.retain(|m| !confirmed(m, &last_mutation_ids));
-                g.last_mutation_ids = last_mutation_ids;
+            StorageOp::SetDeletedClients(pairs) => {
+                *self.deleted_clients.borrow_mut() = pairs.clone()
             }
-            StorageOp::AddMutation { group, mutation } => {
-                self.data
-                    .borrow_mut()
-                    .entry(group)
-                    .or_default()
-                    .mutations
-                    .push(mutation);
+            StorageOp::UpdateSnapshot { .. }
+            | StorageOp::AddMutation { .. }
+            | StorageOp::SetAggregateWrites { .. }
+            | StorageOp::DeleteConfirmedMutations { .. } => {}
+        }
+    }
+
+    /// The snapshot and pending mutations of group `id`.
+    fn load_group(&self, id: &str) -> Result<GroupData, LoadError> {
+        if let Some(memory) = &self.memory_groups {
+            return Ok(memory.borrow().get(id).cloned().unwrap_or_default());
+        }
+        let Some((_, store)) = &self.store else {
+            return Ok(GroupData::default());
+        };
+        match store.load_group(id) {
+            Ok(g) => Ok(g.into()),
+            Err(LoadError::Failure(f)) => {
+                self.fail(f.clone());
+                Err(LoadError::Failure(f))
             }
-            StorageOp::SetAggregateWrites {
-                group,
-                client_id,
-                id,
-                writes,
-            } => {
-                if let Some(m) = self.data.borrow_mut().get_mut(&group).and_then(|g| {
-                    g.mutations
-                        .iter_mut()
-                        .find(|m| m.client_id == client_id && m.id == id)
-                }) {
-                    m.aggregate_writes = writes;
-                }
-            }
-            StorageOp::DeleteConfirmedMutations {
-                group,
-                last_mutation_ids,
-            } => {
-                if let Some(g) = self.data.borrow_mut().get_mut(&group) {
-                    g.mutations.retain(|m| !confirmed(m, &last_mutation_ids));
-                }
-            }
+            Err(e) => Err(e),
         }
     }
 
     /// Adds client `client_id` to the newest client group that registers
     /// the same mutators and isn't disabled, or to a new empty one
     /// (`initClientV6` with client group forking off). Returns the group
-    /// and what it holds.
+    /// and what it holds. Fails, adding nothing, when the store failed or
+    /// the group can't be read or doesn't decode.
     pub(crate) fn init_client(
         &self,
         client_id: &str,
         mutator_names: &[String],
         now: f64,
-    ) -> (String, StoredGroup) {
+    ) -> Result<(String, GroupData), LoadError> {
+        if let Some(f) = self.failure.borrow().clone() {
+            return Err(LoadError::Failure(f));
+        }
         let names: HashSet<&String> = mutator_names.iter().collect();
         let mut ops = Vec::new();
         let matched = self
@@ -380,7 +506,7 @@ impl ReplicaDatabase {
             .map(|g| g.id.clone());
         let (group_id, group) = match matched {
             Some(id) => {
-                let group = self.data.borrow().get(&id).cloned().unwrap_or_default();
+                let group = self.load_group(&id)?;
                 self.snapshot_cookies
                     .borrow_mut()
                     .insert(id.clone(), group.cookie.clone());
@@ -393,7 +519,7 @@ impl ReplicaDatabase {
                     mutator_names: mutator_names.to_vec(),
                     disabled: false,
                 }));
-                (id, StoredGroup::default())
+                (id, GroupData::default())
             }
         };
         ops.push(StorageOp::PutClient(ClientRecord {
@@ -402,7 +528,7 @@ impl ReplicaDatabase {
             heartbeat: now,
         }));
         self.apply(ops);
-        (group_id, group)
+        Ok((group_id, group))
     }
 
     /// Records that client `client_id` is running (`writeHeartbeat`). False
@@ -512,20 +638,100 @@ impl ReplicaDatabase {
     }
 
     /// Deletes the database (`dropDatabase`). The next client to open it
-    /// starts empty; this one's later writes are dropped.
+    /// starts empty; this one's later writes are dropped. Dropping it again
+    /// does nothing: the store may be a new database by then.
     pub(crate) fn drop_database(&self) {
         if self.dropped.replace(true) {
             return;
         }
-        OPEN.with(|open| {
-            let mut open = open.borrow_mut();
-            if open
-                .get(&self.name)
-                .is_some_and(|db| std::ptr::eq(Rc::as_ptr(db), self))
-            {
-                open.remove(&self.name);
-            }
+        let replaced = OPEN.with(|open| {
+            open.borrow()
+                .get(&self.key)
+                .is_some_and(|db| !std::ptr::eq(Rc::as_ptr(db), self))
         });
+        if let Some((_, store)) = &self.store {
+            // Another database of this name opened since owns the store.
+            if replaced {
+                let _ = store.close();
+                return;
+            }
+            store.drop_database();
+        }
+        self.unregister();
+    }
+
+    /// Deletes, in the background, the other databases of the store no
+    /// client used for `max_age` ms (`collectIDBDatabases`).
+    pub(crate) fn collect_databases(&self, now: f64, max_age: f64) {
+        if let Some((backend, _)) = &self.store
+            && self.failure.borrow().is_none()
+            && !self.dropped.get()
+        {
+            backend.collect_databases(&self.name, now, max_age);
+        }
+    }
+
+    /// Deletes the databases in `storage` whose Replicache name `matches`
+    /// (`dropMatchingDatabases`): those open on this thread, whose clients'
+    /// later writes are dropped, and the others.
+    pub(crate) fn drop_matching(
+        storage: &ZeroStorage,
+        matches: &dyn Fn(&str) -> bool,
+    ) -> DroppedDatabases {
+        let mut result = DroppedDatabases::default();
+        let backend = match backend(storage) {
+            Ok(b) => b,
+            Err(f) => {
+                result.errors.push(f);
+                return result;
+            }
+        };
+        let prefix = match &backend {
+            None => "memory:".to_owned(),
+            Some(b) => format!("{}\0", b.location()),
+        };
+        let open: Vec<Rc<ReplicaDatabase>> = OPEN.with(|o| {
+            o.borrow()
+                .iter()
+                .filter(|(k, db)| k.starts_with(&prefix) && matches(&replicache_name(&db.name)))
+                .map(|(_, db)| db.clone())
+                .collect()
+        });
+        for db in open {
+            db.drop_database();
+            result.deleted.push(db.name.clone());
+        }
+        let Some(backend) = backend else {
+            return result;
+        };
+        // The memory databases clients of this location fell back to go
+        // too (`dropTargets`); those of memory clients stay.
+        let location = backend.location();
+        let fell_back: Vec<String> = FELL_BACK.with(|f| {
+            let mut f = f.borrow_mut();
+            let names: Vec<String> = f
+                .iter()
+                .filter(|(name, l)| l.contains(&location) && matches(&replicache_name(name)))
+                .map(|(name, _)| name.clone())
+                .collect();
+            for n in &names {
+                f.remove(n);
+            }
+            names
+        });
+        for name in fell_back {
+            let db = OPEN.with(|o| o.borrow().get(&memory_key(&name)).cloned());
+            if let Some(db) = db {
+                db.drop_database();
+                if !result.deleted.contains(&name) {
+                    result.deleted.push(name);
+                }
+            }
+        }
+        let files = backend.drop_databases(&|name| matches(&replicache_name(name)));
+        result.deleted.extend(files.deleted);
+        result.errors.extend(files.errors);
+        result
     }
 
     /// The database name of a client (`makeIDBName` in `zero.ts`).
@@ -552,8 +758,82 @@ impl ReplicaDatabase {
     }
 }
 
+fn apply_to_memory(memory: &mut HashMap<String, GroupData>, op: StorageOp) {
+    let confirmed = |m: &StoredMutation, lmids: &BTreeMap<String, f64>| {
+        m.id <= lmids.get(&m.client_id).copied().unwrap_or(0.0)
+    };
+    match op {
+        StorageOp::PutGroup(g) => {
+            memory.entry(g.id).or_default();
+        }
+        StorageOp::DeleteGroup(id) => {
+            memory.remove(&id);
+        }
+        StorageOp::UpdateSnapshot {
+            group,
+            changes,
+            cleared,
+            cookie,
+            last_mutation_ids,
+        } => {
+            let g = memory.entry(group).or_default();
+            if cleared {
+                g.entries.clear();
+            }
+            for (k, v) in changes {
+                match v {
+                    Some(v) => g.entries.set(k, v),
+                    None => {
+                        g.entries.delete(&k);
+                    }
+                }
+            }
+            g.cookie = cookie;
+            g.mutations.retain(|m| !confirmed(m, &last_mutation_ids));
+            g.last_mutation_ids = last_mutation_ids;
+        }
+        StorageOp::AddMutation { group, mutation } => {
+            memory.entry(group).or_default().mutations.push(mutation);
+        }
+        StorageOp::SetAggregateWrites {
+            group,
+            client_id,
+            id,
+            writes,
+        } => {
+            if let Some(m) = memory.get_mut(&group).and_then(|g| {
+                g.mutations
+                    .iter_mut()
+                    .find(|m| m.client_id == client_id && m.id == id)
+            }) {
+                m.aggregate_writes = writes;
+            }
+        }
+        StorageOp::DeleteConfirmedMutations {
+            group,
+            last_mutation_ids,
+        } => {
+            if let Some(g) = memory.get_mut(&group) {
+                g.mutations.retain(|m| !confirmed(m, &last_mutation_ids));
+            }
+        }
+        StorageOp::PutClient(_) | StorageOp::DeleteClients(_) | StorageOp::SetDeletedClients(_) => {
+        }
+    }
+}
+
+/// The Replicache name a database name holds (`replicacheName`):
+/// `zero-<userID>-<hash>`, from `rep:<name>:<format>:<schemaVersion>`.
+pub(crate) fn replicache_name(name: &str) -> String {
+    let rest = name.strip_prefix("rep:").unwrap_or(name);
+    let mut parts: Vec<&str> = rest.split(':').collect();
+    let n = parts.len().saturating_sub(2);
+    parts.truncate(n);
+    parts.join(":")
+}
+
 /// Replicache's `FormatVersion.Latest`.
-const FORMAT_VERSION: u32 = 7;
+pub(crate) const FORMAT_VERSION: u32 = 7;
 /// `STORAGE_VERSION` in `packages/zero-client/src/client/storage-version.ts`.
 const STORAGE_VERSION: u32 = 52;
 

@@ -13,6 +13,12 @@ use std::rc::Rc;
 #[derive(Clone, Default, Debug, PartialEq)]
 pub(crate) struct KvMap(Rc<BTreeMap<String, Value>>);
 
+impl From<BTreeMap<String, Value>> for KvMap {
+    fn from(map: BTreeMap<String, Value>) -> Self {
+        KvMap(Rc::new(map))
+    }
+}
+
 impl KvMap {
     pub(crate) fn get(&self, key: &str) -> Option<&Value> {
         self.0.get(key)

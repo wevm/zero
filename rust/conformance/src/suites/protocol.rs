@@ -15,61 +15,73 @@ use zero_client::strings;
 pub fn suites() -> Vec<Suite> {
     vec![
         Suite {
+            variant: None,
             file: "protocol-downstream",
             source: Source::Checked,
             check: check::<Downstream>,
         },
         Suite {
+            variant: None,
             file: "protocol-downstream-fuzz",
             source: Source::Generated,
             check: check::<Downstream>,
         },
         Suite {
+            variant: None,
             file: "protocol-upstream",
             source: Source::Checked,
             check: check::<Upstream>,
         },
         Suite {
+            variant: None,
             file: "protocol-upstream-fuzz",
             source: Source::Generated,
             check: check::<Upstream>,
         },
         Suite {
+            variant: None,
             file: "protocol-poke-chunks",
             source: Source::Checked,
             check: poke_chunks,
         },
         Suite {
+            variant: None,
             file: "protocol-poke-chunks-fuzz",
             source: Source::Generated,
             check: poke_chunks,
         },
         Suite {
+            variant: None,
             file: "harden-poke-bytes",
             source: Source::Generated,
             check: poke_bytes,
         },
         Suite {
+            variant: None,
             file: "harden-downstream-text",
             source: Source::Generated,
             check: downstream_text,
         },
         Suite {
+            variant: None,
             file: "protocol-sec-protocols",
             source: Source::Checked,
             check: sec_protocols,
         },
         Suite {
+            variant: None,
             file: "protocol-client-schema",
             source: Source::Checked,
             check: client_schema,
         },
         Suite {
+            variant: None,
             file: "sweep-downstream",
             source: Source::Checked,
             check: sweep_downstream,
         },
         Suite {
+            variant: None,
             file: "meta",
             source: Source::Checked,
             check: meta,

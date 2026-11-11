@@ -8,8 +8,10 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+# The client scenarios run on SQLite storage too; bundled, so the runner
+# needs no system `libsqlite3`.
 [dependencies]
-zero-client.workspace = true
+zero-client = { workspace = true, features = ["sqlite-bundled"] }
 
 [lints]
 workspace = true

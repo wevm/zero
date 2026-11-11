@@ -18,6 +18,7 @@ use super::replica_store::{
     compare_cookies, diff_all, diff_keys, with_prefix,
 };
 use super::socket::{SocketConnection, SocketEvents, SocketFactory, SocketMessage};
+use super::storage::{LoadError, StorageFailure, ZeroStorage};
 use super::transaction::{Reason, Transaction};
 use super::{
     ApplicationError, ClientErrorKind, ConnectionError, ConnectionStatus, ConnectionTransition,
@@ -59,6 +60,10 @@ const HEARTBEAT_INTERVAL_MS: f64 = 60_000.0;
 const GC_INTERVAL_MS: f64 = 5.0 * 60_000.0;
 /// `CLIENT_MAX_INACTIVE_TIME`.
 const CLIENT_MAX_INACTIVE_MS: f64 = 24.0 * 60.0 * 60_000.0;
+/// `INITIAL_COLLECT_IDB_DELAY`.
+const INITIAL_COLLECT_DATABASES_DELAY_MS: f64 = 5.0 * 60_000.0;
+/// `COLLECT_IDB_INTERVAL`.
+const COLLECT_DATABASES_INTERVAL_MS: f64 = 12.0 * 60.0 * 60_000.0;
 /// `PERSIST_IDLE_TIMEOUT_MS` and `PERSIST_THROTTLE_MS`.
 const PERSIST_IDLE_TIMEOUT_MS: f64 = 1000.0;
 const PERSIST_THROTTLE_MS: f64 = 500.0;
@@ -178,6 +183,12 @@ pub struct ZeroOptions {
     /// The server no longer has the client's state; the local store was
     /// reset.
     pub on_client_state_not_found: Option<Rc<dyn Fn()>>,
+    /// Where the client keeps its replica. Defaults to
+    /// [`ZeroStorage::Memory`], which keeps nothing across restarts.
+    pub storage: ZeroStorage,
+    /// The local store failed, so the client runs on what it has in memory
+    /// and persists nothing more (`onStorageFailure`). Called once.
+    pub on_storage_failure: Option<StorageFailureHandler>,
     /// The least severe messages logged.
     pub log_level: LogLevel,
     /// Where messages are logged. Defaults to [`StderrLogSink`].
@@ -206,12 +217,17 @@ impl Default for ZeroOptions {
             query_headers: None,
             on_update_needed: None,
             on_client_state_not_found: None,
+            storage: ZeroStorage::Memory,
+            on_storage_failure: None,
             log_level: LogLevel::Warn,
             log_sink: None,
             hidden_disconnect_delay_ms: 0.0,
         }
     }
 }
+
+/// Called when the local store fails (`onStorageFailure`).
+pub type StorageFailureHandler = Rc<dyn Fn(&StorageFailure)>;
 
 /// Called when the server needs a newer client (`onUpdateNeeded`).
 pub type UpdateNeededHandler = Rc<dyn Fn(&UpdateNeededReason)>;
@@ -476,6 +492,7 @@ pub(crate) struct Engine {
     /// set; empty for none.
     pub(crate) auth: RefCell<String>,
     rep_closed: Cell<bool>,
+    storage_failure_reported: Cell<bool>,
     socket: RefCell<Option<Rc<SocketHandle>>>,
     connect_cookie: RefCell<Value>,
     init_connection_queries: RefCell<Option<OrderedMap<UpQueriesPatchOp>>>,
@@ -626,9 +643,40 @@ impl Engine {
         );
         let mut mutator_names: Vec<String> = mutators.keys().cloned().collect();
         mutator_names.sort();
-        let database = ReplicaDatabase::memory(&name);
-        let (client_group_id, group) = database.init_client(&client_id, &mutator_names, base.now());
-        let profile_id = database.profile_id.clone();
+        let (mut database, mut open_failure, mut corrupt) =
+            ReplicaDatabase::open(&options.storage, &name);
+        let joined = match database.init_client(&client_id, &mutator_names, base.now()) {
+            // What the client group holds doesn't decode, so the client
+            // state is lost: drop the database and start a new one
+            // (`#handleInvalidRefCount`).
+            Err(LoadError::Corrupt(_)) => {
+                corrupt = true;
+                database.drop_database();
+                database.release();
+                (database, open_failure, _) = ReplicaDatabase::open(&options.storage, &name);
+                database.init_client(&client_id, &mutator_names, base.now())
+            }
+            r => r,
+        };
+        let (client_group_id, group) = match joined {
+            Ok(j) => j,
+            // The client group can't be read: run on memory, as when the
+            // open fails.
+            Err(e) => {
+                database.release();
+                database = ReplicaDatabase::fallback(&name, &options.storage);
+                open_failure = Some(match e {
+                    LoadError::Failure(f) => f,
+                    LoadError::Corrupt(m) => {
+                        StorageFailure::new(super::storage::StorageFailureKind::IoError, m)
+                    }
+                });
+                database
+                    .init_client(&client_id, &mutator_names, base.now())
+                    .expect("a memory database reads")
+            }
+        };
+        let profile_id = database.profile_id();
         // Drop stored mutation IDs that aren't mutation IDs (a corrupt
         // store) rather than trust them.
         let is_mutation_id = |id: f64| id >= 0.0 && number::is_safe_integer(id);
@@ -785,6 +833,7 @@ impl Engine {
                 mutation_tracker,
                 query_manager,
                 rep_closed: Cell::new(false),
+                storage_failure_reported: Cell::new(false),
                 socket: RefCell::new(None),
                 connect_cookie: RefCell::new(Value::Null),
                 init_connection_queries: RefCell::new(None),
@@ -876,6 +925,17 @@ impl Engine {
                     .collect(),
             };
         }
+        {
+            let w = Rc::downgrade(e);
+            database.add_failure_listener(
+                &e.client_id,
+                Rc::new(move |f| {
+                    if let Some(e) = w.upgrade() {
+                        e.storage_failed(f, false);
+                    }
+                }),
+            );
+        }
         // Another client of the group stopped (the `onDelete` of
         // `makeActiveClientsManager`): tell the server, if connected.
         {
@@ -895,6 +955,25 @@ impl Engine {
                     }
                 }),
             );
+        }
+        if corrupt {
+            // This client already starts on the new database, which is what
+            // replacing it would do; the app's callback still hears it, as
+            // in JS.
+            e.log.error(|| {
+                format!("Client state is corrupt; dropped database {name} and started a new one")
+            });
+            e.micro(|e| e.client_state_not_found());
+        }
+        if let Some(f) = open_failure {
+            e.log.warn(|| {
+                format!(
+                    "Local store storage failed ({}) opening {name}; running this instance in memory: {}",
+                    f.kind.as_str(),
+                    f.message
+                )
+            });
+            e.micro(move |e| e.storage_failed(&f, true));
         }
         e.start_lifecycle();
 
@@ -2237,7 +2316,10 @@ impl Engine {
             t.cancel();
         }
         self.database.client_stopped(&self.client_id);
+        // Releasing writes what the store had queued; a failure to is
+        // still this client's to report.
         self.database.release();
+        self.database.remove_failure_listener(&self.client_id);
         self.connection_manager.closed();
     }
 
@@ -2246,7 +2328,12 @@ impl Engine {
     /// Starts the heartbeat and the garbage collection of clients and
     /// client groups.
     fn start_lifecycle(&self) {
-        let (h, c, g) = (self.me.clone(), self.me.clone(), self.me.clone());
+        let (h, c, g, d) = (
+            self.me.clone(),
+            self.me.clone(),
+            self.me.clone(),
+            self.me.clone(),
+        );
         let timers = vec![
             self.scheduler.schedule_repeating(
                 HEARTBEAT_INTERVAL_MS,
@@ -2288,8 +2375,55 @@ impl Engine {
                     }
                 }),
             ),
+            self.scheduler.schedule(
+                INITIAL_COLLECT_DATABASES_DELAY_MS,
+                Box::new(move || {
+                    let Some(e) = d.upgrade() else { return };
+                    e.collect_databases();
+                    let w = e.me.clone();
+                    let t = e.scheduler.schedule_repeating(
+                        COLLECT_DATABASES_INTERVAL_MS,
+                        Box::new(move || {
+                            if let Some(e) = w.upgrade() {
+                                e.collect_databases();
+                            }
+                        }),
+                    );
+                    e.lifecycle_timers.borrow_mut().push(t);
+                }),
+            ),
         ];
         *self.lifecycle_timers.borrow_mut() = timers;
+    }
+
+    /// Deletes the other databases of the store that no client has used
+    /// for twice the time a client may be inactive (`collectIDBDatabases`),
+    /// such as those of an older schema.
+    fn collect_databases(&self) {
+        self.database
+            .collect_databases(self.scheduler.now(), 2.0 * CLIENT_MAX_INACTIVE_MS);
+    }
+
+    /// The store failed: the client keeps running on what it has in
+    /// memory, and tells the app once.
+    fn storage_failed(&self, f: &StorageFailure, opening: bool) {
+        if self.storage_failure_reported.replace(true) {
+            return;
+        }
+        if !opening {
+            // A full or failing disk is the device's condition, not a
+            // defect.
+            self.log.warn(|| {
+                format!(
+                    "Local store storage failed ({}); persistence is stopped for this instance: {}",
+                    f.kind.as_str(),
+                    f.message
+                )
+            });
+        }
+        if let Some(cb) = &self.options.on_storage_failure {
+            cb(f);
+        }
     }
 
     /// The deleted clients of this client group, for `initConnection`
@@ -3033,6 +3167,7 @@ impl Drop for Engine {
         }
         if !self.rep_closed.get() {
             self.database.client_stopped(&self.client_id);
+            self.database.remove_failure_listener(&self.client_id);
             self.database.release();
         }
     }

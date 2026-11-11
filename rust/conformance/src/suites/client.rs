@@ -20,7 +20,7 @@ use std::sync::Arc;
 use zero_client::ast::{Direction, JsonPathSegment, SimpleOperator, System};
 use zero_client::client::{
     ApplicationError, Error, MaterializedView, Mutator, RunType, SocketMessage, Transaction, Zero,
-    ZeroOptions,
+    ZeroOptions, ZeroStorage,
 };
 use zero_client::decode::JsonCodable;
 use zero_client::json::{self, Object, Value};
@@ -40,20 +40,60 @@ pub fn suites() -> Vec<Suite> {
     ]
     .into_iter()
     .map(|file| Suite {
+        variant: None,
         file,
         source: Source::Checked,
         check: scenario,
     })
     // The seeded aggregate scenarios of `client/bughunt.test.ts`.
     .chain([Suite {
+        variant: None,
         file: "client-aggregates-fuzz",
         source: Source::Generated,
         check: scenario,
     }])
+    .flat_map(|s| {
+        // Each again on SQLite storage, in a directory of its own, so a
+        // relaunch reads what the last client wrote to disk.
+        [
+            s,
+            Suite {
+                variant: Some("sqlite"),
+                check: scenario_on_sqlite,
+                ..s
+            },
+        ]
+    })
     .collect()
 }
 
+thread_local! {
+    /// Where the scenario running on this thread keeps its replica.
+    static STORAGE: RefCell<ZeroStorage> = RefCell::default();
+}
+
 fn scenario(case: &Value, file: &Value) -> Result<Outcome, String> {
+    STORAGE.with(|s| *s.borrow_mut() = ZeroStorage::Memory);
+    run_scenario(case, file)
+}
+
+fn scenario_on_sqlite(case: &Value, file: &Value) -> Result<Outcome, String> {
+    static DIRECTORIES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = DIRECTORIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let directory =
+        std::env::temp_dir().join(format!("zero-conformance-{}-{n}", std::process::id()));
+    STORAGE.with(|s| {
+        *s.borrow_mut() = ZeroStorage::Sqlite {
+            directory: Some(directory.clone()),
+        }
+    });
+    let result = run_scenario(case, file);
+    STORAGE.with(|s| *s.borrow_mut() = ZeroStorage::Memory);
+    let _ = std::fs::remove_dir_all(&directory);
+    result
+}
+
+fn run_scenario(case: &Value, file: &Value) -> Result<Outcome, String> {
     let start_time = file
         .get("shared")
         .and_then(|s| s.get("startTime"))
@@ -617,6 +657,7 @@ impl Runner {
         let get = |k: &str| o.get(k);
         let mut options = ZeroOptions {
             log_sink: Some(Rc::new(RecordingLogSink::default())),
+            storage: STORAGE.with(|s| s.borrow().clone()),
             ..ZeroOptions::default()
         };
         options.cache_url = match get("cacheURL") {

@@ -42,6 +42,10 @@ pub type Check = fn(case: &Value, file: &Value) -> Result<Outcome, String>;
 #[derive(Clone, Copy)]
 pub struct Suite {
     pub file: &'static str,
+    /// How this suite replays the file when several do so apart, such as
+    /// `sqlite` for the client scenarios on SQLite storage: each variant
+    /// has a row of its own. `None` for the plain replay.
+    pub variant: Option<&'static str>,
     pub source: Source,
     pub check: Check,
 }
@@ -51,6 +55,8 @@ pub struct Suite {
 pub struct FileReport {
     pub file: String,
     pub source: Source,
+    /// The suite's variant, such as `sqlite`.
+    pub variant: Option<&'static str>,
     pub status: Status,
     pub cases: usize,
     pub passed: usize,
@@ -129,9 +135,10 @@ impl Report {
                     "–".to_owned()
                 }
             };
+            let variant = f.variant.map(|v| format!(" ({v})")).unwrap_or_default();
             let _ = writeln!(
                 out,
-                "| `{dir}/{}.json` | {} | {} | {} | {} | {status} |",
+                "| `{dir}/{}.json`{variant} | {} | {} | {} | {} | {status} |",
                 f.file,
                 if f.status == Status::Missing {
                     "–".to_owned()
@@ -176,7 +183,8 @@ impl Report {
         if !failing.is_empty() {
             out.push_str("\nFailures (first few per file):\n");
             for f in failing {
-                let _ = writeln!(out, "\n`{}.json`, {} failed:\n", f.file, f.failed);
+                let variant = f.variant.map(|v| format!(" ({v})")).unwrap_or_default();
+                let _ = writeln!(out, "\n`{}.json`{variant}, {} failed:\n", f.file, f.failed);
                 for m in &f.failures {
                     let m: String = m.chars().take(600).collect();
                     let _ = writeln!(out, "- {}", m.replace('\n', " "));
@@ -220,10 +228,15 @@ pub fn run(filter: Option<&str>) -> Result<Report, String> {
     let suites = suites();
     let keep = |name: &str| filter.is_none_or(|f| name.contains(f));
     // Files several suites replay are read once.
-    let mut by_file: BTreeMap<(Source, &str), Vec<&Suite>> = BTreeMap::new();
+    let mut by_file: BTreeMap<(Source, &str, Option<&str>), Vec<&Suite>> = BTreeMap::new();
     for s in &suites {
-        by_file.entry((s.source, s.file)).or_default().push(s);
+        by_file
+            .entry((s.source, s.file, s.variant))
+            .or_default()
+            .push(s);
     }
+    let claimed =
+        |source: Source, name: &str| by_file.keys().any(|(s, f, _)| *s == source && *f == name);
     // Generated corpora are listed when they are there.
     let generated_files = list_json(&generated).unwrap_or_default();
     let mut files = Vec::new();
@@ -232,23 +245,25 @@ pub fn run(filter: Option<&str>) -> Result<Report, String> {
         (Source::Generated, &generated, &generated_files),
     ] {
         for name in names {
-            if keep(name) && !by_file.contains_key(&(source, name.as_str())) {
+            if keep(name) && !claimed(source, name) {
                 files.push(not_implemented(dir, source, name));
             }
         }
     }
-    for ((source, name), suites) in by_file {
+    for ((source, name, variant), suites) in &by_file {
         if !keep(name) {
             continue;
         }
-        let dir = if source == Source::Checked {
+        let dir = if *source == Source::Checked {
             &vectors
         } else {
             &generated
         };
-        files.push(replay(dir, source, name, &suites));
+        let mut report = replay(dir, *source, name, suites);
+        report.variant = *variant;
+        files.push(report);
     }
-    files.sort_by(|a, b| (a.source, &a.file).cmp(&(b.source, &b.file)));
+    files.sort_by(|a, b| (a.source, &a.file, a.variant).cmp(&(b.source, &b.file, b.variant)));
     Ok(Report { files })
 }
 
@@ -292,6 +307,7 @@ fn empty(name: &str, source: Source, status: Status, cases: usize) -> FileReport
     FileReport {
         file: name.to_owned(),
         source,
+        variant: None,
         status,
         cases,
         passed: 0,

@@ -11,11 +11,13 @@ use zero_client::strings;
 pub fn suites() -> Vec<Suite> {
     vec![
         Suite {
+            variant: None,
             file: "string-compare",
             source: Source::Checked,
             check: string_compare,
         },
         Suite {
+            variant: None,
             file: "hash",
             source: Source::Checked,
             check: hash,

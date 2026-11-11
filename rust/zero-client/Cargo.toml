@@ -22,10 +22,17 @@ tls = [
   "dep:rustls",
 ]
 
+# SQLite storage (`ZeroStorage::Sqlite`), on the system `libsqlite3`.
+sqlite = ["dep:rusqlite"]
+# SQLite storage with SQLite compiled in, for platforms without a
+# `libsqlite3`.
+sqlite-bundled = ["sqlite", "rusqlite/bundled"]
+
 [dependencies]
 futures-util = { version = "0.3", default-features = false, features = [
   "sink",
 ], optional = true }
+rusqlite = { version = "0.40", default-features = false, optional = true }
 rustls = { version = "0.23", default-features = false, features = [
   "ring",
   "std",
@@ -57,6 +64,10 @@ tokio-tungstenite = { version = "0.30", default-features = false, features = [
 [[test]]
 name = "tokio_transport"
 required-features = ["tokio-transport"]
+
+[[test]]
+name = "sqlite_storage"
+required-features = ["sqlite"]
 
 [[test]]
 name = "client_e2e"

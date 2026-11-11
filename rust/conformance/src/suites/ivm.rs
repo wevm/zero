@@ -31,6 +31,7 @@ use zero_client::schema::Schema;
 
 pub fn suites() -> Vec<Suite> {
     let suite = |file, source| Suite {
+        variant: None,
         file,
         source,
         check: ivm,
@@ -44,11 +45,13 @@ pub fn suites() -> Vec<Suite> {
         suite("sweep-ivm-curated", Source::Generated),
         suite("sweep-ivm-fuzz", Source::Generated),
         Suite {
+            variant: None,
             file: "harden-ivm-fuzz",
             source: Source::Generated,
             check: harden,
         },
         Suite {
+            variant: None,
             file: "harden-ivm-special",
             source: Source::Generated,
             check: harden,

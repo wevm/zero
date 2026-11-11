@@ -12,6 +12,7 @@ use tokio::task::LocalSet;
 use zero_client::ast::{Direction, SimpleOperator, System};
 use zero_client::client::{
     MaterializedView, MutationOutcome, Mutator, RunType, Transaction, Zero, ZeroOptions,
+    ZeroStorage,
 };
 use zero_client::ivm::{ResultType, ViewValue};
 use zero_client::json::{self, Object, Value};
@@ -72,6 +73,7 @@ fn mutators() -> Vec<Mutator<()>> {
 struct E2e {
     origin: String,
     schema: Arc<Schema>,
+    storage: ZeroStorage,
 }
 
 impl E2e {
@@ -83,6 +85,7 @@ impl E2e {
         Some(E2e {
             origin: url.replacen("ws://", "http://", 1),
             schema: schema(),
+            storage: ZeroStorage::Memory,
         })
     }
 
@@ -94,6 +97,7 @@ impl E2e {
             ZeroOptions {
                 cache_url: Some(self.origin.clone()),
                 storage_key: Some(storage_key.to_owned()),
+                storage: self.storage.clone(),
                 ..ZeroOptions::default()
             },
             Rc::new(TokioScheduler::new()),
@@ -202,6 +206,23 @@ async fn in_local_set(body: impl std::future::Future<Output = ()>) {
 #[tokio::test]
 async fn syncs_mutates_and_relaunches() {
     let Some(e) = E2e::new() else { return };
+    syncs_mutates_and_relaunches_on(e).await;
+}
+
+/// The same on SQLite storage: the relaunch reads the rows from the file.
+#[cfg(feature = "sqlite")]
+#[tokio::test]
+async fn syncs_mutates_and_relaunches_on_sqlite() {
+    let Some(mut e) = E2e::new() else { return };
+    let directory = std::env::temp_dir().join(unique("zero-e2e-sqlite"));
+    e.storage = ZeroStorage::Sqlite {
+        directory: Some(directory.clone()),
+    };
+    syncs_mutates_and_relaunches_on(e).await;
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+async fn syncs_mutates_and_relaunches_on(e: E2e) {
     in_local_set(async {
         let key = unique("rust-key");
         let zero = e.zero(&key);
@@ -274,8 +295,9 @@ async fn syncs_mutates_and_relaunches() {
         .await;
         other.close();
 
-        // A relaunch in the same process reads the rows from its memory
-        // store before the server answers, as JS `kvStore: 'mem'` does.
+        // A relaunch reads the rows from its store before the server
+        // answers: memory in the same process, as JS `kvStore: 'mem'`
+        // does, or the SQLite file.
         let group = zero.client_group_id().to_owned();
         zero.close();
         drop(zero);

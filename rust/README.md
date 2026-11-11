@@ -13,6 +13,45 @@ The conformance runner reads `packages/zero-conformance/vectors`, and the
 seeded fuzz corpora in `packages/zero-conformance/generated` when they are
 there (`pnpm --filter zero-conformance run test` writes them).
 
+## Quick start
+
+```sh
+cargo add zero-client --features tokio-transport,tls,sqlite
+```
+
+```rust
+use std::rc::Rc;
+use zero_client::client::{Zero, ZeroOptions, ZeroStorage};
+use zero_client::tokio_transport::{TokioScheduler, TokioSocketFactory};
+
+// On a tokio `LocalSet`: the client is single-threaded.
+let zero = Zero::new(
+    schema::schema(),
+    (),
+    vec![/* mutators */],
+    ZeroOptions {
+        cache_url: Some("https://zero.example.com".into()),
+        user_id: Some(user_id),
+        auth: Some(token),
+        storage: ZeroStorage::Sqlite { directory: None },
+        ..ZeroOptions::default()
+    },
+    Rc::new(TokioScheduler::new()),
+    Some(Rc::new(TokioSocketFactory::new())),
+)?;
+```
+
+**Without the `sqlite` feature the client keeps nothing across restarts**:
+the default storage is memory only, and the default build has no
+dependencies. The features:
+
+- `tokio-transport`: a scheduler and a WebSocket transport on tokio. An app
+  can bring its own instead (`Scheduler`, `SocketFactory`).
+- `tls`: `wss://` for that transport, with rustls on `ring`.
+- `sqlite`: SQLite storage on the system `libsqlite3`; `sqlite-bundled`
+  compiles SQLite in. An app can bring its own store
+  (`ZeroStorage::Custom`).
+
 ## Generated types
 
 `zero-rust codegen` (the npm package `zero-rust`, in `packages/zero-rust-cli`)

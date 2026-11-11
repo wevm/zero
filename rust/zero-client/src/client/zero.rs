@@ -2,8 +2,10 @@
 //! and its connection (`connection.ts`).
 
 use super::connection_manager::ConnectionState;
+use super::database::{ReplicaDatabase, replicache_name};
 use super::engine::{Engine, MutatorFn, MutatorResult, UpdateNeededReason, ZeroOptions};
 use super::query_context::{MaterializedView, Preload, RunType};
+use super::storage::DroppedDatabases;
 use super::transaction::Transaction;
 use super::{ApplicationError, Deferred, Error, Scheduler, SocketFactory};
 use crate::ivm::ViewValue;
@@ -219,6 +221,23 @@ impl<C: 'static> Zero<C> {
     pub fn close(&self) {
         let e = &self.engine;
         e.event_loop.call(|| e.close());
+    }
+
+    /// Waits for the local store's queued writes, such as before the app
+    /// exits. A failure to write them is reported to
+    /// `ZeroOptions::on_storage_failure`.
+    pub fn flush_storage(&self) {
+        self.engine.database.flush();
+    }
+
+    /// Closes the client and deletes its local data (`zero.delete()`): the
+    /// replica and pending mutations of this user and storage key, under
+    /// every schema version. Pending mutations the server hasn't confirmed
+    /// are lost. Use it to log a user out.
+    pub fn delete(&self) -> DroppedDatabases {
+        self.close();
+        let name = replicache_name(&self.engine.database.name);
+        ReplicaDatabase::drop_matching(&self.engine.options.storage, &|n| n == name)
     }
 }
 
