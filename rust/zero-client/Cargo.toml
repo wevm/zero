@@ -66,6 +66,10 @@ name = "tokio_transport"
 required-features = ["tokio-transport"]
 
 [[test]]
+name = "transport_probes"
+required-features = ["tokio-transport"]
+
+[[test]]
 name = "sqlite_storage"
 required-features = ["sqlite"]
 
