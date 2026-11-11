@@ -5,6 +5,7 @@
 //! it; their handlers change it and ask the sync thread for other rows or
 //! to run a mutator.
 
+mod login;
 mod settings;
 mod sync;
 mod view;
@@ -76,6 +77,7 @@ pub enum Sheet {
 }
 
 pub struct App {
+    ui: rune::AppHandle<App>,
     sync: SyncThread<App, Context>,
     /// The settings in use, and those saved (without the environment's).
     settings: Settings,
@@ -112,6 +114,8 @@ pub struct App {
     pub sheet_error: Option<String>,
     /// Why the last mutation failed, until seen.
     pub error: Option<String>,
+    /// A GitHub login waiting for the browser.
+    pub github_login: Option<login::LoopbackLogin>,
 }
 
 fn now_ms() -> f64 {
@@ -137,7 +141,7 @@ impl App {
     fn new(ui: rune::AppHandle<App>) -> App {
         let (settings, saved) = Settings::load();
         let sync = SyncThread::start(
-            ui,
+            ui.clone(),
             Setup {
                 schema: zbugs_model::schema::schema,
                 mutators: zbugs_model::client_mutators,
@@ -148,6 +152,7 @@ impl App {
             |s, state| s.connection = state,
         );
         let mut app = App {
+            ui,
             sync,
             auth: None,
             connection: ConnectionState::Initializing,
@@ -180,6 +185,7 @@ impl App {
             api_edit: TextEdit::new(""),
             sheet_error: None,
             error: None,
+            github_login: None,
             settings,
             saved,
         };
@@ -451,8 +457,42 @@ impl App {
         self.sheet = None;
     }
 
+    pub fn close_sheet(&mut self) {
+        self.sheet = None;
+        self.github_login = None;
+    }
+
+    /// Logs in with the pasted token.
     pub fn log_in(&mut self) {
         let token = self.token_edit.text.trim().to_owned();
+        self.log_in_with(token);
+    }
+
+    /// Opens the GitHub login in the browser; the API server hands the
+    /// token back to a listener on this machine (`login.rs`).
+    pub fn log_in_with_github(&mut self, tx: &mut Tx) {
+        let ui = self.ui.clone();
+        let login = login::LoopbackLogin::start(&self.settings.api_url, move |token| {
+            ui.update(move |s, _| s.log_in_with(token));
+        });
+        match login {
+            Ok(login) if tx.open_url(&login.url).is_ok() => {
+                self.sheet_error = None;
+                self.github_login = Some(login);
+            }
+            Ok(login) => {
+                self.sheet_error = Some(format!(
+                    "Couldn't open the browser. Open {} instead.",
+                    login.url
+                ));
+                self.github_login = Some(login);
+            }
+            Err(e) => self.sheet_error = Some(format!("Couldn't wait for the login: {e}")),
+        }
+    }
+
+    fn log_in_with(&mut self, token: String) {
+        self.github_login = None;
         if AuthData::from_jwt(&token, now_ms() / 1000.0).is_none() {
             self.sheet_error = Some("That isn't a current zbugs token.".into());
             return;

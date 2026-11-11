@@ -50,6 +50,12 @@ fn label_text(k: &Kit, t: impl Into<String>) -> El {
     text(t).font(k.ty.small_medium).color(k.c.text_faint)
 }
 
+/// A dialog's explanation. `Dialog::description` doesn't wrap, so a long
+/// one would widen the dialog past its panel.
+fn dialog_text(k: &Kit, t: impl Into<String>) -> El {
+    text(t).font(k.ty.ui.lh(20.0)).color(k.c.text_muted).wrap()
+}
+
 fn sidebar(s: &App, k: &Kit) -> El {
     let status = Status::ALL.iter().position(|x| *x == s.filter.status);
     let titles: Vec<&str> = Status::ALL.iter().map(|x| x.title()).collect();
@@ -569,7 +575,7 @@ fn composer(s: &App, k: &Kit) -> El {
 }
 
 fn sheets(s: &App, k: &Kit, layer: &mut Vec<El>) {
-    let close = |s: &mut App| s.sheet = None;
+    let close = |s: &mut App| s.close_sheet();
     let error = |s: &App| {
         s.sheet_error
             .as_ref()
@@ -636,7 +642,23 @@ fn sheets(s: &App, k: &Kit, layer: &mut Vec<El>) {
                 .build(k, layer);
         }
         Some(Sheet::Login) => {
+            let waiting = s.github_login.is_some();
             let mut fields = vec![
+                dialog_text(
+                    k,
+                    "Through GitHub in the browser, or with a token, such as the one the backend prints.",
+                ),
+                Button::new(if waiting {
+                    "Waiting for the browser…"
+                } else {
+                    "Log In with GitHub"
+                })
+                .disabled(waiting)
+                .on_press_tx(|s: &mut App, tx| s.log_in_with_github(tx))
+                .build(k)
+                .w_full()
+                .key("github"),
+                label_text(k, "Or paste a token"),
                 TextInput::new(&s.token_edit)
                     .placeholder("eyJ…")
                     .secure()
@@ -648,7 +670,6 @@ fn sheets(s: &App, k: &Kit, layer: &mut Vec<El>) {
             fields.extend(error(s));
             fields.push(buttons("Log In", App::log_in));
             Dialog::new("login-sheet", "Log In")
-                .description("Paste a zbugs token, such as the one the backend prints.")
                 .width(460.0)
                 .fit()
                 .open(true)
@@ -684,22 +705,24 @@ fn sheets(s: &App, k: &Kit, layer: &mut Vec<El>) {
     }
     if let Some(message) = &s.error {
         Dialog::new("error", "Couldn't Save")
-            .description(message.clone())
             .width(400.0)
             .fit()
             .open(true)
             .on_close(|s: &mut App| s.error = None)
             .child(
-                row()
+                col()
                     .w_full()
                     .px(16.0)
                     .pb(16.0)
-                    .child(el().grow(1.0))
+                    .gap(10.0)
+                    .child(dialog_text(k, message.clone()))
                     .child(
-                        Button::new("OK")
-                            .on_press(|s: &mut App| s.error = None)
-                            .build(k)
-                            .key("ok"),
+                        row().w_full().child(el().grow(1.0)).child(
+                            Button::new("OK")
+                                .on_press(|s: &mut App| s.error = None)
+                                .build(k)
+                                .key("ok"),
+                        ),
                     ),
             )
             .build(k, layer);
