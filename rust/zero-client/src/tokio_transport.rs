@@ -36,6 +36,11 @@
 //! provider, with the Mozilla root certificates (`webpki-roots`). Without
 //! it, a `wss://` connection fails as a close with code 1006, as a browser
 //! reports a socket it couldn't open.
+//!
+//! A frame or message from the server may be up to 64 MB, as in zero-swift's
+//! transports; a larger one closes the socket with 1006. A browser has no
+//! limit, but tungstenite's default of 16 MB a frame would close the socket
+//! on a large poke that zero-cache sends as one frame.
 
 use crate::client::{
     Scheduler, SocketConnection, SocketEvents, SocketFactory, SocketMessage, Timer, timer_delay,
@@ -48,8 +53,8 @@ use tokio::task::{AbortHandle, spawn_local};
 use tokio::time::{Instant, MissedTickBehavior};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
-use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
+use tokio_tungstenite::tungstenite::protocol::{CloseFrame, WebSocketConfig};
 use tokio_tungstenite::tungstenite::{self, Message};
 
 /// The clock and timers of the client on tokio: timers are local tasks, and
@@ -182,6 +187,9 @@ impl SocketFactory for TokioSocketFactory {
 /// The browser's code for a socket that closed without a close frame.
 const ABNORMAL_CLOSURE: u16 = 1006;
 
+/// The largest frame and message the socket takes, as in zero-swift.
+const MAX_MESSAGE_SIZE: usize = 64 << 20;
+
 async fn run_socket(
     url: String,
     sec_protocol: Option<String>,
@@ -201,7 +209,9 @@ async fn run_socket(
     let connected = match request {
         Ok(request) => {
             tokio::select! {
-                r = tokio_tungstenite::connect_async(request) => r.map(|(ws, _)| ws),
+                r = tokio_tungstenite::connect_async_with_config(request, Some(config()), false) => {
+                    r.map(|(ws, _)| ws)
+                }
                 // Closed (or dropped) before it opened: no events.
                 _ = commands.recv() => return,
             }
@@ -260,6 +270,12 @@ async fn run_socket(
             },
         }
     }
+}
+
+fn config() -> WebSocketConfig {
+    WebSocketConfig::default()
+        .max_frame_size(Some(MAX_MESSAGE_SIZE))
+        .max_message_size(Some(MAX_MESSAGE_SIZE))
 }
 
 fn close_frame(code: Option<u16>) -> Option<CloseFrame> {

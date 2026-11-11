@@ -94,6 +94,14 @@ merges a Version Packages PR that carries a `zero-rust` version.
   `tests/client_e2e/` runs the whole client on it against `zero-cache`.
 - The walking skeleton (M1.5) speaks the protocol to `zero-cache` itself,
   over `tokio-tungstenite`, without the client.
+- The tokio transport takes a frame or message of up to 64 MB, zero-swift's
+  limit; tungstenite's default of 16 MB a frame would close the socket on a
+  large poke zero-cache sends as one frame, which a browser takes.
+  `tests/transport_probes.rs` checks it against a server that writes raw
+  bytes, as Swift's `TransportProbeTests` do: frames with the 101,
+  fragments, large frames, close codes, cuts mid-frame, pings, the
+  protocol header, declined upgrades and redirects, and that every socket
+  closed during the upgrade is closed.
 - Snapshots and subscriptions that don't depend on a UI framework, bridged
   into GPUI entities and Rune state by the apps.
 
