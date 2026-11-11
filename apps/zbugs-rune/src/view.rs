@@ -343,38 +343,79 @@ fn connection_badge(s: &App, k: &Kit) -> El {
 }
 
 fn issue_list(s: &App, k: &Kit) -> El {
-    let title = format!("{} Issues", s.filter.status.title());
     let count = s.count.map_or(String::new(), |n| n.to_string());
+    // Picking issues to delete, as the web list's select mode.
+    let toolbar = if s.select_mode && s.auth.is_some() {
+        let n = s.checked.len();
+        row()
+            .w_full()
+            .center_y()
+            .gap(8.0)
+            .child(
+                text(format!("{n} selected"))
+                    .key("checked-count")
+                    .font(k.ty.body_medium)
+                    .color(k.c.text_base)
+                    .grow(1.0),
+            )
+            .child(
+                Button::new("Done")
+                    .variant(ButtonVariant::Ghost)
+                    .on_press(|s: &mut App| s.toggle_select_mode())
+                    .build(k)
+                    .key("done-selecting"),
+            )
+            .child(
+                Button::new(if n == 0 {
+                    "Delete".to_owned()
+                } else {
+                    format!("Delete ({n})")
+                })
+                .variant(ButtonVariant::Danger)
+                .disabled(n == 0)
+                .on_press(|s: &mut App| s.confirm = Some(Confirm::DeleteIssues(s.checked.clone())))
+                .build(k)
+                .key("delete-checked"),
+            )
+    } else {
+        row()
+            .w_full()
+            .center_y()
+            .gap(8.0)
+            .child(
+                text(format!("{} Issues", s.filter.status.title()))
+                    .font(k.ty.body_medium)
+                    .color(k.c.text_base)
+                    .grow(1.0),
+            )
+            .child(
+                text(count)
+                    .key("count")
+                    .font(k.ty.small)
+                    .color(k.c.text_muted),
+            )
+            .child(
+                Button::new("Select")
+                    .variant(ButtonVariant::Ghost)
+                    .disabled(s.auth.is_none())
+                    .on_press(|s: &mut App| s.toggle_select_mode())
+                    .build(k)
+                    .key("select-issues"),
+            )
+            .child(
+                Button::new("New Issue")
+                    .disabled(s.auth.is_none())
+                    .on_press(|s: &mut App| s.open_sheet(Sheet::NewIssue))
+                    .build(k)
+                    .key("new-issue"),
+            )
+    };
     let header = col()
         .w_full()
         .px(12.0)
         .pb(10.0)
         .gap(8.0)
-        .child(
-            row()
-                .w_full()
-                .center_y()
-                .gap(8.0)
-                .child(
-                    text(title)
-                        .font(k.ty.body_medium)
-                        .color(k.c.text_base)
-                        .grow(1.0),
-                )
-                .child(
-                    text(count)
-                        .key("count")
-                        .font(k.ty.small)
-                        .color(k.c.text_muted),
-                )
-                .child(
-                    Button::new("New Issue")
-                        .disabled(s.auth.is_none())
-                        .on_press(|s: &mut App| s.open_sheet(Sheet::NewIssue))
-                        .build(k)
-                        .key("new-issue"),
-                ),
-        )
+        .child(toolbar)
         .child(
             TextInput::new(&s.search)
                 .placeholder("Search issues")
@@ -497,6 +538,40 @@ fn issue_row(s: &App, issue: &Issue, k: &Kit) -> El {
                 .fill(k.c.icon_accent),
         );
     }
+    let text_col = col().min_w(0.0).gap(3.0).child(title).child(meta);
+    if s.select_mode && s.auth.is_some() {
+        // Pressing the row picks it, as the checkbox does; only what the
+        // user can delete.
+        let deletable = s.can_edit(&issue.creator_id);
+        let checked = s.checked.contains(&issue.id);
+        let toggle = id.clone();
+        let mut r = row()
+            .key(issue.id.clone())
+            .role("button")
+            .label(issue.title.clone())
+            .w_full()
+            .px(12.0)
+            .py(9.0)
+            .gap(10.0)
+            .center_y()
+            .on_press(move |s: &mut App| s.toggle_checked(&id))
+            .child(
+                Checkbox::new(checked)
+                    .label(format!("Select {}", issue.title))
+                    .hide_label()
+                    .disabled(!deletable)
+                    .on_toggle(move |s: &mut App| s.toggle_checked(&toggle))
+                    .build(k)
+                    .key("check"),
+            )
+            .child(text_col.grow(1.0));
+        if !deletable {
+            r = r.opacity(0.5);
+        } else if checked {
+            r = r.fill(k.c.layer_02);
+        }
+        return r;
+    }
     let mut r = col()
         .key(issue.id.clone())
         .role("button")
@@ -504,10 +579,8 @@ fn issue_row(s: &App, issue: &Issue, k: &Kit) -> El {
         .w_full()
         .px(12.0)
         .py(9.0)
-        .gap(3.0)
         .on_press(move |s: &mut App| s.select(id.clone()))
-        .child(title)
-        .child(meta);
+        .child(text_col.w_full());
     if selected {
         r = r.fill(k.c.layer_02);
     }
@@ -1121,6 +1194,14 @@ fn sheets(s: &App, k: &Kit, layer: &mut Vec<El>) {
             Confirm::DeleteIssue(_) => (
                 "Delete Issue",
                 "Deleting the issue also deletes its comments. It can't be undone.",
+            ),
+            Confirm::DeleteIssues(ids) => (
+                if ids.len() == 1 {
+                    "Delete 1 Issue"
+                } else {
+                    "Delete Issues"
+                },
+                "Deleting issues also deletes their comments. It can't be undone.",
             ),
             Confirm::DeleteComment(_) => ("Delete Comment", "It can't be undone."),
         };
