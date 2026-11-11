@@ -55,9 +55,11 @@ Like the Swift client's (`swift-release.yml`):
   skips the crates.io job with a notice and still pushes the mirror and its
   release; a rerun after the manual publish finds the version published.
 - npm's trusted publishing also needs the package to exist, so the first
-  `zero-rust` publish is made by hand too (`pnpm --filter zero-rust build`,
-  then `npm publish` in `packages/zero-rust-cli`); until then the npm job is
-  skipped with a notice.
+  `zero-rust` publish is made by hand too: `pnpm --filter zero-rust build`,
+  `pnpm --filter zero-rust pack`, then `npm publish` of that tarball, as
+  the workflow does. pnpm's pack applies `publishConfig`, which points the
+  `bin` at `dist/`; a plain `npm publish` in the package would ship
+  `src/bin.ts`. Until then the npm job is skipped with a notice.
 
 So the first mirror push and every crates.io and npm publish happen only when tmm
 merges a Version Packages PR that carries a `zero-rust` version.

@@ -109,7 +109,7 @@ jobs:
               esac
               ;;
             404)
-              echo "::warning::zero-rust isn't on npm yet. Publish $version by hand (pnpm --filter zero-rust build, then npm publish from packages/zero-rust-cli at this commit), set up trusted publishing for wevm/zero's rust-release.yml, then rerun this workflow."
+              echo "::warning::zero-rust isn't on npm yet. Publish $version by hand (pnpm --filter zero-rust build, pnpm --filter zero-rust pack, then npm publish that tarball, at this commit; not npm publish in the package, which ships src/bin.ts as the bin), set up trusted publishing for wevm/zero's rust-release.yml, then rerun this workflow."
               echo "npm=false" >> "$GITHUB_OUTPUT"
               ;;
             *) echo "Looking up zero-rust on npm returned HTTP $pkg." >&2; exit 1 ;;
