@@ -229,7 +229,7 @@ async fn offline_mutations_replay_in_order_exactly_once() {
         assert_eq!(open_issue_ids(&chaos.prefix), expected_open);
         assert_eq!(issues(&chaos.prefix).len(), 30);
         assert_eq!(
-            last_mutation_id(zero.client_id()),
+            last_mutation_id(&zero.client_id()),
             Some(results.len() as u64)
         );
         wait_for("the client to settle", secs(30), || {
@@ -277,7 +277,7 @@ async fn mutations_racing_connection_cuts_apply_exactly_once() {
         }
         assert_eq!(open_issue_ids(&chaos.prefix), expected);
         assert_eq!(
-            last_mutation_id(zero.client_id()),
+            last_mutation_id(&zero.client_id()),
             Some(results.len() as u64)
         );
         wait_for("the client to settle", secs(30), || {
@@ -321,7 +321,7 @@ async fn lost_push_response_confirmed_by_reconnect() {
         proxy.set(|k| k.downstream_rate = None);
         assert_eq!(settled(&created.1, secs(20)).await, Some(SUCCESS));
         wait_for("the client to connect", secs(30), || connected(&zero)).await;
-        assert_eq!(last_mutation_id(zero.client_id()), Some(1));
+        assert_eq!(last_mutation_id(&zero.client_id()), Some(1));
         wait_for("the confirmed row", secs(30), || {
             chaos.ids(&open).contains(&id)
         })
@@ -366,7 +366,7 @@ async fn push_lost_on_the_way_is_sent_again() {
             assert_eq!(settled(&r.1, secs(20)).await, Some(SUCCESS));
         }
         assert_eq!(open_issue_ids(&chaos.prefix), set(issue_ids));
-        assert_eq!(last_mutation_id(zero.client_id()), Some(5));
+        assert_eq!(last_mutation_id(&zero.client_id()), Some(5));
         zero.close();
     })
     .await;
@@ -581,7 +581,7 @@ async fn query_churn_settles_on_the_server() {
         })
         .await;
         // `issues.open` and the kept `issues.byID`s.
-        let client = zero.client_id().to_owned();
+        let client = zero.client_id();
         let want = (1 + kept.len()).to_string();
         wait_for("the server's desired queries", secs(15), || {
             psql(&format!(
@@ -613,7 +613,7 @@ async fn rapid_close_and_reopen_on_sqlite_loses_no_mutation() {
         let mut client_ids = Vec::new();
         for n in 0..15 {
             let zero = chaos.zero(None, &key, true, |_| {});
-            client_ids.push(zero.client_id().to_owned());
+            client_ids.push(zero.client_id());
             create(
                 &zero,
                 &format!("{}{n}", chaos.prefix),
@@ -661,7 +661,7 @@ async fn relaunch_with_pending_mutations_while_server_is_down() {
             create(&first, id, "Pending", None);
         }
         close(&first, &issue_ids[0]);
-        let first_id = first.client_id().to_owned();
+        let first_id = first.client_id();
         first.close();
         drop(first);
 
@@ -724,7 +724,8 @@ async fn rapid_open_close_leaves_no_sockets() {
 
 /// A mutation too large for zero-cache (over its 10 MB message limit): the
 /// server closes with 1009. The client must not loop resending it, and
-/// must sync again.
+/// must sync again: with no `on_client_state_not_found`, it replaces
+/// itself on the same store.
 #[tokio::test]
 async fn oversized_mutation_does_not_wedge_the_client() {
     let Some(chaos) = Chaos::new().await else {
@@ -737,6 +738,7 @@ async fn oversized_mutation_does_not_wedge_the_client() {
         });
         let open = chaos.open(&zero);
         wait_for("the open issues", secs(30), || complete(&open)).await;
+        let first_id = zero.client_id();
         let big = create(
             &zero,
             &format!("{}big", chaos.prefix),
@@ -751,6 +753,13 @@ async fn oversized_mutation_does_not_wedge_the_client() {
         println!("[chaos] after the oversized mutation: {outcome:?}");
         wait_for("a mutation after the oversized one", secs(20), || {
             open_issue_ids(&chaos.prefix).contains(&id)
+        })
+        .await;
+        // The client replaced itself, as JS reloads, and the view made
+        // before follows the new one.
+        assert_ne!(zero.client_id(), first_id);
+        wait_for("the view to see the mutation after", secs(20), || {
+            chaos.ids(&open).contains(&id)
         })
         .await;
         println!("[chaos] 1009 closes: {}", logs.count("code=1009"));

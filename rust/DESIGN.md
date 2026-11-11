@@ -144,7 +144,7 @@ IndexedDB-shaped machinery.
   connection's lock before falling back; a write busy past the 5 s timeout
   is kept and written with the next one; stored data that doesn't decode
   is lost client state, so the client starts a new database and calls
-  `on_client_state_not_found`. Swift hears of a failed write when it fails;
+  `on_client_state_not_found`, if the app set it. Swift hears of a failed write when it fails;
   Rust when the client next writes, flushes, or closes, which a heartbeat
   does within a minute. The database-file GC follows Swift's: five
   minutes after launch and then every 12 hours, databases no client used
@@ -155,6 +155,16 @@ IndexedDB-shaped machinery.
   an edit made on disk, a corrupt file, a directory that can't open,
   `delete`, the GC), and `tests/client_e2e/` relaunches on SQLite against
   `zero-cache`.
+- When the server no longer has the client's state (a 1009 close for a
+  message over its size limit, or the server's `ClientNotFound`), JS
+  disables the client group and calls `onClientStateNotFound`, which
+  reloads the page by default. With no `on_client_state_not_found`, Rust
+  does what zero-swift does: `Zero` replaces its engine by a new one on the
+  same store, with a new client ID and client group, the app's last auth
+  token, and its views and preloads moved over (each at the TTL it was made
+  with). So `client_id()` and `client_group_id()` return a `String`, read
+  from the engine now running. Before, such a client stayed in `error` and
+  never synced again (`oversized_mutation_does_not_wedge_the_client`).
 - The default build is memory-only (tmm's decision), so it keeps the
   no-third-party-dependencies rule; SQLite is opt-in. Swift differs: its
   default is SQLite. **A default build persists nothing across restarts**:

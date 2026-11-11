@@ -316,7 +316,7 @@ async fn syncs_mutates_and_relaunches_on(e: E2e) {
         // A relaunch reads the rows from its store before the server
         // answers: memory in the same process, as JS `kvStore: 'mem'`
         // does, or the SQLite file.
-        let group = zero.client_group_id().to_owned();
+        let group = zero.client_group_id();
         zero.close();
         drop(zero);
         let relaunched = e.zero(&key);

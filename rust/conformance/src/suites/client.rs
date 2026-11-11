@@ -617,13 +617,10 @@ impl Runner {
             scenario_key,
         )?;
         let placeholders = HashMap::from([
-            (zero.client_id().to_owned(), "$clientID".to_owned()),
-            (
-                zero.client_group_id().to_owned(),
-                "$clientGroupID".to_owned(),
-            ),
+            (zero.client_id(), "$clientID".to_owned()),
+            (zero.client_group_id(), "$clientGroupID".to_owned()),
         ]);
-        let ids = HashMap::from([("$clientID".to_owned(), zero.client_id().to_owned())]);
+        let ids = HashMap::from([("$clientID".to_owned(), zero.client_id())]);
         Ok(Rc::new_cyclic(|me| Runner {
             me: me.clone(),
             scenario,
@@ -755,17 +752,14 @@ impl Runner {
         {
             let mut p = self.placeholders.borrow_mut();
             let mut ids = self.ids.borrow_mut();
-            p.insert(old.client_id().to_owned(), format!("$clientID.{n}"));
-            ids.insert(format!("$clientID.{n}"), old.client_id().to_owned());
+            p.insert(old.client_id(), format!("$clientID.{n}"));
+            ids.insert(format!("$clientID.{n}"), old.client_id());
             if old.client_group_id() != new.client_group_id() {
-                p.insert(
-                    old.client_group_id().to_owned(),
-                    format!("$clientGroupID.{n}"),
-                );
+                p.insert(old.client_group_id(), format!("$clientGroupID.{n}"));
             }
-            p.insert(new.client_id().to_owned(), "$clientID".into());
-            p.insert(new.client_group_id().to_owned(), "$clientGroupID".into());
-            ids.insert("$clientID".into(), new.client_id().to_owned());
+            p.insert(new.client_id(), "$clientID".into());
+            p.insert(new.client_group_id(), "$clientGroupID".into());
+            ids.insert("$clientID".into(), new.client_id());
         }
         *self.zero.borrow_mut() = Rc::new(new);
         self.views.borrow_mut().clear();

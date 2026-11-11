@@ -154,7 +154,7 @@ impl<'a> ChaosRun<'a> {
     }
 
     fn count(&mut self, i: usize) {
-        let id = self.lineages[i].zero.client_id().to_owned();
+        let id = self.lineages[i].zero.client_id();
         *self.mutations.entry(id).or_default() += 1;
     }
 
