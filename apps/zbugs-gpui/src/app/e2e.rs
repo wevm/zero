@@ -5,9 +5,10 @@
 //!
 //! - `ZBUGS_E2E=online`: lists issues, creates and deletes one, creates
 //!   another, unsubscribes from it, comments, edits and deletes comments,
-//!   reacts, labels, assigns, makes it internal, sorts the list, filters,
-//!   closes it, and waits until it's marked viewed, and for the server to
-//!   confirm each mutation. CI then checks the rows in Postgres.
+//!   reacts, labels it (with a label it makes too), assigns it, makes it
+//!   internal, sorts the list, filters, closes it, and waits until it's
+//!   marked viewed, and for the server to confirm each mutation. CI then
+//!   checks the rows in Postgres.
 //! - `ZBUGS_E2E=offline`, with the backend stopped: the window reopens on
 //!   the filters and issue the online run left, from the local store.
 //!
@@ -259,6 +260,16 @@ async fn online(window: AnyWindowHandle, app: &Entity<ZbugsApp>, cx: &mut AsyncA
         })
     })
     .await?;
+    // A new label, made from the issue.
+    let label = format!("e2e-{}", make_id());
+    act(window, app, cx, |app, _, cx| {
+        until_ready(app.create_label(id.clone(), label.clone(), cx))
+    })??;
+    until(app, cx, "the new label on the issue", |app| {
+        issue(app).is_some_and(|i| i.labels.iter().flatten().any(|l| l.name == label))
+    })
+    .await?;
+
     // Internal, as the crew can make it.
     act(window, app, cx, |app, _, cx| {
         app.set_visibility(id.clone(), true, cx)
