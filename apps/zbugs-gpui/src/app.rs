@@ -8,6 +8,7 @@ use crate::live::Live;
 use crate::session::{Session, app_dir, now_ms, save_setting};
 use futures::StreamExt;
 use futures::channel::mpsc;
+use gpui_kit::base::actions::Confirm;
 use gpui_kit::component::button::*;
 use gpui_kit::component::dialog::DialogFooter;
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
@@ -62,10 +63,17 @@ actions!(
 /// `/` goes to the search field, as on the web app's list. j/k also work
 /// on the issue, as on the web app's issue page, unless a text field or
 /// menu has the keys. Picking issues to delete, space checks the selected
-/// one and escape stops.
+/// one and escape stops. ⌘Enter (Ctrl+Enter elsewhere) in a text field
+/// posts the comment or saves the dialog, as the web app's composers.
 pub fn bind_keys(cx: &mut App) {
     const DETAIL: &str = "IssueDetail && !Input && !PopupMenu";
+    let submit = if cx.platform_info().is_mac() {
+        "cmd-enter"
+    } else {
+        "ctrl-enter"
+    };
     cx.bind_keys([
+        KeyBinding::new(submit, Confirm { secondary: true }, Some("Input")),
         KeyBinding::new("/", FocusSearch, Some("IssueList")),
         KeyBinding::new("j", SelectNext, Some("IssueList")),
         KeyBinding::new("down", SelectNext, Some("IssueList")),
@@ -258,7 +266,7 @@ pub struct ZbugsApp {
     /// screen when rows above them come and go.
     anchor: Vec<(String, usize)>,
     search: Entity<InputState>,
-    comment: Entity<InputState>,
+    comment: Entity<TextareaState>,
     scroll: UniformListScrollHandle,
     connection: Rc<RefCell<ConnectionState>>,
     error: Option<String>,
@@ -307,17 +315,16 @@ impl ZbugsApp {
                 .placeholder("Search issues")
                 .default_value(filters.text.clone())
         });
-        let comment = cx.new(|cx| InputState::new(window, cx).placeholder("Add a comment…"));
+        let comment = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .auto_grow(2, 10)
+                .placeholder("Add a comment…")
+        });
         let subscriptions = vec![
             cx.subscribe_in(&search, window, |this, state, event, _, cx| {
                 if matches!(event, InputEvent::Change) {
                     let text = state.read(cx).value().to_string();
                     this.refilter(|f| f.text = text, cx);
-                }
-            }),
-            cx.subscribe_in(&comment, window, |this, _, event, window, cx| {
-                if matches!(event, InputEvent::PressEnter { .. }) {
-                    this.post_comment(window, cx);
                 }
             }),
         ];
@@ -2377,11 +2384,25 @@ impl ZbugsApp {
             .child(
                 h_flex()
                     .gap_2()
-                    .child(div().flex_1().child(Input::new(&self.comment)))
+                    .items_end()
+                    .child(
+                        div()
+                            .flex_1()
+                            .key_context("CommentBox")
+                            .on_action(cx.listener(|this, _: &Confirm, window, cx| {
+                                this.post_comment(window, cx)
+                            }))
+                            .child(Textarea::new(&self.comment)),
+                    )
                     .child(
                         Button::new("post-comment")
                             .primary()
                             .label("Comment")
+                            .tooltip(if cx.platform_info().is_mac() {
+                                "⌘↩"
+                            } else {
+                                "Ctrl+Enter"
+                            })
                             .disabled(!logged_in)
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.post_comment(window, cx)),

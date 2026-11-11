@@ -245,12 +245,15 @@ async fn online(window: AnyWindowHandle, app: &Entity<ZbugsApp>, cx: &mut AsyncA
     })
     .await?;
 
-    // A comment through the comment field, and a reaction.
+    // A comment through the comment field, posted with ⌘Enter, and a
+    // reaction.
     act(window, app, cx, |app, window, cx| {
-        app.comment
-            .update(cx, |state, cx| state.set_value(COMMENT, window, cx));
-        app.post_comment(window, cx);
+        app.comment.update(cx, |state, cx| {
+            state.set_value(COMMENT, window, cx);
+            state.focus(window, cx);
+        });
     })?;
+    press(window, cx, "cmd-enter").await?;
     until(app, cx, "the comment", |app| {
         issue(app).is_some_and(|i| i.comments.iter().flatten().any(|c| c.body == COMMENT))
     })
