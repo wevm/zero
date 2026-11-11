@@ -22,8 +22,7 @@ out=$(mktemp -d)
 issue=$(sql "select id from issue i where open and not exists
   (select 1 from comment c where c.\"issueID\" = i.id)
   order by length(description), \"shortID\" limit 1")
-# The label menu lists "New Label…", a separator, then the issue's project's
-# labels by name, bytewise (item 2 is the first).
+# The label picker lists the issue's project's labels by name, bytewise.
 first_label=$(sql "select l.name from label l join issue i on i.\"projectID\" = l.\"projectID\"
   where i.id = '$issue' order by l.name collate \"C\" limit 1")
 sql "delete from \"issueLabel\" where \"issueID\" = '$issue'"
@@ -48,16 +47,16 @@ cat > "$out/script.json" <<EOF
   {"t": 15.3, "type": "type", "text": "rocket"},
   {"t": 15.8, "type": "tap", "key": "emoji-🚀"},
   {"t": 16.5, "type": "tap", "key": "labels-trigger"},
-  {"t": 17.0, "type": "tap", "key": "labels-item2"},
+  {"t": 17.0, "type": "tap", "key": "label-$first_label"},
   {"t": 17.5, "type": "key", "name": "Escape"},
   {"t": 18.0, "type": "tap", "key": "toggle-open"},
   {"t": 19.0, "type": "tap", "key": "edit-comment"},
   {"t": 19.3, "type": "type", "text": " edited"},
   {"t": 20.5, "type": "tap", "key": "save-comment-edit"},
   {"t": 21.5, "type": "tap", "key": "labels-trigger"},
-  {"t": 22.0, "type": "tap", "key": "labels-item0"},
-  {"t": 22.5, "type": "type", "text": "$new_label"},
-  {"t": 24.0, "type": "tap", "key": "save"},
+  {"t": 22.0, "type": "type", "text": "$new_label"},
+  {"t": 23.5, "type": "key", "name": "Enter"},
+  {"t": 24.0, "type": "key", "name": "Escape"},
   {"t": 25.0, "type": "tap", "key": "visibility-trigger"},
   {"t": 25.5, "type": "tap", "key": "option1"},
   {"t": 26.5, "type": "tap", "key": "notifications-trigger"},
