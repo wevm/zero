@@ -1,0 +1,71 @@
+name: zbugs Rune (macOS)
+
+# apps/zbugs-rune: zbugs on the Zero Rust client with the Rune UI framework.
+# Path-filtered because macOS runners are slow to start.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/zbugs-rune/**'
+      - 'apps/zbugs-model/**'
+      - 'rust/zero-client/**'
+      - '.github/workflows/zbugs-rune.yml'
+  # Any base, so a PR stacked on another one gets checked too.
+  pull_request:
+    paths:
+      - 'apps/zbugs-rune/**'
+      - 'apps/zbugs-model/**'
+      - 'rust/zero-client/**'
+      - '.github/workflows/zbugs-rune.yml'
+
+concurrency:
+  group: '${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}'
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  app:
+    name: zbugs Rune app (macOS)
+    runs-on: macos-26
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: apps/zbugs-rune
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      # rustup is preinstalled; rust-toolchain.toml picks the version.
+      - name: Install the toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/zbugs-rune/target
+          key: zbugs-rune-${{ runner.os }}-${{ hashFiles('apps/zbugs-rune/Cargo.lock', 'apps/zbugs-rune/rust-toolchain.toml') }}
+          restore-keys: zbugs-rune-${{ runner.os }}-
+      - name: Format
+        run: cargo fmt --check
+      - name: Lint
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Test
+        run: cargo test --locked
+      # Headless, with no backend: the app renders its first frame with
+      # Rune's own renderer, as a window would.
+      - name: Render headless
+        env:
+          ZBUGS_RUNE_DIR: ${{ runner.temp }}/zbugs-rune
+        run: |
+          cargo run --locked -- --snap "$RUNNER_TEMP/zbugs-rune.png" --size 1180x760
+          test -s "$RUNNER_TEMP/zbugs-rune.png"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: zbugs-rune-snapshot
+          path: ${{ runner.temp }}/zbugs-rune.png
+          if-no-files-found: ignore

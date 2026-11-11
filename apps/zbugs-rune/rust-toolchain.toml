@@ -1,0 +1,5 @@
+[toolchain]
+# Rune's own toolchain (it needs at least 1.90), as apps/zbugs-model.
+channel = "1.99.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
