@@ -20,12 +20,13 @@ use std::ops::Range;
 use std::rc::Rc;
 use zbugs_model::args::*;
 use zbugs_model::mutators::{
-    ADD_COMMENT, ADD_LABEL, CREATE_ISSUE, MutateRequest, REMOVE_LABEL, UPDATE_ISSUE,
+    ADD_COMMENT, ADD_EMOJI_TO_COMMENT, ADD_EMOJI_TO_ISSUE, ADD_LABEL, CREATE_ISSUE, MutateRequest,
+    REMOVE_EMOJI, REMOVE_LABEL, UPDATE_ISSUE,
 };
 use zbugs_model::queries::{
     ALL_PROJECTS, ISSUE_DETAIL, ISSUE_LIST_COUNT, ISSUE_LIST_V2, LABELS, USERS_FOR_PROJECT,
 };
-use zbugs_model::schema::{Comment, Issue, Label, Project, User};
+use zbugs_model::schema::{Comment, Emoji, Issue, Label, Project, User};
 use zbugs_model::{ZERO_PROJECT_NAME, make_id};
 use zero_client::client::{ConnectionState, MutationOutcome};
 use zero_client::ttl::Ttl;
@@ -59,6 +60,32 @@ struct Choice {
     label: String,
     value: Option<String>,
     checked: bool,
+}
+
+/// The reactions the add-reaction menu offers, with their annotations.
+const REACTIONS: [(&str, &str); 6] = [
+    ("👍", "thumbs up"),
+    ("❤️", "red heart"),
+    ("🎉", "party popper"),
+    ("😄", "grinning face with smiling eyes"),
+    ("😕", "confused face"),
+    ("👀", "eyes"),
+];
+
+/// What a reaction is on.
+#[derive(Clone, Copy)]
+enum Subject {
+    Issue,
+    Comment,
+}
+
+/// An emoji without its skin tone, so reactions that differ only in tone
+/// count together, as zbugs' `normalizeEmoji`.
+fn normalize_emoji(emoji: &str) -> String {
+    emoji
+        .chars()
+        .filter(|c| !('\u{1F3FB}'..='\u{1F3FF}').contains(c))
+        .collect()
 }
 
 type OnPick = Rc<dyn Fn(&mut ZbugsApp, Option<String>, &mut Context<ZbugsApp>)>;
@@ -343,6 +370,52 @@ impl ZbugsApp {
         self.mutate(request, cx);
     }
 
+    /// Takes back the user's reaction with `unicode`, or adds it.
+    fn toggle_emoji(
+        &mut self,
+        subject: Subject,
+        subject_id: &str,
+        emoji: &[Emoji],
+        unicode: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(me) = self.session.auth.as_ref().map(|a| a.sub.as_str()) else {
+            return;
+        };
+        let key = normalize_emoji(unicode);
+        if let Some(mine) = emoji
+            .iter()
+            .find(|e| e.creator_id == me && normalize_emoji(&e.value) == key)
+        {
+            let id = mine.id.clone();
+            self.mutate(REMOVE_EMOJI.with(&id), cx);
+            return;
+        }
+        let annotation = REACTIONS
+            .iter()
+            .find(|(u, _)| *u == unicode)
+            .map(|(_, a)| a.to_string())
+            .or_else(|| {
+                emoji
+                    .iter()
+                    .find(|e| e.value == unicode)
+                    .map(|e| e.annotation.clone())
+            })
+            .unwrap_or_default();
+        let args = AddEmojiArgs {
+            id: make_id(),
+            unicode: unicode.to_owned(),
+            annotation,
+            subject_id: subject_id.to_owned(),
+            created: now_ms(),
+        };
+        let add = match subject {
+            Subject::Issue => ADD_EMOJI_TO_ISSUE,
+            Subject::Comment => ADD_EMOJI_TO_COMMENT,
+        };
+        self.mutate(add.with(&args), cx);
+    }
+
     fn post_comment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(issue_id) = self.selected.clone() else {
             return;
@@ -559,13 +632,13 @@ impl ZbugsApp {
     /// `on_pick` with its value.
     fn picker(
         &self,
-        id: &'static str,
+        id: impl Into<ElementId>,
         label: String,
         active: bool,
         choices: Vec<Choice>,
         on_pick: OnPick,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
+    ) -> AnyElement {
         let app = cx.entity().downgrade();
         let choices = Rc::new(choices);
         Button::new(id)
@@ -592,6 +665,7 @@ impl ZbugsApp {
                 }
                 menu
             })
+            .into_any_element()
     }
 
     fn user_choices(users: &Live<Vec<User>>, none: &str, current: Option<&str>) -> Vec<Choice> {
@@ -782,6 +856,84 @@ impl ZbugsApp {
             )
     }
 
+    /// The reactions on an issue or comment, one pill per emoji, and a
+    /// menu to add one.
+    fn render_reactions(
+        &self,
+        subject: Subject,
+        subject_id: &str,
+        emoji: &[Emoji],
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let me = self.session.auth.as_ref().map(|a| a.sub.clone());
+        let mut emoji = emoji.to_vec();
+        emoji.sort_by(|a, b| a.created.total_cmp(&b.created));
+        let mut groups: Vec<(String, Vec<Emoji>)> = Vec::new();
+        for e in &emoji {
+            let key = normalize_emoji(&e.value);
+            match groups.iter_mut().find(|(k, _)| *k == key) {
+                Some((_, group)) => group.push(e.clone()),
+                None => groups.push((key, vec![e.clone()])),
+            }
+        }
+        let mine = |e: &Emoji| me.as_deref() == Some(e.creator_id.as_str());
+        let emoji = Rc::new(emoji);
+        let pills = groups.into_iter().map(|(key, group)| {
+            let value = group[0].value.clone();
+            let names = group
+                .iter()
+                .filter_map(|e| {
+                    if mine(e) {
+                        Some("you".to_owned())
+                    } else {
+                        e.creator.as_ref().map(|u| u.login.clone())
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            let (all, id) = (emoji.clone(), subject_id.to_owned());
+            Button::new(SharedString::from(format!("emoji-{subject_id}-{key}")))
+                .small()
+                .outline()
+                .selected(group.iter().any(mine))
+                .label(format!("{value} {}", group.len()))
+                .tooltip(format!("{names} reacted with {}", group[0].annotation))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.toggle_emoji(subject, &id, &all, &value, cx)
+                }))
+        });
+        let pills = pills.collect::<Vec<_>>();
+        let choices = REACTIONS
+            .iter()
+            .map(|(unicode, annotation)| Choice {
+                label: format!("{unicode}  {annotation}"),
+                value: Some((*unicode).to_owned()),
+                checked: emoji
+                    .iter()
+                    .any(|e| mine(e) && normalize_emoji(&e.value) == normalize_emoji(unicode)),
+            })
+            .collect();
+        let (all, id) = (emoji.clone(), subject_id.to_owned());
+        let add = self.picker(
+            SharedString::from(format!("react-{subject_id}")),
+            "☺︎ +".into(),
+            false,
+            choices,
+            Rc::new(move |this, unicode, cx| {
+                if let Some(unicode) = unicode {
+                    this.toggle_emoji(subject, &id, &all, &unicode, cx);
+                }
+            }),
+            cx,
+        );
+        h_flex()
+            .gap_1()
+            .flex_wrap()
+            .children(pills)
+            .when(self.session.auth.is_some(), |d| d.child(add))
+            .into_any_element()
+    }
+
     fn render_detail(&self, cx: &mut Context<Self>) -> AnyElement {
         let empty = |text: &'static str, cx: &mut Context<Self>| {
             div()
@@ -922,6 +1074,12 @@ impl ZbugsApp {
                 SharedString::from(format!("description-{}", issue.id)),
                 issue.description.clone(),
             ))
+            .child(self.render_reactions(
+                Subject::Issue,
+                &issue.id,
+                issue.emoji.as_deref().unwrap_or_default(),
+                cx,
+            ))
             .child(
                 div()
                     .text_sm()
@@ -929,6 +1087,12 @@ impl ZbugsApp {
                     .child(format!("Comments ({})", comments.len())),
             )
             .children(comments.into_iter().map(|c| {
+                let reactions = self.render_reactions(
+                    Subject::Comment,
+                    &c.id,
+                    c.emoji.as_deref().unwrap_or_default(),
+                    cx,
+                );
                 v_flex()
                     .gap_1()
                     .p_3()
@@ -945,6 +1109,7 @@ impl ZbugsApp {
                         SharedString::from(format!("comment-{}", c.id)),
                         c.body,
                     ))
+                    .child(reactions)
             }))
             .child(
                 h_flex()
