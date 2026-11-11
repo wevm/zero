@@ -5,9 +5,9 @@
 //!
 //! - `ZBUGS_E2E=online`: lists issues, creates and deletes one, creates
 //!   another, unsubscribes from it, comments, edits and deletes comments,
-//!   reacts, labels, assigns, filters, closes it, and waits until it's
-//!   marked viewed, and for the server to confirm each mutation. CI then checks the
-//!   rows in Postgres.
+//!   reacts, labels, assigns, makes it internal, sorts the list, filters,
+//!   closes it, and waits until it's marked viewed, and for the server to
+//!   confirm each mutation. CI then checks the rows in Postgres.
 //! - `ZBUGS_E2E=offline`, with the backend stopped: the window reopens on
 //!   the filters and issue the online run left, from the local store.
 //!
@@ -259,8 +259,48 @@ async fn online(window: AnyWindowHandle, app: &Entity<ZbugsApp>, cx: &mut AsyncA
         })
     })
     .await?;
+    // Internal, as the crew can make it.
+    act(window, app, cx, |app, _, cx| {
+        app.set_visibility(id.clone(), true, cx)
+    })?;
+    until(app, cx, "the issue internal", |app| {
+        issue(app).is_some_and(|i| i.visibility == IssueVisibility::Internal)
+    })
+    .await?;
     settled(app, cx).await?;
     shot("2-edited");
+
+    // Sorted by created, oldest first, then back.
+    act(window, app, cx, |app, _, cx| {
+        app.refilter(
+            |f| {
+                f.by_created = true;
+                f.ascending = true;
+            },
+            cx,
+        )
+    })?;
+    until(app, cx, "the list oldest first", |app| {
+        let rows = rows(app);
+        app.list.is_synced()
+            && rows.len() > 1
+            && rows.windows(2).all(|w| w[0].created <= w[1].created)
+            && rows.first().is_some_and(|i| i.id != id)
+    })
+    .await?;
+    act(window, app, cx, |app, _, cx| {
+        app.refilter(
+            |f| {
+                f.by_created = false;
+                f.ascending = false;
+            },
+            cx,
+        )
+    })?;
+    until(app, cx, "the list newest first", |app| {
+        app.list.is_synced() && rows(app).first().is_some_and(|i| i.id == id)
+    })
+    .await?;
 
     // Filtered to the user's bugs, then closed: it leaves the open list,
     // and All shows it.

@@ -32,7 +32,7 @@ use zbugs_model::queries::{
     ALL_PROJECTS, COMMENTS_PAGE, ISSUE_DETAIL, ISSUE_LIST_COUNT, ISSUE_LIST_V2, LABELS, USER,
     USERS_FOR_PROJECT,
 };
-use zbugs_model::schema::{Comment, Emoji, Issue, Label, Project, User};
+use zbugs_model::schema::{Comment, Emoji, Issue, IssueVisibility, Label, Project, User};
 use zbugs_model::{AuthData, ZERO_PROJECT_NAME, make_id};
 use zero_client::client::{ConnectionState, MutationOutcome};
 use zero_client::ttl::Ttl;
@@ -44,11 +44,13 @@ const ROW_HEIGHT: f32 = 52.;
 /// adds.
 const COMMENT_PAGE: i64 = 50;
 
-actions!(zbugs, [SelectNext, SelectPrevious]);
+actions!(zbugs, [SelectNext, SelectPrevious, FocusSearch]);
 
-/// j/k and the arrow keys move the selection while the list has focus.
+/// j/k and the arrow keys move the selection while the list has focus, and
+/// `/` goes to the search field, as on the web app's list.
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
+        KeyBinding::new("/", FocusSearch, Some("IssueList")),
         KeyBinding::new("j", SelectNext, Some("IssueList")),
         KeyBinding::new("down", SelectNext, Some("IssueList")),
         KeyBinding::new("k", SelectPrevious, Some("IssueList")),
@@ -73,6 +75,12 @@ struct Filters {
     assignee: Option<String>,
     /// Label names; an issue needs all of them.
     labels: Vec<String>,
+    /// By created rather than modified, as the web app's sort toggle.
+    #[serde(default)]
+    by_created: bool,
+    /// Oldest first.
+    #[serde(default)]
+    ascending: bool,
 }
 
 /// What the window shows, kept across launches as zbugs keeps it in the
@@ -195,6 +203,8 @@ impl ZbugsApp {
                 creator: None,
                 assignee: None,
                 labels: Vec::new(),
+                by_created: false,
+                ascending: false,
             },
             |s| s.filters.clone(),
         );
@@ -606,8 +616,16 @@ impl ZbugsApp {
             creator: f.creator.clone(),
             labels: (!f.labels.is_empty()).then(|| f.labels.clone()),
             text_filter: (!f.text.is_empty()).then(|| f.text.clone()),
-            sort_field: SortField::Modified,
-            sort_direction: SortDirection::Desc,
+            sort_field: if f.by_created {
+                SortField::Created
+            } else {
+                SortField::Modified
+            },
+            sort_direction: if f.ascending {
+                SortDirection::Asc
+            } else {
+                SortDirection::Desc
+            },
         }
     }
 
@@ -892,6 +910,20 @@ impl ZbugsApp {
             self.save();
         }
         cx.notify();
+    }
+
+    /// Makes an issue internal (crew only) or public, as the crew can on
+    /// the web app.
+    fn set_visibility(&mut self, issue_id: String, internal: bool, cx: &mut Context<Self>) {
+        let args = UpdateIssueArgs {
+            visibility: Some(if internal {
+                IssueVisibility::Internal
+            } else {
+                IssueVisibility::Public
+            }),
+            ..UpdateIssueArgs::new(issue_id, now_ms())
+        };
+        self.mutate(UPDATE_ISSUE.with(&args), cx);
     }
 
     fn set_subscribed(&mut self, issue_id: String, subscribe: bool, cx: &mut Context<Self>) {
@@ -1350,12 +1382,35 @@ impl ZbugsApp {
             Rc::new(|this, name, cx| this.toggle_label_filter(name, cx)),
             cx,
         );
+        let sort_field = Button::new("sort-field")
+            .small()
+            .ghost()
+            .label(if f.by_created { "Created" } else { "Modified" })
+            .tooltip("Sort by modified or created")
+            .on_click(
+                cx.listener(|this, _, _, cx| this.refilter(|f| f.by_created = !f.by_created, cx)),
+            );
+        let sort_direction = Button::new("sort-direction")
+            .small()
+            .ghost()
+            .label(if f.ascending { "↑" } else { "↓" })
+            .tooltip(if f.ascending {
+                "Oldest first"
+            } else {
+                "Newest first"
+            })
+            .on_click(
+                cx.listener(|this, _, _, cx| this.refilter(|f| f.ascending = !f.ascending, cx)),
+            );
         h_flex()
             .gap_1()
             .flex_wrap()
             .child(creator)
             .child(assignee)
             .child(labels)
+            .child(div().flex_1())
+            .child(sort_field)
+            .child(sort_direction)
     }
 
     fn render_connection(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1410,6 +1465,9 @@ impl ZbugsApp {
             .key_context("IssueList")
             .on_action(cx.listener(|this, _: &SelectNext, _, cx| this.move_selection(1, cx)))
             .on_action(cx.listener(|this, _: &SelectPrevious, _, cx| this.move_selection(-1, cx)))
+            .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
+                this.search.update(cx, |state, cx| state.focus(window, cx))
+            }))
             .w_full()
             .flex_1()
             .child(list)
@@ -1683,6 +1741,35 @@ impl ZbugsApp {
             }),
             cx,
         );
+        let crew = self.session.auth.as_ref().is_some_and(|a| a.is_crew());
+        let internal = issue.visibility == IssueVisibility::Internal;
+        let visibility_id = issue.id.clone();
+        let visibility = crew.then(|| {
+            self.picker(
+                Button::new("detail-visibility")
+                    .label(if internal { "Internal" } else { "Public" })
+                    .tooltip("Visibility"),
+                vec![
+                    Choice {
+                        label: "Public".into(),
+                        value: Some("public".into()),
+                        checked: !internal,
+                    },
+                    Choice {
+                        label: "Internal".into(),
+                        value: Some("internal".into()),
+                        checked: internal,
+                    },
+                ],
+                Rc::new(move |this, value, cx| {
+                    let to_internal = value.as_deref() == Some("internal");
+                    if to_internal != internal {
+                        this.set_visibility(visibility_id.clone(), to_internal, cx);
+                    }
+                }),
+                cx,
+            )
+        });
         let labeled = issue.clone();
         let labels = self.picker(
             Button::new("detail-labels")
@@ -1764,6 +1851,7 @@ impl ZbugsApp {
                     .child(assignee)
                     .child(labels)
                     .child(notifications)
+                    .children(visibility)
                     .children(issue.labels.iter().flatten().map(|l| {
                         div()
                             .px_1()
