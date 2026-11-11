@@ -265,21 +265,23 @@ fn mutations(bench: &mut Bench) {
         let n = 1000;
         let value = Cell::new(n);
 
-        // Checks the row `value` last updated, if any.
-        let check_updated = |view: &zero_client::client::MaterializedView, what: &str| {
-            if value.get() > n {
+        // Checks the row `value` last updated, if it changed since `before`
+        // (a filter may have skipped the benchmark).
+        let check_updated = |view: &zero_client::client::MaterializedView, before, what: &str| {
+            if value.get() > before {
                 check(b(view, value.get() % n) == Some(value.get() as f64), what);
             }
         };
 
         let local = Client::new(n, false);
         let local_view = local.materialize(&users(local.zero.schema()));
+        let before = value.get();
         bench.run(&format!("optimistic update, {n}-row view"), || {
             value.set(value.get() + 1);
             let args = update_user_args(value.get() % n, value.get());
             let _ = local.zero.mutate("updateUser", Some(args));
         });
-        check_updated(&local_view, "updated");
+        check_updated(&local_view, before, "updated");
 
         // The client's side of a round trip: the optimistic update, the
         // push, and the poke that confirms it, which rebases the pending
@@ -287,6 +289,7 @@ fn mutations(bench: &mut Bench) {
         let remote = Client::new(n, true);
         let remote_view = remote.materialize(&users(remote.zero.schema()));
         let last_mutation_id = Cell::new(0);
+        let before = value.get();
         bench.run(&format!("round trip, {n}-row view"), || {
             value.set(value.get() + 1);
             last_mutation_id.set(last_mutation_id.get() + 1);
@@ -300,7 +303,7 @@ fn mutations(bench: &mut Bench) {
                 Some(last_mutation_id.get()),
             ));
         });
-        check_updated(&remote_view, "confirmed");
+        check_updated(&remote_view, before, "confirmed");
     });
 }
 
