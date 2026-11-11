@@ -20,13 +20,14 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::ops::Range;
 use std::rc::Rc;
 use zbugs_model::args::*;
 use zbugs_model::mutators::{
     ADD_COMMENT, ADD_EMOJI_TO_COMMENT, ADD_EMOJI_TO_ISSUE, ADD_LABEL, CREATE_AND_ADD_LABEL,
-    CREATE_ISSUE, DELETE_ISSUE, EDIT_COMMENT, MutateRequest, REMOVE_COMMENT, REMOVE_EMOJI,
-    REMOVE_LABEL, SET_VIEW_STATE, UPDATE_ISSUE, UPDATE_NOTIFICATION,
+    CREATE_ISSUE, DELETE_ISSUE, DELETE_ISSUES, EDIT_COMMENT, MutateRequest, REMOVE_COMMENT,
+    REMOVE_EMOJI, REMOVE_LABEL, SET_VIEW_STATE, UPDATE_ISSUE, UPDATE_NOTIFICATION,
 };
 use zbugs_model::queries::{
     ALL_PROJECTS, COMMENTS_PAGE, ISSUE_DETAIL, ISSUE_LIST_COUNT, ISSUE_LIST_V2, LABELS, USER,
@@ -46,17 +47,34 @@ const COMMENT_PAGE: i64 = 50;
 /// The label picker's choice that makes a new label.
 const NEW_LABEL: &str = "\u{0}new-label";
 
-actions!(zbugs, [SelectNext, SelectPrevious, FocusSearch]);
+actions!(
+    zbugs,
+    [
+        SelectNext,
+        SelectPrevious,
+        FocusSearch,
+        ToggleChecked,
+        StopChecking
+    ]
+);
 
 /// j/k and the arrow keys move the selection while the list has focus, and
-/// `/` goes to the search field, as on the web app's list.
+/// `/` goes to the search field, as on the web app's list. j/k also work
+/// on the issue, as on the web app's issue page, unless a text field or
+/// menu has the keys. Picking issues to delete, space checks the selected
+/// one and escape stops.
 pub fn bind_keys(cx: &mut App) {
+    const DETAIL: &str = "IssueDetail && !Input && !PopupMenu";
     cx.bind_keys([
         KeyBinding::new("/", FocusSearch, Some("IssueList")),
         KeyBinding::new("j", SelectNext, Some("IssueList")),
         KeyBinding::new("down", SelectNext, Some("IssueList")),
         KeyBinding::new("k", SelectPrevious, Some("IssueList")),
         KeyBinding::new("up", SelectPrevious, Some("IssueList")),
+        KeyBinding::new("space", ToggleChecked, Some("IssueList")),
+        KeyBinding::new("escape", StopChecking, Some("IssueList")),
+        KeyBinding::new("j", SelectNext, Some(DETAIL)),
+        KeyBinding::new("k", SelectPrevious, Some(DETAIL)),
     ]);
 }
 
@@ -176,6 +194,10 @@ pub struct ZbugsApp {
     /// first, up to `comments_limit`.
     comment_page: Option<Live<Vec<Comment>>>,
     list_focus: FocusHandle,
+    detail_focus: FocusHandle,
+    /// The issues checked to delete together, while picking them (the web
+    /// app's select mode).
+    checked: Option<BTreeSet<String>>,
     /// Scroll to the selected issue once the list has it: after a launch
     /// restores the selection.
     reveal_selected: bool,
@@ -289,6 +311,8 @@ impl ZbugsApp {
             comments_limit: COMMENT_PAGE,
             comment_page: None,
             list_focus: cx.focus_handle(),
+            detail_focus: cx.focus_handle(),
+            checked: None,
             reveal_selected: false,
             anchor: Vec::new(),
             search,
@@ -952,18 +976,19 @@ impl ZbugsApp {
     /// Asks before a delete, which `delete` does.
     fn confirm_delete(
         &mut self,
-        title: &'static str,
+        title: impl Into<SharedString>,
         delete: impl Fn(&mut ZbugsApp, &mut Context<ZbugsApp>) + 'static,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let app = cx.entity().downgrade();
         let delete = Rc::new(delete);
+        let title: SharedString = title.into();
         window.open_dialog(cx, move |dialog, _, _| {
             let (app, delete) = (app.clone(), delete.clone());
             dialog
                 .w(px(420.))
-                .title(title)
+                .title(title.clone())
                 .child("It's gone for everyone, and can't be undone.")
                 .footer(
                     DialogFooter::new()
@@ -990,7 +1015,56 @@ impl ZbugsApp {
     /// goes back to the list.
     fn delete_issue(&mut self, id: &String, cx: &mut Context<Self>) {
         self.mutate(DELETE_ISSUE.with(id), cx);
-        if self.selected.as_ref() == Some(id) {
+        self.leave_deleted(std::slice::from_ref(id), cx);
+    }
+
+    /// Starts or stops checking issues to delete together.
+    fn toggle_checking(&mut self, cx: &mut Context<Self>) {
+        self.checked = match self.checked {
+            Some(_) => None,
+            None => Some(BTreeSet::new()),
+        };
+        cx.notify();
+    }
+
+    /// Checks or unchecks `issue` while picking issues to delete, if the
+    /// user can delete it.
+    fn toggle_checked(&mut self, issue: &Issue, cx: &mut Context<Self>) {
+        let can = self.can_change(&issue.creator_id);
+        if let Some(checked) = self.checked.as_mut().filter(|_| can)
+            && !checked.remove(&issue.id)
+        {
+            checked.insert(issue.id.clone());
+        }
+        cx.notify();
+    }
+
+    /// Checks or unchecks the selected issue, for space on the list.
+    fn toggle_selected_checked(&mut self, cx: &mut Context<Self>) {
+        let issue = self.list.snapshot().value.as_ref().and_then(|rows| {
+            rows.iter()
+                .find(|r| Some(&r.id) == self.selected.as_ref())
+                .cloned()
+        });
+        if let Some(issue) = issue {
+            self.toggle_checked(&issue, cx);
+        }
+    }
+
+    /// Deletes the checked issues with `issue.deleteMany`, and stops
+    /// picking.
+    fn delete_checked(&mut self, cx: &mut Context<Self>) {
+        let Some(checked) = self.checked.take() else {
+            return;
+        };
+        let ids = checked.into_iter().collect::<Vec<_>>();
+        self.mutate(DELETE_ISSUES.with(&ids), cx);
+        self.leave_deleted(&ids, cx);
+    }
+
+    /// Leaves the selected issue if it's one of `ids`.
+    fn leave_deleted(&mut self, ids: &[String], cx: &mut Context<Self>) {
+        if self.selected.as_ref().is_some_and(|id| ids.contains(id)) {
             self.selected = None;
             self.detail = None;
             self.comment_page = None;
@@ -1440,7 +1514,42 @@ impl ZbugsApp {
         choices
     }
 
-    fn render_filters(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_filters(&self, cx: &mut Context<Self>) -> AnyElement {
+        if let Some(checked) = &self.checked {
+            let count = checked.len();
+            return h_flex()
+                .gap_1()
+                .items_center()
+                .child(div().px_2().text_sm().child(format!("{count} selected")))
+                .child(div().flex_1())
+                .child(
+                    Button::new("delete-checked")
+                        .small()
+                        .danger()
+                        .label("Delete")
+                        .disabled(count == 0)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            let title = match count {
+                                1 => "Delete this issue?".to_owned(),
+                                n => format!("Delete {n} issues?"),
+                            };
+                            this.confirm_delete(
+                                title,
+                                |this, cx| this.delete_checked(cx),
+                                window,
+                                cx,
+                            )
+                        })),
+                )
+                .child(
+                    Button::new("stop-checking")
+                        .small()
+                        .ghost()
+                        .label("Cancel")
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle_checking(cx))),
+                )
+                .into_any_element();
+        }
         let f = &self.filters;
         let creator = self.picker(
             Button::new("filter-creator")
@@ -1526,6 +1635,17 @@ impl ZbugsApp {
             .child(div().flex_1())
             .child(sort_field)
             .child(sort_direction)
+            .when(self.session.auth.is_some(), |d| {
+                d.child(
+                    Button::new("start-checking")
+                        .small()
+                        .ghost()
+                        .label("Select")
+                        .tooltip("Select issues to delete")
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle_checking(cx))),
+                )
+            })
+            .into_any_element()
     }
 
     fn render_connection(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1583,6 +1703,14 @@ impl ZbugsApp {
             .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
                 this.search.update(cx, |state, cx| state.focus(window, cx))
             }))
+            .on_action(
+                cx.listener(|this, _: &ToggleChecked, _, cx| this.toggle_selected_checked(cx)),
+            )
+            .on_action(cx.listener(|this, _: &StopChecking, _, cx| {
+                if this.checked.is_some() {
+                    this.toggle_checking(cx)
+                }
+            }))
             .w_full()
             .flex_1()
             .child(list)
@@ -1604,21 +1732,19 @@ impl ZbugsApp {
             .map(|l| l.name.clone())
             .collect::<Vec<_>>()
             .join(", ");
-        v_flex()
-            .id(SharedString::from(format!("issue-{}", issue.id)))
-            .w_full()
-            .h(px(ROW_HEIGHT))
-            .px_3()
-            .overflow_hidden()
-            .justify_center()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .when(selected, |d| d.bg(cx.theme().accent))
-            .hover(|d| d.bg(cx.theme().accent))
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.select(id.clone(), cx);
-                window.focus(&this.list_focus, cx);
-            }))
+        // While picking issues to delete, a click checks the issue
+        // instead, if the user can delete it.
+        let check = self.checked.as_ref().map(|checked| {
+            (
+                checked.contains(&issue.id),
+                self.can_change(&issue.creator_id),
+            )
+        });
+        let row = issue.clone();
+        let content = v_flex()
+            .flex_1()
+            .min_w_0()
+            .when(check.is_some_and(|(_, can)| !can), |d| d.opacity(0.5))
             .child(
                 h_flex()
                     .gap_2()
@@ -1664,7 +1790,51 @@ impl ZbugsApp {
                     .text_color(cx.theme().muted_foreground)
                     .child(creator)
                     .child(div().min_w_0().truncate().child(labels)),
-            )
+            );
+        h_flex()
+            .id(SharedString::from(format!("issue-{}", issue.id)))
+            .w_full()
+            .h(px(ROW_HEIGHT))
+            .px_3()
+            .gap_3()
+            .overflow_hidden()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .when(selected, |d| d.bg(cx.theme().accent))
+            .hover(|d| d.bg(cx.theme().accent))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if this.checked.is_some() {
+                    this.toggle_checked(&row, cx);
+                } else {
+                    this.select(id.clone(), cx);
+                }
+                window.focus(&this.list_focus, cx);
+            }))
+            .when_some(check, |d, (checked, can)| {
+                d.child(
+                    div()
+                        .flex_none()
+                        .size_4()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded_sm()
+                        .border_1()
+                        .text_xs()
+                        .when(!can, |d| d.opacity(0.4))
+                        .border_color(if checked {
+                            cx.theme().primary
+                        } else {
+                            cx.theme().border
+                        })
+                        .when(checked, |d| {
+                            d.bg(cx.theme().primary)
+                                .text_color(cx.theme().primary_foreground)
+                                .child("✓")
+                        }),
+                )
+            })
+            .child(content)
     }
 
     /// The reactions on an issue or comment, one pill per emoji, and a
@@ -1910,6 +2080,10 @@ impl ZbugsApp {
         );
         v_flex()
             .id("detail")
+            .track_focus(&self.detail_focus)
+            .key_context("IssueDetail")
+            .on_action(cx.listener(|this, _: &SelectNext, _, cx| this.move_selection(1, cx)))
+            .on_action(cx.listener(|this, _: &SelectPrevious, _, cx| this.move_selection(-1, cx)))
             .size_full()
             .overflow_y_scroll()
             .p_6()
