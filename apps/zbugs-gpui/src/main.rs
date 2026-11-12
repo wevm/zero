@@ -35,6 +35,35 @@ impl AssetSource for Assets {
     }
 }
 
+actions!(zbugs, [Quit, Hide, HideOthers, ShowAll]);
+
+/// The macOS app menu, as zbugs-swift's and zbugs-rune's: Services, the
+/// Hide items, and Quit with Cmd-Q. GPUI has no menu bar of its own, and
+/// GPUI Kit leaves quitting to the app. Quitting drops the window, and with
+/// it the session, which flushes the local store (`Session`'s `Drop`).
+fn app_menu(cx: &mut App) {
+    cx.on_action(|_: &Quit, cx| cx.quit());
+    cx.on_action(|_: &Hide, cx| cx.hide());
+    cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
+    cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
+    // The menu shows these as the items' key equivalents.
+    cx.bind_keys([
+        KeyBinding::new("cmd-q", Quit, None),
+        KeyBinding::new("cmd-h", Hide, None),
+        KeyBinding::new("alt-cmd-h", HideOthers, None),
+    ]);
+    // macOS titles the app menu with the bundle's name.
+    cx.set_menus([Menu::new("ZBugs GPUI").items([
+        MenuItem::os_submenu("Services", SystemMenuType::Services),
+        MenuItem::separator(),
+        MenuItem::action("Hide ZBugs GPUI", Hide),
+        MenuItem::action("Hide Others", HideOthers),
+        MenuItem::action("Show All", ShowAll),
+        MenuItem::separator(),
+        MenuItem::action("Quit ZBugs GPUI", Quit),
+    ])]);
+}
+
 fn main() {
     gpui_kit::application()
         .with_assets(Assets)
@@ -42,6 +71,7 @@ fn main() {
         .run(|cx| {
             gpui_kit::init(cx);
             app::bind_keys(cx);
+            app_menu(cx);
             let session = session::Session::load(cx);
             let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
             let (_window, _app) = gpui_kit::open_window(
