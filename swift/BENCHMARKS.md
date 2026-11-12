@@ -88,6 +88,14 @@ Linux is an 8-core Intel Xeon at 2.6 GHz with Swift 6.2.4 and Node 22.23.
 JS ran with the commands above, under vitest. On the Mac, the same bundles
 the iPhone ran are 14–40% faster than vitest on the client rows.
 
+Linux machines of the same kind vary in speed: on some, both native
+clients ran 2.2–2.4 times slower than these numbers. Compare clients on
+the same machine, in turns. Node 24 runs the JS benchmarks about twice as
+fast as Node 22, the version the repository pins. The Linux Swift memory
+and 100,000 rows as structs cells are medians of 5 runs taken in turns
+with the other clients, with `swift build -c release` and
+`--time 2 memory hydration`.
+
 | Benchmark                                  | Mac JS     | Mac Swift | Linux JS | Linux Swift |
 | ------------------------------------------ | ---------- | --------- | -------- | ----------- |
 | zero.bench: all 1000 rows x 10 columns     | 141 µs     | 56.1 µs   | 263 µs   | 70.4 µs     |
@@ -96,7 +104,7 @@ the iPhone ran are 14–40% faster than vitest on the client rows.
 | materialize 1,000 rows                     | 133 µs     | 53.6 µs   | 282 µs   | 63.2 µs     |
 | materialize 10,000 rows                    | 1.27 ms    | 507 µs    | 2.70 ms  | 757 µs      |
 | materialize 100,000 rows                   | 16.3 ms    | 6.76 ms   | 43.2 ms  | 7.07 ms     |
-| memory for 100,000 rows and a view of them | 240–258 MB | 162 MB†   | 164 MB   | 128 MB†     |
+| memory for 100,000 rows and a view of them | 240–258 MB | 162 MB†   | 164 MB   | 126 MB      |
 | optimistic update with a 1000-row view     | 120 µs     | 14.7 µs†  | 178 µs   | 23 µs†      |
 
 | Benchmark                           | Mac JS  | Mac Swift | Linux JS | Linux Swift |
@@ -117,7 +125,7 @@ times faster.
 | --------------------------------------------------------- | -------- | -------- | -------- |
 | materialize 1,000 rows as structs                         | 138 µs   | 148 µs   | 182 µs   |
 | materialize 10,000 rows as structs                        | 1.29 ms  | 2.61 ms† | 1.94 ms  |
-| materialize 100,000 rows as structs                       | 14.7 ms  | 16.6 ms  | 24.8 ms  |
+| materialize 100,000 rows as structs                       | 14.7 ms  | 16.6 ms  | 19.6 ms  |
 | optimistic update with a 1000-row live query of structs   | 61 µs†   | 78 µs†   | 91 µs†   |
 | poke putting 1 row, 1000-row view                         | 16 µs†   | 19 µs†   | 29 µs†   |
 | poke putting 100 rows, 1000-row view                      | 551 µs†  | 695 µs†  | 1.00 ms† |
