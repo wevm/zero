@@ -8,7 +8,8 @@
   comments page in as they scroll, through `ZeroVirtual`'s `VirtualList`, as
   zbugs' list page and comments do (`useZeroVirtualizer`); the issue list is
   also in UIKit (iOS) and AppKit (macOS), through `VirtualListView`. A
-  relaunch opens the list at the selected issue, or else where it was.
+  relaunch opens the list at the selected issue, or else where it was. With
+  no issue selected, a Mac or an iPad opens the list's first one.
 - `App/`: the app target, as an [XcodeGen](https://github.com/yonaskolb/XcodeGen)
   project.
 - `server/server.ts`: zbugs' backend from this repository's sources, for the
