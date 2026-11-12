@@ -8,8 +8,12 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 
-/// The most entries or children a node of a [`KvMap`] holds.
+/// The most entries or children a node of a [`KvMap`] holds. Unit tests
+/// use small nodes, so a few thousand keys make deep trees and many merges.
+#[cfg(not(test))]
 const MAX_NODE: usize = 64;
+#[cfg(test)]
+const MAX_NODE: usize = 8;
 /// A node with fewer after a delete merges with a neighbor that has room.
 const MIN_NODE: usize = MAX_NODE / 4;
 
@@ -112,11 +116,17 @@ impl Node {
                 } else if len < MIN_NODE && children.len() > 1 {
                     let left = if i + 1 < children.len() { i } else { i - 1 };
                     if children[left].1.len() + children[left + 1].1.len() <= MAX_NODE {
-                        let (_, right) = children.remove(left + 1);
+                        let (bound, right) = children.remove(left + 1);
                         let right = Rc::unwrap_or_clone(right);
                         match (Rc::make_mut(&mut children[left].1), right) {
                             (Node::Leaf(a), Node::Leaf(b)) => a.extend(b),
-                            (Node::Internal(a), Node::Internal(b)) => a.extend(b),
+                            // The first child's bound goes unused until now,
+                            // and is stale once the child before it was
+                            // removed: it gets the bound the right node had.
+                            (Node::Internal(a), Node::Internal(mut b)) => {
+                                b[0].0 = bound;
+                                a.extend(b);
+                            }
                             _ => unreachable!("the children of a node are at one depth"),
                         }
                     }
@@ -715,6 +725,91 @@ mod tests {
         assert_eq!(map, KvMap::default());
         for (copy, model) in &snapshots {
             assert!(copy.iter().eq(model.iter()));
+        }
+    }
+
+    /// Checks that each node's keys are within the bounds lookups use: at
+    /// or above its bound (a first child's, its parent's), below the next.
+    fn check_bounds(map: &KvMap) {
+        fn walk(node: &Node, low: &str, high: Option<&str>) {
+            match node {
+                Node::Leaf(entries) => {
+                    for e in entries {
+                        assert!(e.0.as_str() >= low, "{} below the bound {low}", e.0);
+                        assert!(
+                            high.is_none_or(|h| e.0.as_str() < h),
+                            "{} at or above the next bound",
+                            e.0
+                        );
+                    }
+                }
+                Node::Internal(children) => {
+                    for (i, (bound, child)) in children.iter().enumerate() {
+                        // A first child's own bound is never read.
+                        let low = if i == 0 { low } else { bound.as_str() };
+                        let high = children.get(i + 1).map(|(b, _)| b.as_str()).or(high);
+                        walk(child, low, high);
+                    }
+                }
+            }
+        }
+        if let Some(root) = &map.root {
+            walk(root, "", None);
+        }
+    }
+
+    /// Range deletes, which empty whole nodes, and refills of the gaps
+    /// they leave, at three levels: every key the map iterates is found.
+    /// A merged node once kept a stale bound and lost keys this way.
+    #[test]
+    fn kv_map_range_deletes_keep_every_key_findable() {
+        const SEEDS: u64 = 20;
+        const SPACE: u64 = 2000;
+        const ROUNDS: usize = 200;
+        const WIDTH: u64 = 200;
+        for seed in 1..=SEEDS {
+            let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+            let mut random = |n: u64| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state % n
+            };
+            let key = |i: u64| format!("e/{i:06}");
+            let mut map = KvMap::default();
+            let mut model = BTreeMap::new();
+            for i in 0..SPACE {
+                if random(3) > 0 {
+                    map.set(key(i * 10), Value::Null);
+                    model.insert(key(i * 10), Value::Null);
+                }
+            }
+            for round in 0..ROUNDS {
+                if random(3) == 0 {
+                    let start = random(SPACE) * 10;
+                    let end = start + random(WIDTH) * 10;
+                    let keys: Vec<String> = model
+                        .range(key(start)..key(end))
+                        .map(|(k, _)| k.clone())
+                        .collect();
+                    for k in keys {
+                        assert!(map.delete(&k), "seed {seed} round {round}: delete {k}");
+                        model.remove(&k);
+                    }
+                } else {
+                    let base = random(SPACE) * 10;
+                    for j in 0..random(40) {
+                        map.set(key(base + j), Value::Null);
+                        model.insert(key(base + j), Value::Null);
+                    }
+                }
+                assert_eq!(map.len, model.len(), "seed {seed} round {round}");
+                assert!(map.iter().eq(model.iter()), "seed {seed} round {round}");
+                check_bounds(&map);
+                for k in model.keys() {
+                    assert!(map.has(k), "seed {seed} round {round}: lost {k}");
+                }
+            }
         }
     }
 }
