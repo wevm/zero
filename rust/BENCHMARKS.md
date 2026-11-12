@@ -26,10 +26,11 @@ The JS sides:
 | `memory`, `hydration`, `mutations`    | `pnpm --filter zero-conformance bench` (`src/bench/client.bench.ts`)              |
 | `pokes`, `first sync`, the round trip | none: the JS client applies pokes on the next frame, so a JS timing measures that |
 
-Two of Swift's aren't ported, because the Rust client has nothing to time:
-`btree-set.bench.ts` (memory sources keep sorted `Vec`s, not a B-tree set)
-and the optimistic update with a live query of structs (there is no typed
-live query; an app reads a view's rows as structs, which `hydration` times).
+Two of Swift's aren't ported: `btree-set.bench.ts` (the memory sources'
+B+ tree is internal to the crate; the benchmarks time it through views and
+mutations) and the optimistic update with a live query of structs (there is
+no typed live query; an app reads a view's rows as structs, which
+`hydration` times).
 
 The benchmarks don't run in CI; numbers from shared runners vary too much to
 gate on. CI builds them with the workspace (`cargo clippy --all-targets`,
@@ -51,6 +52,11 @@ Node 22. Compare the clients within a † row, not with the other rows.
 Shared machines vary this much, so compare clients on the same machine, in
 turns.
 
+The rows marked ‡ are medians of three runs of `--time 2 mutations` taken
+in turns on another orb (Swift's `mutations` with its view's size changed
+to match, and `client.bench.ts` for JS), where materializing 100,000 rows
+took 20.5 ms in Rust. Compare the clients within a ‡ row.
+
 In short: Rust is 6–9× faster than JS and 1.5–1.8× faster than Swift on
 views of 1,000 to 100,000 rows, and 1.7× faster than Swift reading them as
 structs. It uses about half of JS's memory and two thirds of Swift's. Each
@@ -67,6 +73,9 @@ rows; JS's is 1.6 times as much at 100,000.
 | materialize 100,000 rows                   | 43.1 ms                     | 4.64 ms                  | 7.04 ms                  |
 | memory for 100,000 rows and a view of them | 158 MB                      | 82.7 MB                  | 126 MB                   |
 | optimistic update with a 1000-row view †   | 274 µs                      | 15.9 µs                  | 39.5 µs                  |
+| optimistic update, 1,000-row view ‡        | 465 µs                      | 14.5 µs                  | 39.3 µs                  |
+| optimistic update, 10,000-row view ‡       | 767 µs                      | 16.4 µs                  | 43.6 µs                  |
+| optimistic update, 100,000-row view ‡      | 1.25 ms                     | 18.8 µs                  | 47.5 µs                  |
 | h32, 64 / 1024 / 8192 chars †              | 433 ns / 3.87 µs / 32.3 µs  | 10 ns / 151 ns / 1.21 µs | 27 ns / 172 ns / 1.23 µs |
 | h64, 64 / 1024 / 8192 chars †              | 703 ns / 6.37 µs / 51.5 µs  | 22 ns / 303 ns / 2.42 µs | 42 ns / 323 ns / 2.45 µs |
 | h128, 64 / 1024 / 8192 chars †             | 1.29 µs / 12.5 µs / 95.3 µs | 41 ns / 605 ns / 4.85 µs | 67 ns / 628 ns / 4.88 µs |
@@ -87,6 +96,9 @@ Rust and Swift only:
 | poke putting 100 rows, 1000-row view †                      | 485 µs  | 1.18 ms       |
 | poke putting 1000 rows, 1000-row view †                     | 5.01 ms | 10.8 ms       |
 | round trip (update, push, confirming poke), 1000-row view † | 39.7 µs | 118 µs        |
+| round trip, 1,000-row view ‡                                | 42.5 µs | 118 µs        |
+| round trip, 10,000-row view ‡                               | 47.1 µs | 129 µs        |
+| round trip, 100,000-row view ‡                              | 76.7 µs | 134 µs        |
 | first sync: zbugs poke of 2,058 rows, issue list view †     | 15.3 ms | 42.9 ms       |
 | first sync: the same poke, no view †                        | 8.86 ms | 24.4 ms       |
 
@@ -142,6 +154,18 @@ timed from the poke's frames arriving to the view being flushed.
   The slower orb's extra cost at 100,000 rows is cache misses: callgrind
   counts the same instructions per row at both sizes, and the rows of
   100,000 no longer fit in the caches.
+
+- **Every mutation copied the sources.** A mutation runs on a fork of
+  the views' sources, and each index was a sorted `Vec` behind an `Rc`,
+  so the mutation's first write to a table copied the whole index: an
+  optimistic update cost O(rows), 852 µs with a 100,000-row view, where
+  Swift's took 48 µs. The indexes are now persistent B+ trees, as in
+  Swift, whose writes copy only the nodes on their path. In turns on the
+  ‡ orb, an optimistic update with a view of 1,000, 10,000, and 100,000
+  rows went from 16.2, 72.9, and 852 µs to 14.5, 16.4, and 18.8 µs, and
+  a round trip from 43.2, 75.6, and 721 µs to 42.5, 47.1, and 76.7 µs.
+  Materializing and memory didn't move (20.4 and 20.5 ms for 100,000
+  rows; 82.8 and 81.5 MB).
 
 Where Rust is still behind:
 

@@ -1,11 +1,11 @@
 //! A source of rows held in memory, kept in sorted order
 //! (`packages/zql/src/ivm/memory-source.ts`).
 //!
-//! Each index is a sorted `Vec` behind an `Rc`. A fetch holds the `Rc` it
-//! started with, and a write copies the `Vec` if a fetch still holds it, so
-//! a fetch in progress keeps reading the rows it started with, as Swift's
-//! copy-on-write B-tree does.
+//! Each index is a persistent B+ tree (`btree.rs`), as in Swift. A fork
+//! shares the tree, a write copies only the nodes on its path, and a fetch
+//! in progress keeps reading the rows it started with.
 
+use super::btree::Tree;
 use super::*;
 use crate::ast::{Condition, Direction, OrderPart};
 use crate::json::{self, Value};
@@ -31,40 +31,31 @@ struct Overlays {
 struct Index {
     sort: Vec<OrderPart>,
     compare: Comparator,
-    data: Rc<Vec<Row>>,
+    data: Tree<Row>,
 }
 
 impl Index {
-    fn new(sort: Vec<OrderPart>, data: Vec<Row>) -> Self {
+    fn new(sort: Vec<OrderPart>, data: Tree<Row>) -> Self {
         let compare = make_comparator(&sort, false);
         Index {
             sort,
             compare,
-            data: Rc::new(data),
+            data,
         }
     }
 
-    fn search(&self, row: &Row) -> Result<usize, usize> {
-        self.data.binary_search_by(|r| (self.compare)(r, row))
+    fn contains(&self, row: &Row) -> bool {
+        self.data.get(row, &*self.compare).is_some()
     }
 
     /// Adds `row`, replacing an equal one.
     fn add(&mut self, row: Row) {
-        match self.search(&row) {
-            Ok(i) => Rc::make_mut(&mut self.data)[i] = row,
-            Err(i) => Rc::make_mut(&mut self.data).insert(i, row),
-        }
+        self.data.add(row, &*self.compare);
     }
 
     /// Removes the row equal to `row`; whether there was one.
     fn delete(&mut self, row: &Row) -> bool {
-        match self.search(row) {
-            Ok(i) => {
-                Rc::make_mut(&mut self.data).remove(i);
-                true
-            }
-            Err(_) => false,
-        }
+        self.data.delete(row, &*self.compare)
     }
 
     /// `probe` for a scan starting at `bound`: the ordering of a row against
@@ -164,7 +155,7 @@ impl MemorySource {
         let mut state = State::default();
         state.indexes.insert(
             primary_index_key.clone(),
-            Index::new(primary_index_sort.clone(), Vec::new()),
+            Index::new(primary_index_sort.clone(), Tree::new()),
         );
         state.index_order.push(primary_index_key.clone());
         Rc::new_cyclic(|me| MemorySource {
@@ -178,14 +169,19 @@ impl MemorySource {
 
     /// The rows, in primary key order.
     pub fn data(&self) -> Rc<Vec<Row>> {
-        self.primary_index().data
+        Rc::new(self.primary_index().data.iter(None, false).collect())
+    }
+
+    /// Whether the source has no rows.
+    pub fn is_empty(&self) -> bool {
+        self.primary_index().data.is_empty()
     }
 
     /// A source with the same rows that shares them until either is written
     /// (`fork`). It has no connections and only the primary index.
     pub fn fork(&self) -> Rc<Self> {
         let fork = MemorySource::new(self.table.clone());
-        let data = self.data();
+        let data = self.primary_index().data;
         fork.state
             .borrow_mut()
             .indexes
@@ -202,7 +198,7 @@ impl MemorySource {
 
     /// Whether the source has a row with `row`'s primary key.
     pub fn contains(&self, row: &Row) -> bool {
-        self.primary_index().search(row).is_ok()
+        self.primary_index().contains(row)
     }
 
     /// Whether `a` and `b` have the same primary key.
@@ -236,11 +232,14 @@ impl MemorySource {
         if let Some(index) = state.indexes.get(&key) {
             return index.clone();
         }
-        let mut index = Index::new(sort, Vec::new());
-        let mut rows = state.indexes[&self.primary_index_key].data.to_vec();
+        let mut index = Index::new(sort, Tree::new());
+        let mut rows: Vec<Row> = state.indexes[&self.primary_index_key]
+            .data
+            .iter(None, false)
+            .collect();
         let compare = index.compare.clone();
         rows.sort_by(|a, b| compare(a, b));
-        index.data = Rc::new(rows);
+        index.data = Tree::from_sorted(rows);
         state.indexes.insert(key.clone(), index.clone());
         state.index_order.push(key);
         index
@@ -317,8 +316,7 @@ impl MemorySource {
         // decides on that part, and a later part for the column only sees
         // equal values. (JS takes the last, so a sort like
         // `text desc, text asc` starts past every match.)
-        let data = index.data.clone();
-        let position = if let Some(constraint) = fetch_or_pk {
+        let rows = if let Some(constraint) = fetch_or_pk {
             let mut scan_start: HashMap<String, Bound> = HashMap::new();
             for part in &index.sort {
                 if scan_start.contains_key(&part.field) {
@@ -335,19 +333,12 @@ impl MemorySource {
                 scan_start.insert(part.field.clone(), b);
             }
             let probe = index.probe(scan_start);
-            start_position(&data, &probe, reverse)
+            index.data.iter(Some(&probe), reverse)
         } else if let Some(start) = &start_at {
             let c = index_compare.clone();
-            start_position(&data, &|r: &Row| c(r, start), reverse)
-        } else if reverse {
-            data.len() as isize - 1
+            index.data.iter(Some(&|r: &Row| c(r, start)), reverse)
         } else {
-            0
-        };
-        let rows = TreeRows {
-            data,
-            next: position,
-            reverse,
+            index.data.iter(None, reverse)
         };
 
         let (overlay, last_pushed) = {
@@ -465,7 +456,7 @@ impl MemorySource {
                 _ => deduped.push(row),
             }
         }
-        index.data = Rc::new(deduped);
+        index.data = Tree::from_sorted(deduped);
     }
 
     fn gen_push_and_write_with_split_edit(&self, change: SourceChange) {
@@ -509,16 +500,12 @@ impl MemorySource {
     fn gen_push(&self, change: &SourceChange, epoch: u64) {
         let primary = self.primary_index();
         let check = match change {
-            SourceChange::Add(row) => primary
-                .search(row)
-                .is_err()
+            SourceChange::Add(row) => (!primary.contains(row))
                 .then_some(())
                 .ok_or("Row already exists"),
-            SourceChange::Remove(row) | SourceChange::Edit { old_row: row, .. } => primary
-                .search(row)
-                .is_ok()
-                .then_some(())
-                .ok_or("Row not found"),
+            SourceChange::Remove(row) | SourceChange::Edit { old_row: row, .. } => {
+                primary.contains(row).then_some(()).ok_or("Row not found")
+            }
         };
         if let Err(message) = check {
             panic!("{message} {}", describe(change));
@@ -710,36 +697,6 @@ impl Input for MemorySourceInput {
 impl SourceInput for MemorySourceInput {
     fn fully_applied_filters(&self) -> bool {
         self.fully_applied_filters
-    }
-}
-
-/// The first index of a scan from `probe`: forward, the first row not
-/// before it; in reverse, the last row not after it (-1 for none).
-fn start_position(data: &[Row], probe: &dyn Fn(&Row) -> Ordering, reverse: bool) -> isize {
-    if reverse {
-        data.partition_point(|r| probe(r) != Ordering::Greater) as isize - 1
-    } else {
-        data.partition_point(|r| probe(r) == Ordering::Less) as isize
-    }
-}
-
-/// An index's rows from a position, ascending or descending.
-struct TreeRows {
-    data: Rc<Vec<Row>>,
-    next: isize,
-    reverse: bool,
-}
-
-impl Iterator for TreeRows {
-    type Item = Row;
-
-    fn next(&mut self) -> Option<Row> {
-        if self.next < 0 {
-            return None;
-        }
-        let row = self.data.get(self.next as usize)?.clone();
-        self.next += if self.reverse { -1 } else { 1 };
-        Some(row)
     }
 }
 

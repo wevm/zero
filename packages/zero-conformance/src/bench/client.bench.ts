@@ -115,8 +115,7 @@ for (const n of [1_000, 10_000, 100_000]) {
   });
 }
 
-{
-  const n = 1000;
+for (const n of [1_000, 10_000, 100_000]) {
   const z = await makeZero(n);
   const view = z.materialize(zql.user);
   let value = n;
