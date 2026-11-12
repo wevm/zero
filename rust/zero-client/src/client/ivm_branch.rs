@@ -277,7 +277,7 @@ impl IvmBranch {
             .filter(|(name, s)| {
                 is_aggregate_table_name(name)
                     && s.as_ref()
-                        .is_some_and(|s| s.data().is_empty() && !s.has_connections())
+                        .is_some_and(|s| s.is_empty() && !s.has_connections())
             })
             .map(|(name, _)| name.clone())
             .collect();

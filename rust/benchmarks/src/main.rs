@@ -262,48 +262,50 @@ fn first_sync(bench: &mut Bench) {
 /// Mutations, with a view of 1000 rows.
 fn mutations(bench: &mut Bench) {
     bench.group("mutations", |bench| {
-        let n = 1000;
-        let value = Cell::new(n);
+        for n in [1000, 10_000, 100_000] {
+            let value = Cell::new(n);
 
-        // Checks the row `value` last updated, if it changed since `before`
-        // (a filter may have skipped the benchmark).
-        let check_updated = |view: &zero_client::client::MaterializedView, before, what: &str| {
-            if value.get() > before {
-                check(b(view, value.get() % n) == Some(value.get() as f64), what);
-            }
-        };
+            // Checks the row `value` last updated, if it changed since `before`
+            // (a filter may have skipped the benchmark).
+            let check_updated =
+                |view: &zero_client::client::MaterializedView, before, what: &str| {
+                    if value.get() > before {
+                        check(b(view, value.get() % n) == Some(value.get() as f64), what);
+                    }
+                };
 
-        let local = Client::new(n, false);
-        let local_view = local.materialize(&users(local.zero.schema()));
-        let before = value.get();
-        bench.run(&format!("optimistic update, {n}-row view"), || {
-            value.set(value.get() + 1);
-            let args = update_user_args(value.get() % n, value.get());
-            let _ = local.zero.mutate("updateUser", Some(args));
-        });
-        check_updated(&local_view, before, "updated");
+            let local = Client::new(n, false);
+            let local_view = local.materialize(&users(local.zero.schema()));
+            let before = value.get();
+            bench.run(&format!("optimistic update, {n}-row view"), || {
+                value.set(value.get() + 1);
+                let args = update_user_args(value.get() % n, value.get());
+                let _ = local.zero.mutate("updateUser", Some(args));
+            });
+            check_updated(&local_view, before, "updated");
 
-        // The client's side of a round trip: the optimistic update, the
-        // push, and the poke that confirms it, which rebases the pending
-        // mutations.
-        let remote = Client::new(n, true);
-        let remote_view = remote.materialize(&users(remote.zero.schema()));
-        let last_mutation_id = Cell::new(0);
-        let before = value.get();
-        bench.run(&format!("round trip, {n}-row view"), || {
-            value.set(value.get() + 1);
-            last_mutation_id.set(last_mutation_id.get() + 1);
-            let a = value.get() % n;
-            let _ = remote
-                .zero
-                .mutate("updateUser", Some(update_user_args(a, value.get())));
-            remote.scheduler.run_due_timers();
-            remote.receive(&remote.next_poke(
-                &[vec![user_json(a, value.get())]],
-                Some(last_mutation_id.get()),
-            ));
-        });
-        check_updated(&remote_view, before, "confirmed");
+            // The client's side of a round trip: the optimistic update, the
+            // push, and the poke that confirms it, which rebases the pending
+            // mutations.
+            let remote = Client::new(n, true);
+            let remote_view = remote.materialize(&users(remote.zero.schema()));
+            let last_mutation_id = Cell::new(0);
+            let before = value.get();
+            bench.run(&format!("round trip, {n}-row view"), || {
+                value.set(value.get() + 1);
+                last_mutation_id.set(last_mutation_id.get() + 1);
+                let a = value.get() % n;
+                let _ = remote
+                    .zero
+                    .mutate("updateUser", Some(update_user_args(a, value.get())));
+                remote.scheduler.run_due_timers();
+                remote.receive(&remote.next_poke(
+                    &[vec![user_json(a, value.get())]],
+                    Some(last_mutation_id.get()),
+                ));
+            });
+            check_updated(&remote_view, before, "confirmed");
+        }
     });
 }
 
