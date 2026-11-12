@@ -1637,7 +1637,8 @@ final class Engine {
     }
     if !pending.isEmpty {
       // The rebase runs over a fork of the views' branch moved to the new
-      // snapshot.
+      // snapshot. JS's fork throws once that branch has failed.
+      if let failure = context.branchFailure { throw failure }
       let branch = ivmMain.fork()
       branch.apply(KVDiff.between(store.main, snapshot.map, keys: touched))
       let rebased = replay(pending, over: main, branch: branch)
@@ -1795,9 +1796,10 @@ final class Engine {
       toRun = pending.filter { !persisted.mutations.contains(MutationKey($0)) }
     }
     persisted.mutations = Set(pending.map(MutationKey.init))
-    guard !toRun.isEmpty else { return }
     // The persist runs over a fork of the views' branch moved to what it
-    // persisted.
+    // persisted. JS's fork throws once that branch has failed, and the
+    // persist with it; the branch's sources no longer follow the replica.
+    guard !toRun.isEmpty, context.branchFailure == nil else { return }
     let branch = ivmMain.fork()
     branch.apply(
       KVDiff.between(

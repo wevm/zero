@@ -367,4 +367,26 @@ export const bughuntScenarios: Scenario[] = [
       advance(10),
     ],
   },
+  {
+    // A mutation gives a \`one\` relationship a second row, which fails the
+    // views' branch. The rebase of the next poke and the next persist fork
+    // that branch, which JS's fork refuses.
+    name: 'bughunt: a poke and a persist after a mutation failed the views',
+    steps: [
+      ...synced(['issues.withOneComment'], {
+        issues: [issue('i1')],
+        comments: [comment('c1', 'i1')],
+        users: [],
+      }),
+      ops('m1', [newComment('c9', 'i1')]),
+      advance(10),
+      ops('m2', [newComment('c8', 'i2')]),
+      advance(10),
+      ...poke('p2', '01', '02', {rowsPatch: []}),
+      advance(10),
+      advance(2000),
+      ops('m3', [newComment('c7', 'i2')]),
+      advance(2000),
+    ],
+  },
 ];

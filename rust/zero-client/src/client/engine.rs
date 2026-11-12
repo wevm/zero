@@ -2914,7 +2914,10 @@ impl Engine {
             .collect();
         if !pending.is_empty() {
             // The rebase runs over a fork of the views' branch moved to the
-            // new snapshot.
+            // new snapshot. JS's fork throws once that branch has failed.
+            if let Some(f) = self.context.branch_failure() {
+                return Err(format!("Error: {f}"));
+            }
             let branch = self.ivm_main.fork();
             let moved = diff_keys(&store_main, &snapshot.map, &touched);
             capture(|| branch.apply(&moved, &HashMap::new())).map_err(|e| format!("Error: {e}"))?;
@@ -3100,11 +3103,13 @@ impl Engine {
                 .collect();
             to_run
         };
-        if to_run.is_empty() {
+        // The persist runs over a fork of the views' branch moved to what
+        // it persisted. JS's fork throws once that branch has failed, and
+        // the persist with it; the branch's sources no longer follow the
+        // replica.
+        if to_run.is_empty() || self.context.branch_failure().is_some() {
             return;
         }
-        // The persist runs over a fork of the views' branch moved to what
-        // it persisted.
         let (persisted_main, persisted_touched) = {
             let p = self.persisted.borrow();
             (p.main.clone(), p.touched.clone())
