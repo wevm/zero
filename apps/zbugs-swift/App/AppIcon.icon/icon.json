@@ -22,6 +22,26 @@
     {
       "layers": [
         {
+          "image-name": "swift.svg",
+          "name": "swift",
+          "position": {
+            "scale": 1,
+            "translation-in-points": [255, 255]
+          }
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "translucency": {
+        "enabled": false,
+        "value": 0.5
+      }
+    },
+    {
+      "layers": [
+        {
           "fill-specializations": [
             {
               "value": {
