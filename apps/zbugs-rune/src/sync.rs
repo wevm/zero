@@ -255,7 +255,8 @@ impl<S: 'static, C: Clone + 'static> Worker<S, C> {
         ) {
             Ok(z) => z,
             Err(e) => {
-                // Only a mutator registered twice fails here.
+                // A mutator registered twice, or a cache URL that isn't
+                // http:// or https://, fails here.
                 let reason = e.message();
                 let f = self.on_connection;
                 self.ui

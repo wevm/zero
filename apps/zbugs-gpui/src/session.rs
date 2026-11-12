@@ -102,7 +102,9 @@ impl Session {
             auth.clone(),
             client_mutators(),
             ZeroOptions {
-                cache_url: Some(cache_url.clone()),
+                // A bad address, from the environment or the saved file,
+                // runs offline: the app shows why (`ZbugsApp::new`).
+                cache_url: zbugs_model::cache_http_url(&cache_url).ok(),
                 user_id: auth.as_ref().map(|a| a.sub.clone()),
                 auth: token.clone(),
                 mutate_url: Some(format!("{api_url}/api/mutate")),
