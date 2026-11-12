@@ -339,8 +339,12 @@ impl App {
             self.settings.token = None;
         }
         self.me = None;
+        // A bad address, from the environment or the saved settings, fails
+        // the client, and the connection badge says why.
+        let cache_url = zbugs_model::cache_http_url(&self.settings.cache_url)
+            .unwrap_or_else(|_| self.settings.cache_url.clone());
         self.sync.connect(Session {
-            cache_url: self.settings.cache_url.clone(),
+            cache_url,
             api_url: self.settings.api_url.clone(),
             token: self.settings.token.clone(),
             user_id: self.auth.as_ref().map(|a| a.sub.clone()),
@@ -1088,8 +1092,12 @@ impl App {
     pub fn save_servers(&mut self) {
         let cache = self.cache_edit.text.trim().trim_end_matches('/').to_owned();
         let api = self.api_edit.text.trim().trim_end_matches('/').to_owned();
-        if !cache.starts_with("http") || !api.starts_with("http") {
-            self.sheet_error = Some("Both are http:// or https:// URLs.".into());
+        if let Err(e) = zbugs_model::cache_http_url(&cache) {
+            self.sheet_error = Some(e);
+            return;
+        }
+        if !api.starts_with("http") {
+            self.sheet_error = Some("The zbugs API is an http:// or https:// URL.".into());
             return;
         }
         self.settings.cache_url = cache.clone();

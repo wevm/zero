@@ -85,8 +85,10 @@
           .toolbar { toolbar }
           // Otherwise the list only says it's connecting, as it never will.
           .safeAreaInset(edge: .bottom) {
-            if model.serversAreThisDevice && model.zero.connection.state != .connected {
-              ServersWarning { sheet = .servers }
+            if let error = model.cacheURLError {
+              ServersWarning(message: error) { sheet = .servers }
+            } else if model.serversAreThisDevice && model.zero.connection.state != .connected {
+              ServersWarning(message: AppModel.thisDeviceWarning) { sheet = .servers }
             }
           }
       } detail: {
@@ -300,13 +302,14 @@
     }
   }
 
-  /// Servers set to this device, with a way to change them.
+  /// Servers the app can't reach, with a way to change them.
   private struct ServersWarning: View {
+    let message: String
     let change: () -> Void
 
     var body: some View {
       VStack(alignment: .leading, spacing: 8) {
-        SwiftUI.Label(AppModel.thisDeviceWarning, systemImage: "exclamationmark.triangle.fill")
+        SwiftUI.Label(message, systemImage: "exclamationmark.triangle.fill")
           .symbolRenderingMode(.multicolor)
         Button("Servers…", action: change)
           .buttonStyle(.borderedProminent)

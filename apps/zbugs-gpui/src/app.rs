@@ -474,6 +474,9 @@ impl ZbugsApp {
             let q = USER_PREF.call(&SKIN_TONE_PREF.to_owned(), Some(a));
             Live::new(&session.zero, q, &ttl(), cx)
         });
+        // A zero-cache address the client can't take, from the environment
+        // or the saved file: the client runs offline (`Session::new`).
+        let error = zbugs_model::cache_http_url(&session.cache_url).err();
         let mut app = ZbugsApp {
             session,
             filters,
@@ -500,7 +503,7 @@ impl ZbugsApp {
             comment,
             scroll: UniformListScrollHandle::new(),
             connection,
-            error: None,
+            error,
             view_timer: None,
             title: String::new(),
             seen: None,
@@ -566,6 +569,11 @@ impl ZbugsApp {
     ) -> bool {
         if cache_url.is_empty() || api_url.is_empty() {
             self.error = Some("Both servers need a URL.".into());
+            cx.notify();
+            return false;
+        }
+        if let Err(e) = zbugs_model::cache_http_url(&cache_url) {
+            self.error = Some(e);
             cx.notify();
             return false;
         }

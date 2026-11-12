@@ -77,6 +77,10 @@
       restart()
     }
 
+    /// Why the zero-cache address doesn't work, for a warning; the client
+    /// runs offline until it's fixed.
+    public var cacheURLError: String? { ZBugs.cacheURLError(cacheURL) }
+
     /// Whether a server is set to this device itself, where the app can't
     /// reach the backend: see `isThisDevice`.
     public var serversAreThisDevice: Bool {
@@ -147,15 +151,18 @@
     private static func makeZero(
       cacheURL: String, apiURL: String, token: String?, auth: AuthData?
     ) -> Zero<AuthData?> {
-      var options = ZeroOptions(cacheURL: cacheURL, userID: auth?.sub, auth: token)
+      // A bad address runs offline, as `cacheURLError` says, rather than
+      // failing the client.
+      var options = ZeroOptions(
+        cacheURL: cacheClientURL(cacheURL), userID: auth?.sub, auth: token)
       options.mutateURL = apiURL + "/api/mutate"
       options.queryURL = apiURL + "/api/query"
       options.logLevel = .info
       do {
         return try Zero(schema: .zbugs, context: auth, mutators: Mutators.all, options: options)
       } catch {
-        // Only a mutator registered twice fails; storage falls back to
-        // memory on its own.
+        // Only a mutator registered twice fails: the cache URL is one it
+        // takes, and storage falls back to memory on its own.
         preconditionFailure("zbugs' mutators: \(error)")
       }
     }

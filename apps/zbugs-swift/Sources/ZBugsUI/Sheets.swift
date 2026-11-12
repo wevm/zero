@@ -145,7 +145,10 @@
             TextField("zero-cache", text: $cacheURL)
             TextField("zbugs API", text: $apiURL)
           } footer: {
-            if AppModel.isThisDevice(cacheURL) || AppModel.isThisDevice(apiURL) {
+            if let error = cacheURLError(cacheURL) {
+              Text(error)
+                .foregroundStyle(.red)
+            } else if AppModel.isThisDevice(cacheURL) || AppModel.isThisDevice(apiURL) {
               Text(AppModel.thisDeviceWarning)
                 .foregroundStyle(.orange)
             }
@@ -163,6 +166,7 @@
               model.setServers(cacheURL: cacheURL, apiURL: apiURL)
               dismiss()
             }
+            .disabled(cacheURLError(cacheURL) != nil)
           }
         }
         .onAppear {
