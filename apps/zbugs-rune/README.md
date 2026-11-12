@@ -78,6 +78,17 @@ saved ones for that launch, and `ZBUGS_RUNE_DIR`
 moves the settings, the replica, and the token (as a file, out of the
 Keychain), so a test leaves the real login alone.
 
+On macOS, `cargo run` runs the app as an app: `bundle.sh`, Cargo's runner
+there (`.cargo/config.toml`), makes `ZBugs Rune.app` beside the executable
+(`target/release` here) and runs the app from inside it, so the Dock and the
+app switcher show its icon. The environment, the arguments, and the output
+are as before. The bundle stays, to open from Finder or keep in the Dock.
+The icon is compiled with Xcode's `actool`, which needs Xcode 26 or later.
+
+The icon (`AppIcon.icon`, an Icon Composer file) is zbugs-swift's with
+Rune's logo as a badge: its pixel ᚱ, from Rune's repository (MIT,
+© 2026 Anomaly).
+
 Like every Rune app, it renders headless too:
 `cargo run -- --snap zbugs.png --size 1180x760` (and `--tree`, `--script`;
 see Rune's README).

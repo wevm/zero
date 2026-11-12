@@ -37,3 +37,15 @@ ZBUGS_TOKEN=<token> cargo run
 `ZBUGS_CACHE_URL` (default `http://127.0.0.1:4848`) and `ZBUGS_API_URL`
 (default `http://127.0.0.1:5173`) point it elsewhere. Each is also read from
 a file of that name (`token`, `cache-url`, `api-url`) in the app's directory.
+
+On macOS, `cargo run` runs the app as an app: `bundle.sh`, Cargo's runner
+there (`.cargo/config.toml`), makes `ZBugs GPUI.app` beside the executable
+(`target/debug`, or `target/release` with `--release`) and runs the app from
+inside it, so the Dock and the app switcher show its icon. The environment
+and the output are as before. The bundle stays, to open from Finder or keep
+in the Dock; it reads the token and the servers from the files above. The
+icon is compiled with Xcode's `actool`, which needs Xcode 26 or later.
+
+The icon (`AppIcon.icon`, an Icon Composer file) is zbugs-swift's with
+GPUI's logo as a badge, the mark from [gpui.rs](https://www.gpui.rs). GPUI
+and its logo are Zed Industries'.

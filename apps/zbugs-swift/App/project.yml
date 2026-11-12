@@ -18,7 +18,9 @@ targets:
       testTargets: [ZBugsUITests]
     sources:
       - path: ZBugsApp.swift
-      # The app icon (Icon Composer): the Zero logo from zero.rocicorp.dev.
+      # The app icon (Icon Composer): the Zero logo from zero.rocicorp.dev,
+      # with Swift's logo (swift.org; Apple's trademark) as a badge, as the
+      # GPUI and Rune apps have theirs.
       - path: AppIcon.icon
       - path: Info.plist
         buildPhase: none

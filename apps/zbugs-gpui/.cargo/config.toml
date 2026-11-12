@@ -1,0 +1,4 @@
+# `cargo run` on macOS runs the app from inside an app bundle with its icon
+# (bundle.sh), rather than as a bare executable.
+[target.'cfg(target_os = "macos")']
+runner = "./bundle.sh"
