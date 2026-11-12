@@ -107,6 +107,7 @@
       // A new client, as the user logs in: the list starts over, at the
       // selected issue.
       .onChange(of: ObjectIdentifier(model.zero), initial: true) { makeIssues() }
+      .task(id: issues.map(ObjectIdentifier.init)) { await selectFirstIssue() }
       // Another list: from its top, not the issue it opened at.
       .onChange(of: filter) { _, filter in
         issues?.permalinkID = nil
@@ -188,6 +189,23 @@
         saving.run { save.wrappedValue = try? JSONEncoder().encode(state) }
       }
       issues = list
+    }
+
+    /// With no issue selected, as on a first launch, selects the list's
+    /// first one once it has rows, so the detail column shows an issue. Not
+    /// on an iPhone, where it would open over the list.
+    private func selectFirstIssue() async {
+      guard let issues else { return }
+      for await first in Observations({ issues.snapshot.items.first?.key }) {
+        guard selection == nil else { return }
+        #if os(iOS)
+          if sizeClass == .compact { return }
+        #endif
+        if let first {
+          selection = first
+          return
+        }
+      }
     }
 
     /// The issue the list highlights: the selected one, when the list is
