@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # zbugs-rune against zbugs' backend, end to end: the app runs headless on
-# the wall clock (`--realtime`), opens an open issue, comments on it, reacts
+# the wall clock (`--realtime`), steps away from an open issue and back with
+# the arrow keys, then opens it, comments on it, reacts
 # to it, labels it, closes it, edits the comment, creates a label for it,
 # makes it internal, and unsubscribes from it, pressing its controls as a
 # person would. Opening it marks it viewed. Then Postgres must have each
@@ -22,6 +23,25 @@ out=$(mktemp -d)
 issue=$(sql "select id from issue i where open and not exists
   (select 1 from comment c where c.\"issueID\" = i.id)
   order by length(description), \"shortID\" limit 1")
+
+# First the arrow keys: down twice, up, then k must land back on the issue,
+# which the app saves as its selection. Before the view-state reset below,
+# as this run marks the issue viewed.
+mkdir -p "$out/arrows"
+printf '{"selection":"%s"}' "$issue" > "$out/arrows/settings.json"
+cat > "$out/arrows.json" <<EOF
+{"events": [
+  {"t": 12.0, "type": "key", "name": "Down"},
+  {"t": 12.3, "type": "key", "name": "Down"},
+  {"t": 12.6, "type": "key", "name": "Up"},
+  {"t": 12.9, "type": "key", "name": "k"}
+]}
+EOF
+ZBUGS_RUNE_DIR="$out/arrows" cargo run --locked --quiet -- --realtime \
+  --script "$out/arrows.json" --at 13.5 --size 1180x760 >/dev/null
+arrows=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).selection)' \
+  "$out/arrows/settings.json")
+
 # The label picker lists the issue's project's labels by name, bytewise.
 first_label=$(sql "select l.name from label l join issue i on i.\"projectID\" = l.\"projectID\"
   where i.id = '$issue' order by l.name collate \"C\" limit 1")
@@ -72,6 +92,7 @@ fail=0
 check() {
   if [ "$2" = "$3" ]; then echo "ok: $1"; else echo "FAILED: $1: got '$2', want '$3'"; fail=1; fi
 }
+check "the arrow keys" "$arrows" "$issue"
 check "the comment, edited" \
   "$(sql "select count(*) from comment where \"issueID\" = '$issue' and body = '$body edited'")" 1
 check "the reaction" \
