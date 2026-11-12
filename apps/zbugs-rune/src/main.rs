@@ -538,11 +538,10 @@ impl App {
         if self.selected.as_ref() == Some(&id) {
             return;
         }
-        self.detail = None;
-        self.detail_result = ResultType::Unknown;
+        // The last issue and its comments stay until this one's rows come,
+        // a frame later from the local store, rather than "Loading…" between.
         self.picker = None;
         self.editing_comment = None;
-        self.comments.clear();
         self.comments_limit = COMMENTS_PAGE;
         self.comment = TextEdit::new("");
         self.watch_detail(&id);
@@ -687,6 +686,7 @@ impl App {
         };
         let id = issue.id.clone();
         tx.scroll_into_view(id.clone());
+        tx.color_motion(rune::Spring::NONE);
         self.select(id);
         // Near the end of what's loaded: the next page.
         if let Some(i) = to {

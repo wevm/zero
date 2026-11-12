@@ -701,7 +701,11 @@ fn issue_row(s: &App, issue: &Issue, k: &Kit) -> El {
         .w_full()
         .px(12.0)
         .py(9.0)
-        .on_press(move |s: &mut App| s.select(id.clone()))
+        .on_press_tx(move |s: &mut App, tx| {
+            // The highlight moves at once, with the issue beside it.
+            tx.color_motion(rune::Spring::NONE);
+            s.select(id.clone());
+        })
         .child(text_col.w_full());
     if selected {
         r = r.fill(k.c.layer_02);
@@ -795,8 +799,11 @@ fn detail(s: &App, k: &Kit, layer: &mut Vec<El>) -> El {
             .build(k)
             .key("search"),
     );
+    // Another issue lands at once, as in zbugs-swift and zbugs-gpui: without
+    // this, Rune fades the last issue's text out while the new one fades in.
     let frame = col()
         .key("detail")
+        .instant_changes()
         .grow(1.0)
         .h_full()
         .min_w(0.0)
