@@ -1130,9 +1130,10 @@ fn apply_issues(s: &mut App, rows: Vec<Issue>, result_type: ResultType, tx: &mut
     }
 }
 
-/// Keys no control took: j and k step through the list, / starts a search,
-/// as on the web, and Escape closes an open picker (Rune's popovers leave
-/// Escape to the app).
+/// Keys no control took: j and k (and the arrow keys, as zbugs-swift's and
+/// zbugs-gpui's lists) step through the list, / starts a search, as on the
+/// web, and Escape closes an open picker (Rune's popovers leave Escape to
+/// the app).
 fn on_key(s: &mut App, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
     if s.sheet.is_some()
         || s.confirm.is_some()
@@ -1144,6 +1145,8 @@ fn on_key(s: &mut App, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
     }
     match &event.key {
         rune::Key::Escape if s.picker.is_some() => s.picker = None,
+        rune::Key::Down => s.step(1, tx),
+        rune::Key::Up => s.step(-1, tx),
         rune::Key::Text(t) if t == "j" => s.step(1, tx),
         rune::Key::Text(t) if t == "k" => s.step(-1, tx),
         rune::Key::Text(t) if t == "/" => s.search.focused = true,
