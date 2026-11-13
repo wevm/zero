@@ -104,7 +104,8 @@ Amp orb), where it ran out of time with the other files running beside it.
 ## Conformance vectors
 
 `packages/zero-conformance` turns two of these into vectors that the Swift
-client replays (`swift/Tests/ConformanceTests/RestoredIVMTests.swift`):
+client (`swift/Tests/ConformanceTests/RestoredIVMTests.swift`) and the Rust
+client (`restored` in `rust/conformance/src/suites/ivm.rs`) replay:
 
 - `src/ivm/restored-ivm.test.ts` runs the restored zql tests that build a
   pipeline from an AST, with their own assertions. It records each case they
