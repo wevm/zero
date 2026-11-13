@@ -9,7 +9,7 @@ use crate::live::Live;
 use crate::picker::{self, Choice};
 use crate::session::{Session, app_dir, now_ms, save_setting};
 use futures::StreamExt;
-use futures::channel::mpsc;
+use futures::channel::{mpsc, oneshot};
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::base::actions::Confirm;
 use gpui_kit::component::button::*;
@@ -1407,9 +1407,21 @@ impl ZbugsApp {
             cx.background_executor()
                 .timer(std::time::Duration::from_secs(1))
                 .await;
+            // Then once the server has confirmed what's pending: it stamps
+            // an issue's `modified` itself as it applies a change, after the
+            // client showed it, so a viewed time taken before that would
+            // leave the issue unread.
+            let (done, settled) = oneshot::channel();
+            let waiting = this.update(cx, |this, _| {
+                this.session.zero.when_pending_settled(move || {
+                    let _ = done.send(());
+                })
+            });
+            if waiting.is_err() || settled.await.is_err() {
+                return;
+            }
             let _ = this.update(cx, |this, cx| {
-                // Done: a change the server confirms after this one, such
-                // as its own `modified` for a close, starts another.
+                // Done: a change after this one starts another.
                 this.view_timer = None;
                 let modified = this
                     .detail
