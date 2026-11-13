@@ -152,6 +152,9 @@ pub struct App {
     pub checked: Vec<String>,
     /// Scroll the list to the selected issue once it's there (a relaunch).
     reveal_selected: bool,
+    /// Select the list's first issue once it has rows: a launch with no
+    /// selection to restore.
+    select_first: bool,
     pub detail: Option<Issue>,
     pub detail_result: ResultType,
     pub comments: Vec<Comment>,
@@ -276,6 +279,7 @@ impl App {
             select_mode: false,
             checked: Vec::new(),
             reveal_selected: false,
+            select_first: true,
             detail: None,
             detail_result: ResultType::Unknown,
             comments: Vec::new(),
@@ -307,9 +311,11 @@ impl App {
             saved,
         };
         app.restart();
-        // A relaunch opens at the issue it was showing.
+        // A relaunch opens at the issue it was showing, or else at the
+        // list's first (`apply_issues`).
         if let Some(id) = app.saved.selection.clone() {
             app.reveal_selected = true;
+            app.select_first = false;
             app.select(id);
         }
         app
@@ -1135,6 +1141,17 @@ impl App {
 fn apply_issues(s: &mut App, rows: Vec<Issue>, result_type: ResultType, tx: &mut Tx) {
     s.issues = rows;
     s.issues_result = result_type;
+    // With no issue selected at launch, the list's first, as zbugs-swift
+    // does, so the issue column shows one. Only the first time: an issue
+    // deleted later leaves none selected.
+    if s.select_first
+        && let Some(id) = s.issues.first().map(|i| i.id.clone())
+    {
+        s.select_first = false;
+        if s.selected.is_none() {
+            s.select(id);
+        }
+    }
     if s.reveal_selected
         && let Some(id) = &s.selected
         && s.issues.iter().any(|i| &i.id == id)

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # zbugs-rune against zbugs' backend, end to end: the app runs headless on
-# the wall clock (`--realtime`), steps away from an open issue and back with
+# the wall clock (`--realtime`), opens at the list's first issue with no
+# selection saved, steps away from an open issue and back with
 # the arrow keys, then opens it, comments on it, reacts
 # to it, labels it, closes it, edits the comment, creates a label for it,
 # makes it internal, and unsubscribes from it, pressing its controls as a
@@ -24,7 +25,19 @@ issue=$(sql "select id from issue i where open and not exists
   (select 1 from comment c where c.\"issueID\" = i.id)
   order by length(description), \"shortID\" limit 1")
 
-# First the arrow keys: down twice, up, then k must land back on the issue,
+# With no selection saved, the app opens at the list's first issue (open
+# ones in the zero project, last modified first) and saves it.
+first_issue=$(sql "select i.id from issue i join project p on p.id = i.\"projectID\"
+  where i.open and p.\"lowerCaseName\" = 'zero'
+  order by i.modified desc, i.id collate \"C\" desc limit 1")
+mkdir -p "$out/first"
+echo '{"events": []}' > "$out/first.json"
+ZBUGS_RUNE_DIR="$out/first" cargo run --locked --quiet -- --realtime \
+  --script "$out/first.json" --at 12 --size 1180x760 >/dev/null
+first=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).selection)' \
+  "$out/first/settings.json")
+
+# Then the arrow keys: down twice, up, then k must land back on the issue,
 # which the app saves as its selection. Before the view-state reset below,
 # as this run marks the issue viewed.
 mkdir -p "$out/arrows"
@@ -92,6 +105,7 @@ fail=0
 check() {
   if [ "$2" = "$3" ]; then echo "ok: $1"; else echo "FAILED: $1: got '$2', want '$3'"; fail=1; fi
 }
+check "the first issue, with none saved" "$first" "$first_issue"
 check "the arrow keys" "$arrows" "$issue"
 check "the comment, edited" \
   "$(sql "select count(*) from comment where \"issueID\" = '$issue' and body = '$body edited'")" 1

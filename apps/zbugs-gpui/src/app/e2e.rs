@@ -3,7 +3,7 @@
 //! a user would through its own controls' handlers, and exits 0 when every
 //! step shows up, or 1 with the step that didn't.
 //!
-//! - `ZBUGS_E2E=online`: lists issues, creates and deletes one, creates
+//! - `ZBUGS_E2E=online`: lists issues and opens the first, creates and deletes one, creates
 //!   two more and deletes them together, creates another, goes to the
 //!   next issue and back with j and k, unsubscribes from it, comments,
 //!   edits and deletes comments, reacts in a skin tone, labels it (with a label it makes
@@ -136,6 +136,11 @@ async fn online(window: AnyWindowHandle, app: &Entity<ZbugsApp>, cx: &mut AsyncA
         .ok_or("the e2e run needs ZBUGS_TOKEN")?;
     until(app, cx, "the open issues and their count", |app| {
         app.list.is_synced() && app.count.is_synced() && !rows(app).is_empty()
+    })
+    .await?;
+    // With no selection saved, the list's first issue opens.
+    until(app, cx, "the list's first issue selected", |app| {
+        app.selected.is_some() && app.selected.as_ref() == rows(app).first().map(|i| &i.id)
     })
     .await?;
     let open = app.read_with(cx, |app, _| app.count.snapshot().value.unwrap_or(0));
