@@ -1,0 +1,22 @@
+import {describe, expect, test} from 'vitest';
+import {type Stream, take} from './stream.ts';
+
+describe('take', () => {
+  test('take the first n elements from the stream', () => {
+    const stream: Stream<number> = [1, 2, 3, 4, 5];
+    const result = [...take(stream, 3)];
+    expect(result).toEqual([1, 2, 3]);
+  });
+
+  test('return an empty array if limit is less than 1', () => {
+    const stream: Stream<number> = [1, 2, 3, 4, 5];
+    const result = [...take(stream, 0)];
+    expect(result).toEqual([]);
+  });
+
+  test('return the entire stream if limit is greater than stream length', () => {
+    const stream: Stream<number> = [1, 2, 3];
+    const result = [...take(stream, 5)];
+    expect(result).toEqual([1, 2, 3]);
+  });
+});
