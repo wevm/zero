@@ -35,9 +35,6 @@ type Step = {
   run: (apps: Apps) => Promise<void>;
 };
 
-// The iPhone's screen, height over width (393×852 points).
-const PHONE_ASPECT = 852 / 393;
-
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 const center = (r: Rect): Point => ({x: r.x + r.w / 2, y: r.y + r.h / 2});
 
@@ -232,17 +229,13 @@ export function storyboard(ax: string, mirrored = false) {
   // reopen.
   const phone = {
     /**
-     * iPhone Mirroring's window is the screen, under a strip for its
-     * controls. Otherwise it's the first phone-shaped group but the
-     * window's own: Simulator's first group is the screen, Device Hub's its
-     * whole window, which can be phone-shaped too.
+     * iPhone Mirroring's window, which keeps its size, stands for the
+     * screen. Otherwise it's the first phone-shaped group but the window's
+     * own: Simulator's first group is the screen, Device Hub's its whole
+     * window, which can be phone-shaped too.
      */
     screen: async (apps: Apps): Promise<Rect> => {
-      if (mirrored) {
-        const w = window(apps.sim);
-        const h = Math.min(w.h, Math.round(w.w * PHONE_ASPECT));
-        return {x: w.x, y: w.y + w.h - h, w: w.w, h};
-      }
+      if (mirrored) return window(apps.sim);
       const deadline = Date.now() + 15_000;
       for (;;) {
         const w = window(apps.sim);
@@ -260,8 +253,12 @@ export function storyboard(ax: string, mirrored = false) {
       const s = await phone.screen(apps);
       return {x: s.x + fx * s.w, y: s.y + fy * s.h};
     },
-    back: (apps: Apps) => phone.at(apps, 0.093, 0.096),
-    toggleOpen: (apps: Apps) => phone.at(apps, 0.768, 0.096),
+    // In Mirroring's window, measured on an iPhone 15 Pro: its screen sits
+    // lower in the window than the simulator's in its group.
+    back: (apps: Apps) =>
+      mirrored ? phone.at(apps, 0.116, 0.143) : phone.at(apps, 0.093, 0.096),
+    toggleOpen: (apps: Apps) =>
+      mirrored ? phone.at(apps, 0.752, 0.143) : phone.at(apps, 0.768, 0.096),
     atList: (apps: Apps) =>
       mirrored
         ? !!tryText(apps.sim, 'search issues')
@@ -289,7 +286,7 @@ export function storyboard(ax: string, mirrored = false) {
       ),
     /** Its list at the top: a tap on the status bar. */
     toTop: async (apps: Apps) => {
-      await click(await phone.at(apps, 0.5, 0.03));
+      await click(await phone.at(apps, 0.5, mirrored ? 0.08 : 0.03));
       await sleep(800);
     },
     /**
