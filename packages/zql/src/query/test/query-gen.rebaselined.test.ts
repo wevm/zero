@@ -50,11 +50,14 @@ test('stable generation', () => {
 
   expect(asQueryInternals(q).ast).toMatchInlineSnapshot(`
     {
+      "aggregate": undefined,
       "alias": undefined,
+      "groupBy": undefined,
       "limit": 126,
       "orderBy": undefined,
       "related": [
         {
+          "aggregate": undefined,
           "correlation": {
             "childField": [
               "thorn",
@@ -65,7 +68,9 @@ test('stable generation', () => {
           },
           "hidden": undefined,
           "subquery": {
+            "aggregate": undefined,
             "alias": "cleaner",
+            "groupBy": undefined,
             "limit": 45,
             "orderBy": [
               [
@@ -167,6 +172,7 @@ test('stable generation', () => {
             "flip": undefined,
             "op": "NOT EXISTS",
             "related": {
+              "aggregate": undefined,
               "correlation": {
                 "childField": [
                   "thorn",
@@ -177,7 +183,9 @@ test('stable generation', () => {
               },
               "hidden": undefined,
               "subquery": {
+                "aggregate": undefined,
                 "alias": "zsubq_cleaner",
+                "groupBy": undefined,
                 "limit": undefined,
                 "orderBy": undefined,
                 "related": undefined,
@@ -202,6 +210,7 @@ test('stable generation', () => {
                       "flip": undefined,
                       "op": "EXISTS",
                       "related": {
+                        "aggregate": undefined,
                         "correlation": {
                           "childField": [
                             "amendment",
@@ -212,7 +221,9 @@ test('stable generation', () => {
                         },
                         "hidden": undefined,
                         "subquery": {
+                          "aggregate": undefined,
                           "alias": "zsubq_cleaner",
+                          "groupBy": undefined,
                           "limit": undefined,
                           "orderBy": undefined,
                           "related": undefined,

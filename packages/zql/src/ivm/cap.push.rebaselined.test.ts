@@ -121,7 +121,7 @@ describe('Cap push - basic behavior', () => {
     `);
     expect(actualStorage['.comments:cap']).toMatchInlineSnapshot(`
       {
-        "["cap","i1"]": {
+        "cap:si1": {
           "pks": [
             "["c1"]",
             "["c2"]",
@@ -152,6 +152,7 @@ describe('Cap push - basic behavior', () => {
             "constraint": {
               "issueID": "i1",
             },
+            "countOnly": true,
           },
         ],
       ]
@@ -233,7 +234,7 @@ describe('Cap push - basic behavior', () => {
     `);
     expect(actualStorage['.comments:cap']).toMatchInlineSnapshot(`
       {
-        "["cap","i1"]": {
+        "cap:si1": {
           "pks": [
             "["c1"]",
             "["c2"]",
@@ -303,7 +304,7 @@ describe('Cap push - basic behavior', () => {
     `);
     expect(actualStorage['.comments:cap']).toMatchInlineSnapshot(`
       {
-        "["cap","i1"]": {
+        "cap:si1": {
           "pks": [
             "["c1"]",
             "["c3"]",
@@ -335,6 +336,7 @@ describe('Cap push - basic behavior', () => {
             "constraint": {
               "issueID": "i1",
             },
+            "countOnly": true,
           },
         ],
         [
@@ -356,6 +358,7 @@ describe('Cap push - basic behavior', () => {
             "constraint": {
               "issueID": "i1",
             },
+            "countOnly": true,
           },
         ],
       ]
@@ -448,7 +451,7 @@ describe('Cap push - basic behavior', () => {
     `);
     expect(actualStorage['.comments:cap']).toMatchInlineSnapshot(`
       {
-        "["cap","i1"]": {
+        "cap:si1": {
           "pks": [
             "["c2"]",
           ],
@@ -478,6 +481,7 @@ describe('Cap push - basic behavior', () => {
             "constraint": {
               "issueID": "i1",
             },
+            "countOnly": true,
           },
         ],
       ]
@@ -530,7 +534,7 @@ describe('Cap push - basic behavior', () => {
     expect(data).toMatchInlineSnapshot(`[]`);
     expect(actualStorage['.comments:cap']).toMatchInlineSnapshot(`
       {
-        "["cap","i1"]": {
+        "cap:si1": {
           "pks": [],
           "size": 0,
         },
@@ -558,6 +562,7 @@ describe('Cap push - basic behavior', () => {
             "constraint": {
               "issueID": "i1",
             },
+            "countOnly": true,
           },
         ],
       ]
@@ -643,7 +648,7 @@ describe('Cap push - basic behavior', () => {
     `);
     expect(actualStorage['.comments:cap']).toMatchInlineSnapshot(`
       {
-        "["cap","i1"]": {
+        "cap:si1": {
           "pks": [
             "["c1"]",
             "["c2"]",
@@ -708,7 +713,7 @@ describe('Cap push - basic behavior', () => {
     `);
     expect(actualStorage['.comments:cap']).toMatchInlineSnapshot(`
       {
-        "["cap","i1"]": {
+        "cap:si1": {
           "pks": [
             "["c1"]",
             "["c2"]",
@@ -744,6 +749,7 @@ describe('Cap push - basic behavior', () => {
             "constraint": {
               "issueID": "i1",
             },
+            "countOnly": true,
           },
         ],
       ]
@@ -803,7 +809,7 @@ describe('Cap push - basic behavior', () => {
 
     expect(actualStorage['.comments:cap']).toMatchInlineSnapshot(`
       {
-        "["cap","i1"]": {
+        "cap:si1": {
           "pks": [
             "["c1_renamed"]",
             "["c2"]",
@@ -964,7 +970,7 @@ describe('Cap push - unordered overlay in join', () => {
     `);
     expect(actualStorage['.children:cap']).toMatchInlineSnapshot(`
       {
-        "["cap","g1"]": {
+        "cap:sg1": {
           "pks": [
             "["x2"]",
             "["x3"]",
@@ -996,6 +1002,7 @@ describe('Cap push - unordered overlay in join', () => {
             "constraint": {
               "group": "g1",
             },
+            "countOnly": true,
           },
         ],
         [
@@ -1005,6 +1012,7 @@ describe('Cap push - unordered overlay in join', () => {
             "constraint": {
               "group": "g1",
             },
+            "countOnly": true,
           },
         ],
         [
@@ -1026,6 +1034,7 @@ describe('Cap push - unordered overlay in join', () => {
             "constraint": {
               "group": "g1",
             },
+            "countOnly": true,
           },
         ],
         [
@@ -1035,6 +1044,7 @@ describe('Cap push - unordered overlay in join', () => {
             "constraint": {
               "group": "g1",
             },
+            "countOnly": true,
           },
         ],
       ]
@@ -1490,7 +1500,7 @@ describe('Cap wiring', () => {
 
     expect(actualStorage['.comments:cap']).toMatchInlineSnapshot(`
       {
-        "["cap","i1"]": {
+        "cap:si1": {
           "pks": [
             "["c1"]",
           ],
@@ -1847,7 +1857,7 @@ describe('Cap push - compound primary key', () => {
     // duplicate '"g1"' entries instead of distinct compound arrays.
     expect(actualStorage['.children:cap']).toMatchInlineSnapshot(`
       {
-        "["cap","g1"]": {
+        "cap:sg1": {
           "pks": [
             "["g1","s1"]",
             "["g1","s2"]",
@@ -1888,7 +1898,7 @@ describe('Cap push - compound primary key', () => {
 
     expect(actualStorage['.children:cap']).toMatchInlineSnapshot(`
       {
-        "["cap","g1"]": {
+        "cap:sg1": {
           "pks": [
             "["g1","s2"]",
             "["g1","s3"]",
@@ -1960,7 +1970,7 @@ describe('Cap push - compound primary key', () => {
 
     expect(actualStorage['.children:cap']).toMatchInlineSnapshot(`
       {
-        "["cap","g1"]": {
+        "cap:sg1": {
           "pks": [
             "["g1","s1_new"]",
             "["g1","s2"]",

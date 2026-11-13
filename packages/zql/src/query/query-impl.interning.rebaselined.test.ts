@@ -384,7 +384,9 @@ test('interning does not change the AST or format a query produces', () => {
   const qi = asQueryInternals(q);
   expect(qi.ast).toMatchInlineSnapshot(`
     {
+      "aggregate": undefined,
       "alias": undefined,
+      "groupBy": undefined,
       "limit": 20,
       "orderBy": [
         [
@@ -394,6 +396,7 @@ test('interning does not change the AST or format a query produces', () => {
       ],
       "related": [
         {
+          "aggregate": undefined,
           "correlation": {
             "childField": [
               "issueId",
@@ -404,7 +407,9 @@ test('interning does not change the AST or format a query produces', () => {
           },
           "hidden": undefined,
           "subquery": {
+            "aggregate": undefined,
             "alias": "comments",
+            "groupBy": undefined,
             "limit": 5,
             "orderBy": [
               [
@@ -421,6 +426,7 @@ test('interning does not change the AST or format a query produces', () => {
           "system": "client",
         },
         {
+          "aggregate": undefined,
           "correlation": {
             "childField": [
               "issueId",
@@ -431,11 +437,14 @@ test('interning does not change the AST or format a query produces', () => {
           },
           "hidden": true,
           "subquery": {
+            "aggregate": undefined,
             "alias": "labels",
+            "groupBy": undefined,
             "limit": undefined,
             "orderBy": undefined,
             "related": [
               {
+                "aggregate": undefined,
                 "correlation": {
                   "childField": [
                     "id",
@@ -446,7 +455,9 @@ test('interning does not change the AST or format a query produces', () => {
                 },
                 "hidden": undefined,
                 "subquery": {
+                  "aggregate": undefined,
                   "alias": "labels",
+                  "groupBy": undefined,
                   "limit": undefined,
                   "orderBy": undefined,
                   "related": undefined,
@@ -487,6 +498,7 @@ test('interning does not change the AST or format a query produces', () => {
             "flip": undefined,
             "op": "EXISTS",
             "related": {
+              "aggregate": undefined,
               "correlation": {
                 "childField": [
                   "id",
@@ -497,7 +509,9 @@ test('interning does not change the AST or format a query produces', () => {
               },
               "hidden": undefined,
               "subquery": {
+                "aggregate": undefined,
                 "alias": "zsubq_owner",
+                "groupBy": undefined,
                 "limit": undefined,
                 "orderBy": undefined,
                 "related": undefined,

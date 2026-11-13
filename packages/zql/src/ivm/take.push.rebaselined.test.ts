@@ -4353,7 +4353,7 @@ describe('take with partition', () => {
       `);
       expect(storage).toMatchInlineSnapshot(`
         {
-          "["take","i1"]": {
+          "take:si1": {
             "bound": {
               "created": 300,
               "id": "c3",
@@ -4362,7 +4362,7 @@ describe('take with partition', () => {
             },
             "size": 3,
           },
-          "["take","i2"]": {
+          "take:si2": {
             "bound": {
               "created": 500,
               "id": "c5",
@@ -4621,7 +4621,7 @@ describe('take with partition', () => {
       `);
       expect(storage).toMatchInlineSnapshot(`
         {
-          "["take","i1"]": {
+          "take:si1": {
             "bound": {
               "created": 580,
               "id": "c3",
@@ -4630,7 +4630,7 @@ describe('take with partition', () => {
             },
             "size": 3,
           },
-          "["take","i2"]": {
+          "take:si2": {
             "bound": {
               "created": 550,
               "id": "c8",
@@ -4922,7 +4922,7 @@ describe('take with partition', () => {
       `);
       expect(storage).toMatchInlineSnapshot(`
         {
-          "["take","i1"]": {
+          "take:si1": {
             "bound": {
               "created": 300,
               "id": "c3",
@@ -4931,7 +4931,7 @@ describe('take with partition', () => {
             },
             "size": 3,
           },
-          "["take","i2"]": {
+          "take:si2": {
             "bound": {
               "created": 500,
               "id": "c5",
@@ -5206,7 +5206,7 @@ describe('take with partition', () => {
       `);
       expect(storage).toMatchInlineSnapshot(`
         {
-          "["take","i1"]": {
+          "take:si1": {
             "bound": {
               "created": 300,
               "id": "c3",
@@ -5215,7 +5215,7 @@ describe('take with partition', () => {
             },
             "size": 2,
           },
-          "["take","i2"]": {
+          "take:si2": {
             "bound": {
               "created": 500,
               "id": "c5",
@@ -5348,7 +5348,7 @@ describe('take with partition', () => {
       `);
       expect(storage).toMatchInlineSnapshot(`
         {
-          "["take","i1"]": {
+          "take:si1": {
             "bound": {
               "created": 300,
               "id": "c3",
@@ -5357,7 +5357,7 @@ describe('take with partition', () => {
             },
             "size": 3,
           },
-          "["take","i2"]": {
+          "take:si2": {
             "bound": {
               "created": 500,
               "id": "c5",
@@ -5614,7 +5614,7 @@ describe('take with partition', () => {
         `);
         expect(storage).toMatchInlineSnapshot(`
           {
-            "["take","i1"]": {
+            "take:si1": {
               "bound": {
                 "created": 300,
                 "id": "c3",
@@ -5623,7 +5623,7 @@ describe('take with partition', () => {
               },
               "size": 3,
             },
-            "["take","i2"]": {
+            "take:si2": {
               "bound": {
                 "created": 500,
                 "id": "c5",
@@ -5823,7 +5823,7 @@ describe('take with partition', () => {
         `);
         expect(storage).toMatchInlineSnapshot(`
           {
-            "["take","i1"]": {
+            "take:si1": {
               "bound": {
                 "created": 300,
                 "id": "c3",
@@ -5832,7 +5832,7 @@ describe('take with partition', () => {
               },
               "size": 3,
             },
-            "["take","i2"]": {
+            "take:si2": {
               "bound": {
                 "created": 500,
                 "id": "c5",
@@ -5974,7 +5974,7 @@ describe('take with partition', () => {
         `);
         expect(storage).toMatchInlineSnapshot(`
           {
-            "["take","i1"]": {
+            "take:si1": {
               "bound": {
                 "created": 200,
                 "id": "c2",
@@ -5983,7 +5983,7 @@ describe('take with partition', () => {
               },
               "size": 2,
             },
-            "["take","i2"]": {
+            "take:si2": {
               "bound": {
                 "created": 500,
                 "id": "c5",
@@ -6156,7 +6156,7 @@ describe('take with partition', () => {
         `);
         expect(storage).toMatchInlineSnapshot(`
           {
-            "["take","i1"]": {
+            "take:si1": {
               "bound": {
                 "created": 300,
                 "id": "c3",
@@ -6165,7 +6165,7 @@ describe('take with partition', () => {
               },
               "size": 3,
             },
-            "["take","i2"]": {
+            "take:si2": {
               "bound": {
                 "created": 500,
                 "id": "c5",
@@ -6365,7 +6365,7 @@ describe('take with partition', () => {
         `);
         expect(storage).toMatchInlineSnapshot(`
           {
-            "["take","i1"]": {
+            "take:si1": {
               "bound": {
                 "created": 300,
                 "id": "c3",
@@ -6374,7 +6374,7 @@ describe('take with partition', () => {
               },
               "size": 3,
             },
-            "["take","i2"]": {
+            "take:si2": {
               "bound": {
                 "created": 500,
                 "id": "c5",
@@ -6612,7 +6612,7 @@ describe('take with partition', () => {
         `);
         expect(storage).toMatchInlineSnapshot(`
           {
-            "["take","i1"]": {
+            "take:si1": {
               "bound": {
                 "created": 200,
                 "id": "c2",
@@ -6621,7 +6621,7 @@ describe('take with partition', () => {
               },
               "size": 3,
             },
-            "["take","i2"]": {
+            "take:si2": {
               "bound": {
                 "created": 500,
                 "id": "c5",
@@ -6881,7 +6881,7 @@ describe('take with partition', () => {
         `);
         expect(storage).toMatchInlineSnapshot(`
           {
-            "["take","i1"]": {
+            "take:si1": {
               "bound": {
                 "created": 300,
                 "id": "c3",
@@ -6890,7 +6890,7 @@ describe('take with partition', () => {
               },
               "size": 2,
             },
-            "["take","i2"]": {
+            "take:si2": {
               "bound": {
                 "created": 500,
                 "id": "c5",
@@ -7215,7 +7215,7 @@ describe('take with partition', () => {
         `);
         expect(storage).toMatchInlineSnapshot(`
           {
-            "["take","i1"]": {
+            "take:si1": {
               "bound": {
                 "created": 300,
                 "id": "c3",
@@ -7224,7 +7224,7 @@ describe('take with partition', () => {
               },
               "size": 3,
             },
-            "["take","i2"]": {
+            "take:si2": {
               "bound": {
                 "created": 500,
                 "id": "c5",
@@ -7486,7 +7486,7 @@ describe('take with partition', () => {
         `);
         expect(storage).toMatchInlineSnapshot(`
           {
-            "["take","i1"]": {
+            "take:si1": {
               "bound": {
                 "created": 150,
                 "id": "c3",
@@ -7495,7 +7495,7 @@ describe('take with partition', () => {
               },
               "size": 2,
             },
-            "["take","i2"]": {
+            "take:si2": {
               "bound": {
                 "created": 500,
                 "id": "c5",
@@ -7849,7 +7849,7 @@ describe('take with partition', () => {
         `);
         expect(storage).toMatchInlineSnapshot(`
           {
-            "["take","i1"]": {
+            "take:si1": {
               "bound": {
                 "created": 250,
                 "id": "c1",
@@ -7858,7 +7858,7 @@ describe('take with partition', () => {
               },
               "size": 2,
             },
-            "["take","i2"]": {
+            "take:si2": {
               "bound": {
                 "created": 500,
                 "id": "c5",
@@ -8118,7 +8118,7 @@ describe('take with partition', () => {
         `);
         expect(storage).toMatchInlineSnapshot(`
           {
-            "["take","i1"]": {
+            "take:si1": {
               "bound": {
                 "created": 300,
                 "id": "c3",
@@ -8127,7 +8127,7 @@ describe('take with partition', () => {
               },
               "size": 2,
             },
-            "["take","i2"]": {
+            "take:si2": {
               "bound": {
                 "created": 500,
                 "id": "c5",
@@ -8686,7 +8686,7 @@ describe('take with partition', () => {
         `);
         expect(storage).toMatchInlineSnapshot(`
           {
-            "["take","i1"]": {
+            "take:si1": {
               "bound": {
                 "created": 300,
                 "id": "c3",
@@ -8695,7 +8695,7 @@ describe('take with partition', () => {
               },
               "size": 2,
             },
-            "["take","i2"]": {
+            "take:si2": {
               "bound": {
                 "created": 400,
                 "id": "c4",

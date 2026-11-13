@@ -443,7 +443,9 @@ describe('kitchen sink query', () => {
         {
           "args": undefined,
           "ast": {
+            "aggregate": undefined,
             "alias": undefined,
+            "groupBy": undefined,
             "limit": 6,
             "orderBy": [
               [
@@ -453,6 +455,7 @@ describe('kitchen sink query', () => {
             ],
             "related": [
               {
+                "aggregate": undefined,
                 "correlation": {
                   "childField": [
                     "issueId",
@@ -463,7 +466,9 @@ describe('kitchen sink query', () => {
                 },
                 "hidden": undefined,
                 "subquery": {
+                  "aggregate": undefined,
                   "alias": "comments",
+                  "groupBy": undefined,
                   "limit": 2,
                   "orderBy": [
                     [
@@ -473,6 +478,7 @@ describe('kitchen sink query', () => {
                   ],
                   "related": [
                     {
+                      "aggregate": undefined,
                       "correlation": {
                         "childField": [
                           "commentId",
@@ -483,7 +489,9 @@ describe('kitchen sink query', () => {
                       },
                       "hidden": undefined,
                       "subquery": {
+                        "aggregate": undefined,
                         "alias": "revisions",
+                        "groupBy": undefined,
                         "limit": 1,
                         "orderBy": [
                           [
@@ -508,6 +516,7 @@ describe('kitchen sink query', () => {
                 "system": "client",
               },
               {
+                "aggregate": undefined,
                 "correlation": {
                   "childField": [
                     "issueId",
@@ -518,11 +527,14 @@ describe('kitchen sink query', () => {
                 },
                 "hidden": true,
                 "subquery": {
+                  "aggregate": undefined,
                   "alias": "labels",
+                  "groupBy": undefined,
                   "limit": undefined,
                   "orderBy": undefined,
                   "related": [
                     {
+                      "aggregate": undefined,
                       "correlation": {
                         "childField": [
                           "id",
@@ -533,7 +545,9 @@ describe('kitchen sink query', () => {
                       },
                       "hidden": undefined,
                       "subquery": {
+                        "aggregate": undefined,
                         "alias": "labels",
+                        "groupBy": undefined,
                         "limit": undefined,
                         "orderBy": undefined,
                         "related": undefined,
@@ -553,6 +567,7 @@ describe('kitchen sink query', () => {
                 "system": "client",
               },
               {
+                "aggregate": undefined,
                 "correlation": {
                   "childField": [
                     "id",
@@ -563,7 +578,9 @@ describe('kitchen sink query', () => {
                 },
                 "hidden": undefined,
                 "subquery": {
+                  "aggregate": undefined,
                   "alias": "owner",
+                  "groupBy": undefined,
                   "limit": undefined,
                   "orderBy": undefined,
                   "related": undefined,

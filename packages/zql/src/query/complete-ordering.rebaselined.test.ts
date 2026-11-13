@@ -27,7 +27,9 @@ describe('completeOrdering', () => {
     const issueQuery = newQuery(schema, 'issue');
     expect(ast(issueQuery)).toMatchInlineSnapshot(`
       {
+        "aggregate": undefined,
         "alias": undefined,
+        "groupBy": undefined,
         "limit": undefined,
         "orderBy": undefined,
         "related": undefined,
@@ -40,7 +42,9 @@ describe('completeOrdering', () => {
     expect(completeOrdering(ast(issueQuery), getPrimaryKey))
       .toMatchInlineSnapshot(`
         {
+          "aggregate": undefined,
           "alias": undefined,
+          "groupBy": undefined,
           "limit": undefined,
           "orderBy": [
             [
@@ -61,7 +65,9 @@ describe('completeOrdering', () => {
     const issueQuery = newQuery(schema, 'issue').orderBy('title', 'asc');
     expect(ast(issueQuery)).toMatchInlineSnapshot(`
       {
+        "aggregate": undefined,
         "alias": undefined,
+        "groupBy": undefined,
         "limit": undefined,
         "orderBy": [
           [
@@ -79,7 +85,9 @@ describe('completeOrdering', () => {
     expect(completeOrdering(ast(issueQuery), getPrimaryKey))
       .toMatchInlineSnapshot(`
         {
+          "aggregate": undefined,
           "alias": undefined,
+          "groupBy": undefined,
           "limit": undefined,
           "orderBy": [
             [
@@ -104,7 +112,9 @@ describe('completeOrdering', () => {
     const q = newQuery(schema, 'issueLabel').orderBy('labelId', 'asc');
     expect(ast(q)).toMatchInlineSnapshot(`
       {
+        "aggregate": undefined,
         "alias": undefined,
+        "groupBy": undefined,
         "limit": undefined,
         "orderBy": [
           [
@@ -121,7 +131,9 @@ describe('completeOrdering', () => {
     `);
     expect(completeOrdering(ast(q), getPrimaryKey)).toMatchInlineSnapshot(`
       {
+        "aggregate": undefined,
         "alias": undefined,
+        "groupBy": undefined,
         "limit": undefined,
         "orderBy": [
           [
@@ -144,7 +156,9 @@ describe('completeOrdering', () => {
     const q2 = newQuery(schema, 'issueLabel').orderBy('issueId', 'asc');
     expect(ast(q2)).toMatchInlineSnapshot(`
       {
+        "aggregate": undefined,
         "alias": undefined,
+        "groupBy": undefined,
         "limit": undefined,
         "orderBy": [
           [
@@ -161,7 +175,9 @@ describe('completeOrdering', () => {
     `);
     expect(completeOrdering(ast(q2), getPrimaryKey)).toMatchInlineSnapshot(`
       {
+        "aggregate": undefined,
         "alias": undefined,
+        "groupBy": undefined,
         "limit": undefined,
         "orderBy": [
           [
@@ -186,11 +202,14 @@ describe('completeOrdering', () => {
     const issueQuery = newQuery(schema, 'issue').related('labels');
     expect(ast(issueQuery)).toMatchInlineSnapshot(`
       {
+        "aggregate": undefined,
         "alias": undefined,
+        "groupBy": undefined,
         "limit": undefined,
         "orderBy": undefined,
         "related": [
           {
+            "aggregate": undefined,
             "correlation": {
               "childField": [
                 "issueId",
@@ -201,11 +220,14 @@ describe('completeOrdering', () => {
             },
             "hidden": true,
             "subquery": {
+              "aggregate": undefined,
               "alias": "labels",
+              "groupBy": undefined,
               "limit": undefined,
               "orderBy": undefined,
               "related": [
                 {
+                  "aggregate": undefined,
                   "correlation": {
                     "childField": [
                       "id",
@@ -216,7 +238,9 @@ describe('completeOrdering', () => {
                   },
                   "hidden": undefined,
                   "subquery": {
+                    "aggregate": undefined,
                     "alias": "labels",
+                    "groupBy": undefined,
                     "limit": undefined,
                     "orderBy": undefined,
                     "related": undefined,
@@ -245,7 +269,9 @@ describe('completeOrdering', () => {
     expect(completeOrdering(ast(issueQuery), getPrimaryKey))
       .toMatchInlineSnapshot(`
         {
+          "aggregate": undefined,
           "alias": undefined,
+          "groupBy": undefined,
           "limit": undefined,
           "orderBy": [
             [
@@ -255,6 +281,7 @@ describe('completeOrdering', () => {
           ],
           "related": [
             {
+              "aggregate": undefined,
               "correlation": {
                 "childField": [
                   "issueId",
@@ -265,7 +292,9 @@ describe('completeOrdering', () => {
               },
               "hidden": true,
               "subquery": {
+                "aggregate": undefined,
                 "alias": "labels",
+                "groupBy": undefined,
                 "limit": undefined,
                 "orderBy": [
                   [
@@ -279,6 +308,7 @@ describe('completeOrdering', () => {
                 ],
                 "related": [
                   {
+                    "aggregate": undefined,
                     "correlation": {
                       "childField": [
                         "id",
@@ -289,7 +319,9 @@ describe('completeOrdering', () => {
                     },
                     "hidden": undefined,
                     "subquery": {
+                      "aggregate": undefined,
                       "alias": "labels",
+                      "groupBy": undefined,
                       "limit": undefined,
                       "orderBy": [
                         [
@@ -326,7 +358,9 @@ describe('completeOrdering', () => {
     const issueQuery = newQuery(schema, 'issue').whereExists('labels');
     expect(ast(issueQuery)).toMatchInlineSnapshot(`
       {
+        "aggregate": undefined,
         "alias": undefined,
+        "groupBy": undefined,
         "limit": undefined,
         "orderBy": undefined,
         "related": undefined,
@@ -337,6 +371,7 @@ describe('completeOrdering', () => {
           "flip": undefined,
           "op": "EXISTS",
           "related": {
+            "aggregate": undefined,
             "correlation": {
               "childField": [
                 "issueId",
@@ -347,7 +382,9 @@ describe('completeOrdering', () => {
             },
             "hidden": undefined,
             "subquery": {
+              "aggregate": undefined,
               "alias": "zsubq_labels",
+              "groupBy": undefined,
               "limit": undefined,
               "orderBy": undefined,
               "related": undefined,
@@ -358,6 +395,7 @@ describe('completeOrdering', () => {
                 "flip": undefined,
                 "op": "EXISTS",
                 "related": {
+                  "aggregate": undefined,
                   "correlation": {
                     "childField": [
                       "id",
@@ -368,7 +406,9 @@ describe('completeOrdering', () => {
                   },
                   "hidden": undefined,
                   "subquery": {
+                    "aggregate": undefined,
                     "alias": "zsubq_zhidden_labels",
+                    "groupBy": undefined,
                     "limit": undefined,
                     "orderBy": undefined,
                     "related": undefined,
@@ -393,7 +433,9 @@ describe('completeOrdering', () => {
     expect(completeOrdering(ast(issueQuery), getPrimaryKey))
       .toMatchInlineSnapshot(`
         {
+          "aggregate": undefined,
           "alias": undefined,
+          "groupBy": undefined,
           "limit": undefined,
           "orderBy": [
             [
@@ -409,6 +451,7 @@ describe('completeOrdering', () => {
             "flip": undefined,
             "op": "EXISTS",
             "related": {
+              "aggregate": undefined,
               "correlation": {
                 "childField": [
                   "issueId",
@@ -419,7 +462,9 @@ describe('completeOrdering', () => {
               },
               "hidden": undefined,
               "subquery": {
+                "aggregate": undefined,
                 "alias": "zsubq_labels",
+                "groupBy": undefined,
                 "limit": undefined,
                 "orderBy": [
                   [
@@ -439,6 +484,7 @@ describe('completeOrdering', () => {
                   "flip": undefined,
                   "op": "EXISTS",
                   "related": {
+                    "aggregate": undefined,
                     "correlation": {
                       "childField": [
                         "id",
@@ -449,7 +495,9 @@ describe('completeOrdering', () => {
                     },
                     "hidden": undefined,
                     "subquery": {
+                      "aggregate": undefined,
                       "alias": "zsubq_zhidden_labels",
+                      "groupBy": undefined,
                       "limit": undefined,
                       "orderBy": [
                         [
@@ -490,7 +538,9 @@ describe('completeOrdering', () => {
 
     expect(ast(issueQuery)).toMatchInlineSnapshot(`
       {
+        "aggregate": undefined,
         "alias": undefined,
+        "groupBy": undefined,
         "limit": undefined,
         "orderBy": undefined,
         "related": undefined,
@@ -529,6 +579,7 @@ describe('completeOrdering', () => {
                   "flip": undefined,
                   "op": "EXISTS",
                   "related": {
+                    "aggregate": undefined,
                     "correlation": {
                       "childField": [
                         "issueId",
@@ -539,7 +590,9 @@ describe('completeOrdering', () => {
                     },
                     "hidden": undefined,
                     "subquery": {
+                      "aggregate": undefined,
                       "alias": "zsubq_comments",
+                      "groupBy": undefined,
                       "limit": undefined,
                       "orderBy": undefined,
                       "related": undefined,
@@ -560,6 +613,7 @@ describe('completeOrdering', () => {
               "flip": undefined,
               "op": "EXISTS",
               "related": {
+                "aggregate": undefined,
                 "correlation": {
                   "childField": [
                     "id",
@@ -570,7 +624,9 @@ describe('completeOrdering', () => {
                 },
                 "hidden": undefined,
                 "subquery": {
+                  "aggregate": undefined,
                   "alias": "zsubq_owner",
+                  "groupBy": undefined,
                   "limit": undefined,
                   "orderBy": undefined,
                   "related": undefined,
@@ -592,7 +648,9 @@ describe('completeOrdering', () => {
     expect(completeOrdering(ast(issueQuery), getPrimaryKey))
       .toMatchInlineSnapshot(`
         {
+          "aggregate": undefined,
           "alias": undefined,
+          "groupBy": undefined,
           "limit": undefined,
           "orderBy": [
             [
@@ -636,6 +694,7 @@ describe('completeOrdering', () => {
                     "flip": undefined,
                     "op": "EXISTS",
                     "related": {
+                      "aggregate": undefined,
                       "correlation": {
                         "childField": [
                           "issueId",
@@ -646,7 +705,9 @@ describe('completeOrdering', () => {
                       },
                       "hidden": undefined,
                       "subquery": {
+                        "aggregate": undefined,
                         "alias": "zsubq_comments",
+                        "groupBy": undefined,
                         "limit": undefined,
                         "orderBy": [
                           [
@@ -672,6 +733,7 @@ describe('completeOrdering', () => {
                 "flip": undefined,
                 "op": "EXISTS",
                 "related": {
+                  "aggregate": undefined,
                   "correlation": {
                     "childField": [
                       "id",
@@ -682,7 +744,9 @@ describe('completeOrdering', () => {
                   },
                   "hidden": undefined,
                   "subquery": {
+                    "aggregate": undefined,
                     "alias": "zsubq_owner",
+                    "groupBy": undefined,
                     "limit": undefined,
                     "orderBy": [
                       [
