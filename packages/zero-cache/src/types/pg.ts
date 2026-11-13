@@ -29,9 +29,11 @@ import {
   TIMETZ,
 } from './pg-types.ts';
 
-// Matches: YEAR-MM-DD HH:MM:SS[.fraction][+-TZ[:MM]][ BC]
+// Matches: YEAR-MM-DD HH:MM:SS[.fraction][+-TZ[:MM[:SS]]][ BC]
 const pgTimestampRe =
-  /^(\d+)-(\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}(?:\.\d+)?)([+-]\d{1,2}(?::\d{2})?)?(?: BC)?$/;
+  /^(\d+)-(\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}(?:\.\d+)?)([+-]\d{1,2}(?::\d{2}){0,2})?(?: BC)?$/;
+
+const NANOS_PER_GREGORIAN_CYCLE = 146_097n * 24n * 60n * 60n * 1_000_000_000n;
 
 // exported for testing.
 export function timestampToFpMillis(timestamp: string): number {
@@ -51,22 +53,19 @@ export function timestampToFpMillis(timestamp: string): number {
     year = -(year - 1);
   }
 
-  // Format year as ISO 8601 expanded year if needed.
-  // https://tc39.es/ecma262/#sec-expanded-years
-  let isoYear: string;
-  if (year >= 0 && year <= 9999) {
-    isoYear = String(year).padStart(4, '0');
-  } else if (year >= 0) {
-    isoYear = '+' + String(year).padStart(6, '0');
-  } else {
-    isoYear = '-' + String(Math.abs(year)).padStart(6, '0');
-  }
+  // Postgres timestamps extend to the year 294276, which is past what a
+  // Date can represent (the year 275760). The Gregorian calendar repeats
+  // every 400 years, so the time is computed for the equivalent year in
+  // [2000, 2400) and then shifted by the number of cycles.
+  const cycles = Math.floor((year - 2000) / 400);
 
   // Build a UTC ISO string so PreciseDate returns microsecond precision.
-  const utcString = `${isoYear}-${monthDay}T${time}Z`;
+  const utcString = `${year - cycles * 400}-${monthDay}T${time}Z`;
 
   try {
-    const fullTime = new PreciseDate(utcString).getFullTime();
+    const fullTime =
+      new PreciseDate(utcString).getFullTime() +
+      BigInt(cycles) * NANOS_PER_GREGORIAN_CYCLE;
     const millis = Number(fullTime / 1_000_000n);
     const nanos = Number(fullTime % 1_000_000n);
     const ret = millis + nanos * 1e-6; // floating point milliseconds
@@ -75,10 +74,9 @@ export function timestampToFpMillis(timestamp: string): number {
     // so a positive offset means we need to subtract, and vice versa.
     if (tz) {
       const positiveOffset = tz.startsWith('+');
-      const [hours, minutes] = tz.split(':');
-      const offset =
-        Math.abs(Number(hours)) * 60 + (minutes ? Number(minutes) : 0);
-      const offsetMillis = offset * 60 * 1_000;
+      const [hours, minutes = 0, seconds = 0] = tz.split(':').map(Number);
+      const offset = Math.abs(hours) * 3600 + minutes * 60 + seconds;
+      const offsetMillis = offset * 1_000;
       return positiveOffset ? ret - offsetMillis : ret + offsetMillis;
     }
     return ret;
@@ -146,10 +144,10 @@ export function millisecondsToPostgresTime(milliseconds: number): string {
   return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${ms.toString().padStart(3, '0')}+00`;
 }
 
-// Regular expression to match HH:MM:SS, HH:MM:SS.mmm, or HH:MM:SS+00 / HH:MM:SS.mmm+00
-// Supports optional timezone offset
+// Matches HH:MM:SS[.ffffff], with an optional offset of +HH, +HH:MM or
+// +HH:MM:SS (or -), e.g. 12:34:56.789+05:30 or 12:00:00-04:56:02.
 const timeRegex =
-  /^(\d{1,2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(?:([+-])(\d{1,2})(?::(\d{2}))?)?$/;
+  /^(\d{1,2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(?:([+-])(\d{1,2})(?::(\d{2})(?::(\d{2}))?)?)?$/;
 
 export function postgresTimeToMilliseconds(timeString: string): number {
   // Validate basic format
@@ -161,7 +159,7 @@ export function postgresTimeToMilliseconds(timeString: string): number {
 
   if (!match) {
     throw new Error(
-      `Invalid time format: "${timeString}". Expected HH:MM:SS[.mmm][+|-HH[:MM]]`,
+      `Invalid time format: "${timeString}". Expected HH:MM:SS[.mmm][+|-HH[:MM[:SS]]]`,
     );
   }
 
@@ -216,7 +214,9 @@ export function postgresTimeToMilliseconds(timeString: string): number {
     const sign = match[5] === '+' ? 1 : -1;
     const tzHours = parseInt(match[6], 10);
     const tzMinutes = match[7] ? parseInt(match[7], 10) : 0;
-    const offsetMs = sign * (tzHours * 3600000 + tzMinutes * 60000);
+    const tzSeconds = match[8] ? parseInt(match[8], 10) : 0;
+    const offsetMs =
+      sign * (tzHours * 3600000 + tzMinutes * 60000 + tzSeconds * 1000);
     totalMs -= offsetMs;
   }
 
