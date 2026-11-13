@@ -145,7 +145,13 @@ client (`restored` in `rust/conformance/src/suites/ivm.rs`) replay:
 - `src/ivm/restored-ivm.test.ts` runs the restored zql tests that build a
   pipeline from an AST, with their own assertions. It records each case they
   pass to `runPushTest` or `runFetchTest` and writes `vectors/restored-ivm.json`:
-  the view and its changes after hydration and after each push.
+  the view and its changes after hydration and after each push. It runs the
+  re-baselined copies `cap.push`, `flipped-join.push`,
+  `flipped-join.more-fetch` and `take.push` too, and writes their 124 cases
+  to `vectors/restored-ivm-rebaselined.json`, leaving out any case
+  `restored-ivm.json` already has. Those vectors record views and changes,
+  not the snapshots of internals, so re-baselining a copy again leaves them
+  alone.
 - `src/ivm/restored-chinook.test.ts` builds the chinook fuzzer's decorated
   push lane from its modules into `generated/restored-chinook-decpush.json`,
   which isn't checked in. Pull requests run the one-row lane; the nightly adds

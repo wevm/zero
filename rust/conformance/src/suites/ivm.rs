@@ -67,6 +67,12 @@ pub fn suites() -> Vec<Suite> {
         },
         Suite {
             variant: None,
+            file: "restored-ivm-rebaselined",
+            source: Source::Checked,
+            check: restored,
+        },
+        Suite {
+            variant: None,
             file: "restored-chinook-decpush",
             source: Source::Generated,
             check: restored,

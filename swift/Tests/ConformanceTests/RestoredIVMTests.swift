@@ -10,6 +10,9 @@ import Testing
 ///   of the restored zql tests that build a pipeline from an AST. Each has its
 ///   own sources, which have no relationships, and may turn on a builder
 ///   setting the client leaves off. Each case is its own test.
+/// - `vectors/restored-ivm-rebaselined.json` (same generator): the same for
+///   the re-baselined copies of restored zql tests, less the cases
+///   `restored-ivm.json` already has.
 /// - `generated/restored-chinook-decpush.json`
 ///   (`src/ivm/restored-chinook.test.ts`): the chinook fuzzer's decorated
 ///   push lane over its mini data, which the cases share.
@@ -48,16 +51,30 @@ struct RestoredIVMTests {
       result: c["result"]!)
   }
 
-  nonisolated static let names: [String] =
-    ((try? Vectors.file("restored-ivm"))?["cases"]?.arrayValue ?? [])
-    .compactMap { $0["name"]?.stringValue }
+  nonisolated static func caseNames(in file: String) -> [String] {
+    ((try? Vectors.file(file))?["cases"]?.arrayValue ?? [])
+      .compactMap { $0["name"]?.stringValue }
+  }
 
-  @Test(arguments: names) func restored(_ name: String) throws {
-    let file = try Vectors.file("restored-ivm")
+  /// Replays the case `name` of `vectors/<file>.json`, which has its own
+  /// schema and data.
+  static func replay(_ file: String, _ name: String) throws {
+    let file = try Vectors.file(file)
     let c = try #require(file["cases"]?.arrayValue?.first { $0["name"]?.stringValue == name })
     if let mismatch = try Self.run(c, schema: c["schema"]!, data: c["data"]!) {
       Issue.record(Comment(rawValue: "\(name)\n\(mismatch)"))
     }
+  }
+
+  nonisolated static let names = caseNames(in: "restored-ivm")
+  nonisolated static let rebaselinedNames = caseNames(in: "restored-ivm-rebaselined")
+
+  @Test(arguments: names) func restored(_ name: String) throws {
+    try Self.replay("restored-ivm", name)
+  }
+
+  @Test(arguments: rebaselinedNames) func rebaselined(_ name: String) throws {
+    try Self.replay("restored-ivm-rebaselined", name)
   }
 
   @Test(.enabled(if: Vectors.generatedAvailable)) func chinookDecoratedPush() throws {
