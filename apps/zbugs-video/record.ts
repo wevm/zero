@@ -24,6 +24,12 @@
  *   ZBUGS_VIDEO_DIR    builds, the apps' local stores, and the videos
  *                      (default ~/.zbugs-video)
  *   ZBUGS_VIDEO_SIM    the simulator to use (default iPhone 17)
+ *   ZBUGS_VIDEO_DEVICE a real iPhone's identifier (`xcrun devicectl list
+ *                      devices`) to use instead, shown by iPhone Mirroring,
+ *                      with zbugs-swift installed on it and the backend
+ *                      reachable on the network (ZBUGS_HOST=0.0.0.0)
+ *   ZBUGS_VIDEO_DEVICE_HOST  this Mac's address for that iPhone (default
+ *                      en0's)
  *   ZBUGS_VIDEO_CHROME Chrome's executable (default Google Chrome's)
  *   ZBUGS_VIDEO_DISPLAY  `keep` to leave the display's mode alone; by default,
  *                      a screen too small for the windows switches to
@@ -57,6 +63,7 @@ const chrome =
   env['ZBUGS_VIDEO_CHROME'] ??
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const CDP_PORT = 9339;
+const device = env['ZBUGS_VIDEO_DEVICE'];
 const ax = join(work, 'ax');
 const derived = join(work, 'xcode');
 const swiftApp = join(derived, 'Build/Products/Debug/ZBugs.app');
@@ -75,6 +82,7 @@ const DEVICE_HUB_ASPECT = 0.55;
 const HIDPI_MODE = /res:(\d+)x(\d+) hz:(\d+).*scaling:on/g;
 const CURRENT_MODE =
   /res:\d+x\d+ hz:\d+ color_depth:\d+( scaling:on)? <-- current/;
+const LOOPBACK = /127\.0\.0\.1|localhost/;
 const SCREEN_DEVICE = /\[(\d+)\] Capture screen 0/;
 const VIDEO_SIZE = /Video: .*?, (\d+)x(\d+)/;
 
@@ -312,7 +320,7 @@ function permissions() {
 
 /**
  * The web app, served by the backend (ZBUGS_WEB=1) at the API's URL, in a
- * Chrome of its own: an app window, with its accessibility tree on and the
+ * Chrome window with a profile of its own, its accessibility tree on and the
  * DevTools protocol on a port, through which it logs in as the native apps
  * do, with the crew token, as zbugs' `jwt` cookie.
  */
@@ -330,7 +338,7 @@ async function launchWeb(token: string): Promise<number> {
       '--no-first-run',
       '--no-default-browser-check',
       '--disable-features=Translate',
-      `--app=${page}`,
+      page,
     ],
     {log: 'chrome.log'},
   );
@@ -399,6 +407,23 @@ async function launch(): Promise<Apps> {
   });
   step('zbugs on the web, in Chrome');
   const web = await launchWeb(e['ZBUGS_TOKEN']!);
+  const sim = device ? await launchMirrored(e) : launchSimulator(e);
+  const apps: Apps = {
+    rune: rune.pid!,
+    gpui: gpui.pid!,
+    swift: swift.pid!,
+    web,
+    sim,
+  };
+  writeFileSync(pidsFile(), JSON.stringify(apps));
+  for (const [name, pid] of Object.entries(apps)) {
+    await waitFor(`${name}'s window`, () => run(ax, ['window', String(pid)]));
+  }
+  return apps;
+}
+
+/** zbugs-swift on the simulator, logged in; the pid of the app showing it. */
+function launchSimulator(e: NodeJS.ProcessEnv): number {
   step('zbugs-swift on the simulator');
   const udid = simulator();
   try {
@@ -425,21 +450,48 @@ async function launch(): Promise<Apps> {
     ],
     {env: simEnv, stdio: 'ignore'},
   );
-  const sim = Number(
-    run('pgrep', ['-x', basename(simApp, '.app')]).split('\n')[0],
+  return Number(run('pgrep', ['-x', basename(simApp, '.app')]).split('\n')[0]);
+}
+
+/**
+ * zbugs-swift on a real iPhone, already installed there, launched logged in
+ * through devicectl and reaching the backend at this Mac's address; the pid
+ * of iPhone Mirroring, which shows it.
+ */
+async function launchMirrored(e: NodeJS.ProcessEnv): Promise<number> {
+  step('zbugs-swift on the iPhone, in iPhone Mirroring');
+  const host =
+    env['ZBUGS_VIDEO_DEVICE_HOST'] ?? run('ipconfig', ['getifaddr', 'en0']);
+  const lan = (url: string) => url.replace(LOOPBACK, host);
+  run('xcrun', [
+    'devicectl',
+    'device',
+    'process',
+    'launch',
+    '--device',
+    device!,
+    '--terminate-existing',
+    '--environment-variables',
+    JSON.stringify({
+      ['ZBUGS_TOKEN']: e['ZBUGS_TOKEN'],
+      ['ZBUGS_CACHE_URL']: lan(cacheURL),
+      ['ZBUGS_API_URL']: lan(apiURL),
+    }),
+    'dev.rocicorp.zbugs',
+  ]);
+  run('open', ['-a', 'iPhone Mirroring']);
+  const pid = Number(
+    await waitFor(
+      'iPhone Mirroring',
+      () => run('pgrep', ['-x', 'iPhone Mirroring']).split('\n')[0],
+    ),
   );
-  const apps: Apps = {
-    rune: rune.pid!,
-    gpui: gpui.pid!,
-    swift: swift.pid!,
-    web,
-    sim,
-  };
-  writeFileSync(pidsFile(), JSON.stringify(apps));
-  for (const [name, pid] of Object.entries(apps)) {
-    await waitFor(`${name}'s window`, () => run(ax, ['window', String(pid)]));
-  }
-  return apps;
+  // Locked or connecting, it shows no app: zbugs shows its issues, or one.
+  await waitFor(
+    'zbugs in iPhone Mirroring: unlock it, with the iPhone locked',
+    () => run(ax, ['text', String(pid), 'issue']),
+  );
+  return pid;
 }
 
 // --- layout ---
@@ -520,10 +572,18 @@ async function layout(apps: Apps) {
     );
   // The phone as tall as the bottom row. Simulator, without its bezel,
   // keeps the phone's aspect, so it's narrower than asked for; Device Hub's
-  // window, without its sidebar, takes any size and fits the phone in it.
+  // window, without its sidebar, takes any size and fits the phone in it;
+  // iPhone Mirroring's keeps its own size, centered in the row.
   let phone: number;
-  if (deviceHub()) {
-    await deviceHubWindow(apps.sim);
+  let phoneY = h;
+  let phoneH = h;
+  if (device) {
+    const win = rect(run(ax, ['window', String(apps.sim)]));
+    phone = win.w;
+    phoneH = win.h;
+    phoneY = Math.min(h + Math.floor((h - win.h) / 2), screen.h - win.h);
+  } else if (deviceHub()) {
+    await deviceHubWindow(apps.sim, simulator());
     phone = Math.round(h * DEVICE_HUB_ASPECT);
   } else {
     bezels(false);
@@ -544,7 +604,7 @@ async function layout(apps: Apps) {
   place(apps.gpui, w, 0, screen.w - w, h);
   place(apps.rune, 0, h, rune, h);
   place(apps.web, rune, h, web, h);
-  place(apps.sim, screen.w - phone, h, phone, h);
+  place(apps.sim, screen.w - phone, phoneY, phone, phoneH);
   zoomWeb(apps.web, web);
 }
 
@@ -569,9 +629,10 @@ function zoomWeb(pid: number, width: number) {
 
 /**
  * Device Hub's main window with only the phone in it: from its compact
- * window, which can't change size, and without its sidebar of devices.
+ * window, which can't change size, on the booted device (it opens on the
+ * last one shown), and without its sidebar of devices.
  */
-async function deviceHubWindow(pid: number) {
+async function deviceHubWindow(pid: number, udid: string) {
   const press = async (query: string) => {
     let r: string;
     try {
@@ -588,6 +649,8 @@ async function deviceHubWindow(pid: number) {
     `tell application "System Events" to set frontmost of (first process whose unix id is ${pid}) to true`,
   ]);
   await press('desc=Show in Device Hub');
+  await press('desc=Show Sidebar');
+  await press(`id=TableRow.Device.${udid}`);
   await press('desc=Hide Sidebar');
 }
 
@@ -628,7 +691,7 @@ async function record(apps: Apps) {
     const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
     const raw = join(work, `raw-${stamp}.mp4`);
     const out = join(work, `zbugs-five-apps-${stamp}.mp4`);
-    const board = storyboard(ax);
+    const board = storyboard(ax, !!device);
 
     // Each app at its list before the take, the simulator's keyboard hidden.
     await board.reset(apps, sql);
@@ -716,27 +779,23 @@ function captioned(raw: string, out: string, captions: Caption[]) {
   const height = even((Number(size[2]) * width) / Number(size[1]));
   // A band under the screen for the captions, as no app's cell is free.
   const band = even(height * 0.075);
-  const big = Math.round(band * 0.34);
-  const small = Math.round(band * 0.24);
-  const x = Math.round(band * 0.35);
-  const font = existsSync('/System/Library/Fonts/SFNS.ttf')
-    ? '/System/Library/Fonts/SFNS.ttf'
-    : '/System/Library/Fonts/Helvetica.ttc';
+  // Each caption drawn by ax (Homebrew's ffmpeg can lack drawtext), laid
+  // over the band until the next one starts.
   const dir = join(work, 'captions');
   mkdirSync(dir, {recursive: true});
-  const filters = captions.flatMap((c, i) => {
-    const title = join(dir, `${i}-title.txt`);
-    const detail = join(dir, `${i}-detail.txt`);
-    writeFileSync(title, c.title);
-    writeFileSync(detail, c.detail);
-    // Each caption stays up until the next one starts.
+  const inputs: string[] = [];
+  const graph = [
+    `[0:v]scale=${width}:${height},pad=${width}:${height + band}:0:0:color=0x1c1c1e[v0]`,
+  ];
+  for (const [i, c] of captions.entries()) {
+    const png = join(dir, `${i}.png`);
+    run(ax, ['caption', png, String(width), String(band), c.title, c.detail]);
+    inputs.push('-i', png);
     const end = captions[i + 1]?.start ?? 1e9;
-    const enable = `enable='between(t,${c.start.toFixed(2)},${end.toFixed(2)})'`;
-    return [
-      `drawtext=fontfile=${font}:textfile=${title}:fontsize=${big}:fontcolor=white:x=${x}:y=${height + Math.round(band * 0.16)}:${enable}`,
-      `drawtext=fontfile=${font}:textfile=${detail}:fontsize=${small}:fontcolor=white@0.8:x=${x}:y=${height + Math.round(band * 0.58)}:${enable}`,
-    ];
-  });
+    graph.push(
+      `[v${i}][${i + 1}:v]overlay=0:${height}:enable='between(t,${c.start.toFixed(2)},${end.toFixed(2)})'[v${i + 1}]`,
+    );
+  }
   execFileSync(
     'ffmpeg',
     [
@@ -745,12 +804,11 @@ function captioned(raw: string, out: string, captions: Caption[]) {
       '-y',
       '-i',
       raw,
-      '-vf',
-      [
-        `scale=${width}:${height}`,
-        `pad=${width}:${height + band}:0:0:color=0x1c1c1e`,
-        ...filters,
-      ].join(','),
+      ...inputs,
+      '-filter_complex',
+      graph.join(';'),
+      '-map',
+      `[v${captions.length}]`,
       '-c:v',
       'libx264',
       '-crf',
@@ -772,7 +830,7 @@ function captioned(raw: string, out: string, captions: Caption[]) {
 /** What the storyboard did, as Postgres has it. */
 function check() {
   step('checking Postgres');
-  const failures = storyboard(ax).check(sql);
+  const failures = storyboard(ax, !!device).check(sql);
   for (const f of failures) {
     say(`FAILED: ${f}`);
   }

@@ -9,6 +9,13 @@
 //   ax show PID QUERY [INDEX]    the same, scrolled into view first
 //   ax window PID                the app's first window: "x y w h"
 //   ax place PID X Y W H         moves and sizes that window
+//   ax text PID [TEXT [INDEX]]   the INDEXth line of text on screen in the
+//                                app's window containing TEXT (`=TEXT`:
+//                                that whole line): "x y w h";
+//                                without TEXT, every line and its frame
+//                                (Vision's text recognition, for windows
+//                                that expose no controls)
+//   ax caption PNG W H TITLE DETAIL  a W×H-pixel caption band
 // QUERY is `field=text` pairs joined by `&` (role, title, desc, id,
 // placeholder, value, help), each a case-insensitive substring match
 // (`field==text` for the whole label), or bare text matched against every
@@ -16,6 +23,7 @@
 import AppKit
 import ApplicationServices
 import Foundation
+import Vision
 
 func attr(_ e: AXUIElement, _ name: String) -> AnyObject? {
   var v: AnyObject?
@@ -49,8 +57,9 @@ func labels(_ e: AXUIElement) -> [String: String] {
 let args = CommandLine.arguments
 let usage = """
   usage: ax permissions | ax screen | ax scroll DY STEPS | ax dump PID [DEPTH]
-         ax find|show PID QUERY [INDEX]
+         ax find|show PID QUERY [INDEX] | ax text PID [TEXT [INDEX]]
          ax window PID | ax place PID X Y W H
+         ax caption PNG W H TITLE DETAIL
 
   """
 
@@ -80,6 +89,34 @@ case "scroll":
       .post(tap: .cghidEventTap)
     usleep(8000)
   }
+  exit(0)
+case "caption":
+  // White title and dimmer detail on zbugs' dark gray, sized to the band.
+  guard args.count == 7, let w = Int(args[3]), let h = Int(args[4]) else { break }
+  // Drawn in pixels, whatever the screen's scale.
+  guard let rep = NSBitmapImageRep(
+    bitmapDataPlanes: nil, pixelsWide: w, pixelsHigh: h, bitsPerSample: 8, samplesPerPixel: 4,
+    hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+  else { exit(1) }
+  NSGraphicsContext.saveGraphicsState()
+  NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+  NSColor(red: 0x1c / 255, green: 0x1c / 255, blue: 0x1e / 255, alpha: 1).setFill()
+  NSRect(x: 0, y: 0, width: w, height: h).fill()
+  let x = CGFloat(h) * 0.35
+  for (text, size, alpha, top) in [
+    (args[5], 0.34, 1.0, 0.16), (args[6], 0.24, 0.8, 0.58),
+  ] {
+    let font = NSFont.systemFont(ofSize: CGFloat(h) * size, weight: alpha == 1 ? .medium : .regular)
+    let attrs: [NSAttributedString.Key: Any] = [
+      .font: font, .foregroundColor: NSColor.white.withAlphaComponent(alpha),
+    ]
+    // `top` is the line's top from the band's top, as a share of its height.
+    let y = CGFloat(h) * (1 - top) - font.ascender
+    (text as NSString).draw(at: NSPoint(x: x, y: y), withAttributes: attrs)
+  }
+  NSGraphicsContext.restoreGraphicsState()
+  guard let png = rep.representation(using: .png, properties: [:]) else { exit(1) }
+  try? png.write(to: URL(fileURLWithPath: args[2]))
   exit(0)
 default: break
 }
@@ -113,6 +150,60 @@ case "place":
   if let f = frame(w) { print("\(Int(f.minX)) \(Int(f.minY)) \(Int(f.width)) \(Int(f.height))") }
   exit(0)
 default: break
+}
+
+if args[1] == "text" {
+  // What's on screen in the window, read by Vision: the window must be
+  // unobscured, and the caller needs Screen Recording.
+  guard let w = mainWindow(), let f = frame(w) else { exit(1) }
+  let file = NSTemporaryDirectory() + "ax-text-\(getpid()).png"
+  let capture = Process()
+  capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+  capture.arguments = ["-x", "-R\(Int(f.minX)),\(Int(f.minY)),\(Int(f.width)),\(Int(f.height))", file]
+  try? capture.run()
+  capture.waitUntilExit()
+  defer { try? FileManager.default.removeItem(atPath: file) }
+  guard let image = NSImage(contentsOfFile: file)?.cgImage(forProposedRect: nil, context: nil, hints: nil)
+  else { exit(1) }
+  let request = VNRecognizeTextRequest()
+  request.recognitionLevel = .accurate
+  do {
+    try VNImageRequestHandler(cgImage: image).perform([request])
+  } catch {
+    // A Mac without a Neural Engine, such as a virtual one, has only the
+    // fast recognizer.
+    request.recognitionLevel = .fast
+    try? VNImageRequestHandler(cgImage: image).perform([request])
+  }
+  // `=TEXT` matches a whole line.
+  let wanted = args.count > 3 ? args[3].lowercased() : nil
+  let whole = wanted?.hasPrefix("=") ?? false
+  let needle = whole ? String(wanted!.dropFirst()) : wanted
+  var skip = args.count > 4 ? Int(args[4]) ?? 0 : 0
+  // Top to bottom, then left to right, as a reader would.
+  let lines = (request.results ?? []).compactMap { o -> (String, CGRect)? in
+    guard let text = o.topCandidates(1).first?.string else { return nil }
+    let b = o.boundingBox
+    return (text, CGRect(
+      x: f.minX + b.minX * f.width, y: f.minY + (1 - b.maxY) * f.height,
+      width: b.width * f.width, height: b.height * f.height))
+  }.sorted { ($0.1.minY, $0.1.minX) < ($1.1.minY, $1.1.minX) }
+  for (text, r) in lines {
+    let at = "\(Int(r.minX)) \(Int(r.minY)) \(Int(r.width)) \(Int(r.height))"
+    guard let wanted else {
+      print("\(at) \(text)")
+      continue
+    }
+    let line = text.lowercased()
+    if whole ? line == needle : line.contains(needle!) {
+      if skip == 0 {
+        print(at)
+        exit(0)
+      }
+      skip -= 1
+    }
+  }
+  exit(wanted == nil ? 0 : 1)
 }
 
 if args[1] == "dump" {

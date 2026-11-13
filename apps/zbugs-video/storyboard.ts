@@ -35,10 +35,18 @@ type Step = {
   run: (apps: Apps) => Promise<void>;
 };
 
+// The iPhone's screen, height over width (393×852 points).
+const PHONE_ASPECT = 852 / 393;
+
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 const center = (r: Rect): Point => ({x: r.x + r.w / 2, y: r.y + r.h / 2});
 
-export function storyboard(ax: string) {
+/**
+ * `mirrored`: the iPhone is a real one in iPhone Mirroring, whose window
+ * exposes no controls, so its steps find and check text on its screen
+ * (`ax text`) and tap by position.
+ */
+export function storyboard(ax: string, mirrored = false) {
   const call = (args: string[]) =>
     execFileSync(ax, args, {encoding: 'utf8'}).trim();
   const rect = (s: string): Rect => {
@@ -66,6 +74,45 @@ export function storyboard(ax: string) {
     }
   }
 
+  /** The window's line of text on screen that contains `text` (`=text`: is it). */
+  const tryText = (pid: number, text: string) => {
+    try {
+      return rect(call(['text', String(pid), text]));
+    } catch {
+      return undefined;
+    }
+  };
+  async function waitText(pid: number, text: string) {
+    const deadline = Date.now() + 15_000;
+    for (;;) {
+      const r = tryText(pid, text);
+      if (r) return r;
+      if (Date.now() > deadline) throw new Error(`no text "${text}" in ${pid}`);
+      await sleep(250);
+    }
+  }
+  /**
+   * Acts until `done`, up to three times, 5 seconds apart: a click right
+   * after an app comes to the front can be dropped. The take stops when it
+   * never is, rather than going on from the wrong state.
+   */
+  async function until(
+    what: string,
+    act: () => Promise<unknown>,
+    done: () => boolean,
+  ) {
+    for (let i = 0; i < 3; i++) {
+      if (done()) return;
+      await act();
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        if (done()) return;
+        await sleep(250);
+      }
+    }
+    throw new Error(`${what} didn't happen`);
+  }
+
   const cliclick = (...args: string[]) =>
     execFileSync('cliclick', args, {stdio: 'ignore'});
   /** A glide to the point, then a press and release a hand would make. */
@@ -88,13 +135,28 @@ export function storyboard(ax: string) {
     cliclick('kd:cmd', 't:a', 'ku:cmd');
     await sleep(200);
   }
+  /**
+   * Types into a field, again until it has the text: keys typed right
+   * after an app comes to the front can be dropped.
+   */
+  async function fill(pid: number, field: string, text: string) {
+    await until(
+      `typing into ${field}`,
+      async () => {
+        await click(center(await find(pid, field)));
+        await selectAll();
+        await type(text);
+      },
+      () => !!tryFind(pid, `${field}&value=${text}`),
+    );
+  }
   /** Brings the app's window to the front, so the first click lands. */
   async function activate(pid: number) {
     execFileSync('osascript', [
       '-e',
       `tell application "System Events" to set frontmost of (first process whose unix id is ${pid}) to true`,
     ]);
-    await sleep(250);
+    await sleep(500);
   }
   /** Opens a menu and picks from it, pressing again if the menu didn't open. */
   async function pick(pid: number, trigger: string, option: string, index = 0) {
@@ -107,6 +169,23 @@ export function storyboard(ax: string) {
       }
       if (i === 2) throw new Error(`${trigger} didn't open ${option}`);
     }
+  }
+  /**
+   * Rune's list at its open or closed issues, from its status menu, picked
+   * again until the menu shows it: a click on the menu can be dropped, and
+   * leave it open.
+   */
+  async function runeStatus(apps: Apps, value: 'Open' | 'Closed') {
+    const option = value === 'Open' ? 'id=option0' : 'id=option1';
+    await until(
+      `Rune listing ${value.toLowerCase()} issues`,
+      async () => {
+        const open = tryFind(apps.rune, option);
+        if (open) await click(center(open));
+        else await pick(apps.rune, 'id=status-trigger', option);
+      },
+      () => !!tryFind(apps.rune, `id=status-trigger&value==${value}`),
+    );
   }
   /** A fast swipe down the list at `p`, then back up to its top. */
   async function scroll(p: Point) {
@@ -148,15 +227,22 @@ export function storyboard(ax: string) {
       y: window(apps.gpui).y + 52 + 28 + i * 56,
     }),
   };
-  // The phone's screen, and its navigation bar's buttons there, which the
-  // simulator doesn't expose: back, then close or reopen.
+  // The phone's screen, and its navigation bar's buttons there, which
+  // neither the simulator nor iPhone Mirroring expose: back, then close or
+  // reopen.
   const phone = {
     /**
-     * The first phone-shaped group but the window's own: Simulator's first
-     * group is the screen, Device Hub's its whole window, which can be
-     * phone-shaped too.
+     * iPhone Mirroring's window is the screen, under a strip for its
+     * controls. Otherwise it's the first phone-shaped group but the
+     * window's own: Simulator's first group is the screen, Device Hub's its
+     * whole window, which can be phone-shaped too.
      */
-    screen: async (apps: Apps) => {
+    screen: async (apps: Apps): Promise<Rect> => {
+      if (mirrored) {
+        const w = window(apps.sim);
+        const h = Math.min(w.h, Math.round(w.w * PHONE_ASPECT));
+        return {x: w.x, y: w.y + w.h - h, w: w.w, h};
+      }
       const deadline = Date.now() + 15_000;
       for (;;) {
         const w = window(apps.sim);
@@ -175,19 +261,92 @@ export function storyboard(ax: string) {
       return {x: s.x + fx * s.w, y: s.y + fy * s.h};
     },
     back: (apps: Apps) => phone.at(apps, 0.093, 0.096),
+    toggleOpen: (apps: Apps) => phone.at(apps, 0.768, 0.096),
+    atList: (apps: Apps) =>
+      mirrored
+        ? !!tryText(apps.sim, 'search issues')
+        : !!tryFind(apps.sim, 'id=IssueRow'),
+    atIssue: (apps: Apps) =>
+      mirrored
+        ? !!tryText(apps.sim, 'issue #')
+        : !!tryFind(apps.sim, 'placeholder=Add a comment'),
     /**
      * Back to the list. A tap the simulator takes for a long press opens
      * the back button's menu instead, which has the list too.
      */
-    toList: async (apps: Apps) => {
-      await click(await phone.back(apps));
-      for (let i = 0; i < 8 && !tryFind(apps.sim, 'id=IssueRow'); i++) {
-        const menu = tryFind(apps.sim, 'Open Issues&role=AXButton');
-        if (menu) await click(center(menu));
+    toList: (apps: Apps) =>
+      until(
+        'the iPhone going back to its list',
+        async () => {
+          await click(await phone.back(apps));
+          await sleep(500);
+          const menu = mirrored
+            ? undefined
+            : tryFind(apps.sim, 'Open Issues&role=AXButton');
+          if (menu) await click(center(menu));
+        },
+        () => phone.atList(apps),
+      ),
+    /** Its list at the top: a tap on the status bar. */
+    toTop: async (apps: Apps) => {
+      await click(await phone.at(apps, 0.5, 0.03));
+      await sleep(800);
+    },
+    /**
+     * A fast swipe down its list, then back to the top. Device Hub turns the
+     * wheel the other way round from Simulator, so a first swipe that leaves
+     * the list where it was turns it round.
+     */
+    scroll: async (apps: Apps) => {
+      const s = await phone.screen(apps);
+      const p = center(s);
+      cliclick('-e', '250', `m:${Math.round(p.x)},${Math.round(p.y)}`);
+      await sleep(300);
+      // The list's text, without the status bar's clock.
+      const list = () =>
+        call(['text', String(apps.sim)])
+          .split('\n')
+          .filter(l => Number(l.split(' ')[1]) > s.y + 0.15 * s.h)
+          .join('\n');
+      const before = list();
+      let dy = -80;
+      call(['scroll', String(dy), '60']);
+      await sleep(500);
+      if (list() === before) dy = -dy;
+      for (let i = 0; i < 4; i++) {
+        call(['scroll', String(dy), '60']);
         await sleep(250);
       }
+      await sleep(600);
+      await phone.toTop(apps);
     },
-    toggleOpen: (apps: Apps) => phone.at(apps, 0.768, 0.096),
+    open: async (apps: Apps, title: string) => {
+      const r = mirrored
+        ? await waitText(apps.sim, title)
+        : await find(apps.sim, row(title));
+      await until(
+        'the iPhone opening the issue',
+        () => click(center(r)),
+        () => phone.atIssue(apps),
+      );
+    },
+    comment: async (apps: Apps, text: string) => {
+      await click(
+        center(
+          mirrored
+            ? await waitText(apps.sim, 'a comment')
+            : await find(apps.sim, 'placeholder=Add a comment'),
+        ),
+      );
+      await type(text);
+      await click(
+        center(
+          mirrored
+            ? await waitText(apps.sim, '=comment')
+            : await find(apps.sim, 'desc=Comment'),
+        ),
+      );
+    },
   };
   const row = (title: string) => `id=IssueRow&desc=${title}`;
   // The web app's page, whose controls below the fold Chrome reports
@@ -230,17 +389,14 @@ export function storyboard(ax: string) {
         await activate(apps.web);
         await click(center(await find(apps.web, web.row(TITLE))));
         await activate(apps.sim);
-        await click(center(await find(apps.sim, row(TITLE))));
-        await find(apps.sim, 'placeholder=Add a comment');
+        await phone.open(apps, TITLE);
       },
     },
     {
       title: 'The iPhone comments',
       detail: 'The comment shows in Swift, GPUI, Rune, and the browser.',
       async run(apps) {
-        await click(center(await find(apps.sim, 'placeholder=Add a comment')));
-        await type(IPHONE_COMMENT);
-        await click(center(await find(apps.sim, 'desc=Comment')));
+        await phone.comment(apps, IPHONE_COMMENT);
         await find(apps.swift, `value=${IPHONE_COMMENT}`);
         await sleep(1500);
       },
@@ -267,12 +423,11 @@ export function storyboard(ax: string) {
       detail: 'Its comment shows under the iPhone’s, in every app.',
       async run(apps) {
         await activate(apps.swift);
-        await click(
-          center(
-            await find(apps.swift, 'role=AXTextField&placeholder=comment'),
-          ),
+        await fill(
+          apps.swift,
+          'role=AXTextField&placeholder=comment',
+          MAC_COMMENT,
         );
-        await type(MAC_COMMENT);
         await click(
           center(await find(apps.swift, 'role=AXButton&desc=Comment')),
         );
@@ -288,7 +443,7 @@ export function storyboard(ax: string) {
         await pick(apps.rune, 'id=labels-trigger', `id=label-${LABEL}`);
         await key('esc');
         await sleep(400);
-        await pick(apps.rune, 'id=status-trigger', 'id=option1');
+        await runeStatus(apps, 'Closed');
         await sleep(1500);
       },
     },
@@ -297,8 +452,18 @@ export function storyboard(ax: string) {
       detail: "Open again everywhere: it leaves Rune's list of closed issues.",
       async run(apps) {
         await activate(apps.sim);
-        await click(await phone.toggleOpen(apps));
-        await find(apps.swift, 'role=AXButton&desc=Close Issue');
+        if (!phone.atIssue(apps)) throw new Error('the iPhone left the issue');
+        const toggle = await phone.toggleOpen(apps);
+        // Tapped again only while Swift still shows it closed.
+        await until(
+          'the iPhone reopening the issue',
+          async () => {
+            if (tryFind(apps.swift, 'role=AXButton&desc=Reopen')) {
+              await click(toggle);
+            }
+          },
+          () => !!tryFind(apps.swift, 'role=AXButton&desc=Close Issue'),
+        );
         await sleep(1500);
       },
     },
@@ -308,7 +473,11 @@ export function storyboard(ax: string) {
         'The new title shows in Swift, Rune, the browser, and on the iPhone.',
       async run(apps) {
         await activate(apps.gpui);
-        await click(gpui.button(apps, 1));
+        await until(
+          'GPUI opening its edit dialog',
+          () => click(gpui.button(apps, 1)),
+          () => !!tryText(apps.gpui, 'edit issue'),
+        );
         await sleep(600);
         await selectAll();
         await type(RENAMED);
@@ -337,7 +506,7 @@ export function storyboard(ax: string) {
         'Through hundreds of the 20,000 issues, its pages loading as it goes, then back to the top.',
       async run(apps) {
         await activate(apps.rune);
-        await pick(apps.rune, 'id=status-trigger', 'id=option0');
+        await runeStatus(apps, 'Open');
         await activate(apps.swift);
         await scroll(center(await find(apps.swift, 'id=IssueRow', 2)));
         await activate(apps.gpui);
@@ -349,7 +518,7 @@ export function storyboard(ax: string) {
         await scroll(center(await find(apps.web, web.row(RENAMED))));
         await activate(apps.sim);
         await phone.toList(apps);
-        await scroll(center(await find(apps.sim, 'id=IssueRow', 2)));
+        await phone.scroll(apps);
       },
     },
   ];
@@ -374,23 +543,24 @@ export function storyboard(ax: string) {
       await key('esc');
       await activate(apps.gpui);
       await click(gpui.closeDialog(apps));
-      if (!tryFind(apps.rune, 'id=status-trigger&value=Open')) {
-        await activate(apps.rune);
-        await pick(apps.rune, 'id=status-trigger', 'id=option0');
-      }
-      // The phone at its list: from an issue, back; from the filters, to the
-      // issues. The simulator builds its tree once asked, so it can take a
-      // moment to show either.
+      await activate(apps.rune);
+      await runeStatus(apps, 'Open');
+      // The phone at its list: from the simulator's filters, to the
+      // issues; from an issue, or one an earlier take deleted, back. The
+      // simulator builds its tree once asked, so it can take a moment to
+      // show either.
       await activate(apps.sim);
-      for (let i = 0; i < 20 && !tryFind(apps.sim, 'id=IssueRow'); i++) {
-        if (tryFind(apps.sim, 'placeholder=Add a comment')) {
-          await phone.toList(apps);
-        } else {
-          const issues = tryFind(apps.sim, 'desc=Issues');
-          if (issues) await click(center(issues));
-        }
+      for (let i = 0; i < 20 && !phone.atList(apps); i++) {
+        const issues = mirrored ? undefined : tryFind(apps.sim, 'desc=Issues');
+        if (issues) await click(center(issues));
+        else if (i % 2) await click(await phone.back(apps));
         await sleep(500);
       }
+      if (!phone.atList(apps)) {
+        throw new Error('the iPhone is not at its list of issues');
+      }
+      // At its top, where the new issue lands.
+      await phone.toTop(apps);
       // The web app at its list too.
       await activate(apps.web);
       await key('esc');

@@ -19,7 +19,8 @@ four:
 9. Each app scrolls fast through its list of 20,000 issues.
 
 The iPhone shows in Xcode 26's Simulator or, with Xcode 27, in Device Hub,
-which replaces it.
+which replaces it. Steps that can drop a click retry until their change
+shows, and a step whose change never shows stops the take.
 
 Each step's caption goes on afterwards, in a band under the screen. Then
 Postgres must have each change. A take runs about two minutes.
@@ -83,4 +84,24 @@ launched.
 
 A take that fails stops at the step that did and says which element it
 couldn't find; `ax dump <pid>` (in `~/.zbugs-video`) prints what an app
-exposes.
+exposes, and `ax text <pid>` the text on its screen.
+
+## A real iPhone
+
+With `ZBUGS_VIDEO_DEVICE` set to an iPhone's identifier (`xcrun devicectl
+list devices`), the iPhone in the video is that one, shown by iPhone
+Mirroring, in place of the simulator. It needs:
+
+- zbugs-swift installed on the iPhone, built from Xcode with your team.
+- The backend reachable from it: start the backend with `ZBUGS_HOST=0.0.0.0`.
+  The app reaches it at the Mac's address on en0, or at
+  `ZBUGS_VIDEO_DEVICE_HOST`.
+- iPhone Mirroring unlocked on the Mac, with the iPhone locked.
+
+`launch` starts the app logged in through `devicectl`, and places the
+Mirroring window, which keeps its own size, in the phone's cell. Mirroring
+exposes none of the app's controls, so the phone's steps find what they tap
+in the text on its screen, read by macOS's text recognition. Back and
+reopen are icons, tapped at their place on the screen. Each phone step is
+checked where its change lands, in Swift on the Mac or on the phone's
+screen, before the take goes on.
