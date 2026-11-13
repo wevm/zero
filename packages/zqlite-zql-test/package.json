@@ -1,0 +1,29 @@
+{
+  "name": "zqlite-zql-test",
+  "version": "0.0.0",
+  "private": true,
+  "description": "zql tests against zqlite TableSource, write-through and deferred-writes",
+  "type": "module",
+  "scripts": {
+    "format": "oxfmt .",
+    "check-format": "oxfmt --check .",
+    "check-types": "tsc",
+    "check-types:watch": "tsc --watch",
+    "lint": "oxlint --quiet --config ../../oxlint.config.ts src/",
+    "test": "vitest run",
+    "test:watch": "vitest watch",
+    "fmt": "oxfmt .",
+    "check-fmt": "oxfmt --check ."
+  },
+  "dependencies": {
+    "zqlite": "workspace:*"
+  },
+  "devDependencies": {
+    "@rocicorp/logger": "^6.1.0",
+    "oxfmt": "^0.74.0",
+    "shared": "workspace:*",
+    "typescript": "~7.0.2",
+    "vitest": "^5.0.5"
+  },
+  "packageManager": "pnpm@11.11.0"
+}

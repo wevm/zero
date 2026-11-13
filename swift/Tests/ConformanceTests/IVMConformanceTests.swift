@@ -187,8 +187,18 @@ struct IVMConformanceTests {
     if built.format != format {
       return "builder format\n  swift: \(built.format.json)\n  js:    \(c["format"]!)"
     }
-    let result = c["result"]!
-    let delegate = Delegate(sources)
+    return replay(
+      ast, format, sources: sources, delegate: Delegate(sources),
+      pushes: dataset["pushes"]!.arrayValue!, result: c["result"]!)
+  }
+
+  /// Hydrates a view of `ast` over `sources`, applies `pushes`, and compares
+  /// the view and the changes it received with JS's `result`; returns a
+  /// description of the first mismatch.
+  static func replay(
+    _ ast: AST, _ format: Format, sources: [String: MemorySource], delegate: any BuilderDelegate,
+    pushes: [JSONValue], result: JSONValue
+  ) -> String? {
     let recorder: Recorder
     let view: ArrayView
     do {
@@ -212,7 +222,7 @@ struct IVMConformanceTests {
       return "initial view\n  swift: \(viewJSON())\n  js:    \(result["initial"]!)"
     }
     let steps = result["steps"]!.arrayValue!
-    for (i, push) in dataset["pushes"]!.arrayValue!.enumerated() {
+    for (i, push) in pushes.enumerated() {
       recorder.changes.removeAll()
       let (table, change) = sourceChange(push)
       sources[table]!.push(change)

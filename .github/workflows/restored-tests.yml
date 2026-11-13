@@ -1,0 +1,70 @@
+name: Restored Tests
+
+# Runs the zql, zqlite, zero-protocol, zero-schema and zero-types tests, and
+# the zqlite-zql-test and zql-integration-tests suites, restored from
+# rocicorp/mono 7ebeb2172 after mono stopped publishing them. Public JS runs
+# only the packages mono still publishes tests for. See
+# tools/restored-tests/README.md.
+
+on:
+  push:
+    branches: [main]
+  # Any base, so a PR stacked on another one gets checked too.
+  pull_request:
+
+concurrency:
+  group: '${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}'
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Restored Tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      # A restored file an upstream merge or a local edit changed is no longer
+      # the published test; adapt it under a new name or record it instead.
+      - name: Check restored files are unchanged
+        run: |
+          status=0
+          while read -r sha path; do
+            if [ "$(git hash-object "$path" 2>/dev/null)" != "$sha" ]; then
+              echo "::error file=$path::differs from rocicorp/mono 7ebeb2172 (or is missing)"
+              status=1
+            fi
+          done < tools/restored-tests/verbatim.txt
+          exit $status
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.11.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+          package-manager-cache: false
+      - run: pnpm install --frozen-lockfile
+      # zero-protocol, zero-schema and zero-types run in the browsers.
+      - uses: ./.github/actions/playwright-install
+      - name: Package tests
+        run: >-
+          pnpm
+          --filter zql
+          --filter zqlite
+          --filter zero-protocol
+          --filter zero-schema
+          --filter zero-types
+          --filter zqlite-zql-test
+          run test
+      - name: Integration tests without Postgres
+        working-directory: packages/zql-integration-tests
+        run: pnpm exec vitest run --config vitest.config.no-pg.ts
+      # Postgres 17 from testcontainers. The shared pg config retries twice in
+      # CI; these run once.
+      - name: Integration tests with Postgres 17
+        working-directory: packages/zql-integration-tests
+        run: pnpm exec vitest run --config vitest.config.pg-17.ts --retry=0
