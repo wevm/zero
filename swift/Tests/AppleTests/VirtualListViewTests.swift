@@ -217,7 +217,12 @@
       try await t.run(0.5) { false }
       #expect(list.firstVisibleItem()?.key == VirtualListTests.id(150))
       server.delete("note", ["id": .string(VirtualListTests.id(150))])
-      try await t.run(2) { false }
+      // The delete reaches the list over several turns of the main actor,
+      // which the other suites' tests share and can hold for seconds (a
+      // SQLite busy wait): a fixed wait can run out before them. Waited for,
+      // as the jump is above.
+      try await t.run(30) { list.firstVisibleItem()?.key == VirtualListTests.id(151) }
+      try await t.run(0.5) { false }
       // n151 comes up into its place.
       #expect(
         list.firstVisibleItem()?.key == VirtualListTests.id(151),
