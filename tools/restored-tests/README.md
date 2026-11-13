@@ -86,9 +86,9 @@ bug: `helpers/setup.ts` names every replica `collate_test`, so two files that
 use it at once fight over one replication slot. With `collate.pg` left out,
 only `text-semantics.pg` uses it.
 
-Integration tests without Postgres run one file at a time in CI. The chinook
-fuzzer's `decorated push memory parity (n=2)` takes about 55 to 57 s of its
-60 s budget even alone, and it ran out of time when files ran in parallel.
+The chinook fuzzer's `decorated push memory parity (n=2)` has a 60 s budget. It
+takes 18 s on GitHub's runner, but 55 to 57 s alone on a slower machine (an
+Amp orb), where it ran out of time with the other files running beside it.
 
 ## Changes to restored files
 

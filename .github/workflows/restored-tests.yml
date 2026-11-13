@@ -60,12 +60,9 @@ jobs:
           --filter zero-types
           --filter zqlite-zql-test
           run test
-      # One file at a time: the chinook fuzzer's "decorated push memory
-      # parity (n=2)" takes about 55 s of its 60 s budget alone, and ran out
-      # of it alongside the other files.
       - name: Integration tests without Postgres
         working-directory: packages/zql-integration-tests
-        run: pnpm exec vitest run --config vitest.config.no-pg.ts --no-file-parallelism
+        run: pnpm exec vitest run --config vitest.config.no-pg.ts
       # Postgres 17 from testcontainers. The shared pg config retries twice in
       # CI; these run once.
       - name: Integration tests with Postgres 17
