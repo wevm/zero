@@ -157,6 +157,19 @@ impl<S: 'static, C: Clone + Send + 'static> SyncThread<S, C> {
         });
     }
 
+    /// Runs `then` on the app's state once the server has confirmed the
+    /// mutations sent so far, or at once when it can't, as offline.
+    pub fn when_settled(&self, then: impl FnOnce(&mut S) + Send + 'static) {
+        self.send(move |w| {
+            let ui = w.ui.clone();
+            let then = move || ui.update(move |s, _| then(s));
+            match &w.client {
+                Some(c) => c.zero.when_pending_settled(then),
+                None => then(),
+            }
+        });
+    }
+
     /// The network may be back: retry now.
     pub fn reconnect_now(&self) {
         self.send(|w| {
