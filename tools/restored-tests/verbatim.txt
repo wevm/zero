@@ -61,6 +61,7 @@ c837e74e08f8086b1083ed1d9a284799e1980725 packages/zql-integration-tests/src/chin
 249ec79ae93bcbef32d852d14df207a51081488e packages/zql-integration-tests/src/discord-repro.pg.test.ts
 b5ce66cbce45f4c8b6457db5a09af93ea8457408 packages/zql-integration-tests/src/env.d.ts
 9c36c6de51931b9d9e06f2eb2fdc8caeb8b94bbd packages/zql-integration-tests/src/helpers/comparePg.ts
+d808b0f6f13be0bcc84860341d03330e6c64e6a9 packages/zql-integration-tests/src/helpers/data-gen.ts
 ce782cca3da5024a29a8f59bbc67fcb1a134cec2 packages/zql-integration-tests/src/helpers/planner.ts
 45ccbfae61fa39fec8eba15f70822f4409d073d4 packages/zql-integration-tests/src/helpers/runner.ts
 10d4381b65d79e7e9a6f03028d9aeb1a3d805e8f packages/zql-integration-tests/src/helpers/setup.ts
@@ -148,6 +149,7 @@ d117d3a3b39ac00c05c3e4f2c48ed2122dc76896 packages/zql/src/query/query-registry.t
 bce49827c3e3a458c3d79f5edf494897702fd59b packages/zql/src/query/take-union-empty-window.sweep.test.ts
 dbc8e41e6276900487d24ade7808981146d41275 packages/zql/src/query/take-union-shape.test.ts
 8e2e2148e2a034be011ba2124ba11ca042c3c9b9 packages/zql/src/query/take-union-yield-mode.diag.test.ts
+6afed0ed84119bd555df4a0093e656fa3e00d5d2 packages/zql/src/query/test/query-gen.ts
 450964c0503ad8ee98e3e5c0137fc830aa6d58ae packages/zql/src/query/test/schema-gen.test.ts
 38cb6559b89ec7e21f4d4e59c5ba40fa6e10458b packages/zql/src/query/test/schema-gen.ts
 a778b6f055a811c0886efa6e867137b99db922f9 packages/zql/src/query/ttl.test.ts

@@ -1,0 +1,851 @@
+// Re-baselined copy of
+// packages/zql/src/query/query-impl.query-kitchen-sink.test.ts from
+// rocicorp/mono 7ebeb2172fc9e621ecfc2f262c4d228b16e9684e (2026-09-26), Apache
+// License 2.0. The original fails against today's zql only on inline snapshots
+// of internals, so it stays out of this repository. This copy differs from it
+// only in this header and in those snapshots, regenerated after upstream
+// c9d1b15fc ("synced aggregates") and effd2da27 ("distinct() for top-level
+// queries") gave every AST `aggregate` and `groupBy` keys. See
+// tools/restored-tests/README.md.
+import {describe, expect, test} from 'vitest';
+import {must} from '../../../shared/src/must.ts';
+import {consume} from '../ivm/stream.ts';
+import type {QueryDelegate} from './query-delegate.ts';
+import {newQuery} from './query-impl.ts';
+import {QueryDelegateImpl} from './test/query-delegate.ts';
+import {schema} from './test/test-schemas.ts';
+
+import {makeSourceChangeAdd} from '../ivm/source.ts';
+function addData(queryDelegate: QueryDelegate) {
+  const userSource = must(queryDelegate.getSource('user'));
+  const issueSource = must(queryDelegate.getSource('issue'));
+  const commentSource = must(queryDelegate.getSource('comment'));
+  const revisionSource = must(queryDelegate.getSource('revision'));
+  const labelSource = must(queryDelegate.getSource('label'));
+  const issueLabelSource = must(queryDelegate.getSource('issueLabel'));
+
+  consume(
+    userSource.push(
+      makeSourceChangeAdd({id: '001', name: 'Alice', metadata: null}),
+    ),
+  );
+  consume(
+    userSource.push(
+      makeSourceChangeAdd({id: '002', name: 'Bob', metadata: null}),
+    ),
+  );
+  consume(
+    userSource.push(
+      makeSourceChangeAdd({id: '003', name: 'Charlie', metadata: {foo: 1}}),
+    ),
+  );
+  consume(
+    userSource.push(
+      makeSourceChangeAdd({id: '004', name: 'Daniel', metadata: null}),
+    ),
+  );
+
+  consume(
+    issueSource.push(
+      makeSourceChangeAdd({
+        id: '101',
+        title: 'Issue 1',
+        description: 'Description 1',
+        closed: false,
+        ownerId: '001',
+        createdAt: 1,
+      }),
+    ),
+  );
+  consume(
+    issueSource.push(
+      makeSourceChangeAdd({
+        id: '102',
+        title: 'Issue 2',
+        description: 'Description 2',
+        closed: false,
+        ownerId: '001',
+        createdAt: 2,
+      }),
+    ),
+  );
+  consume(
+    issueSource.push(
+      makeSourceChangeAdd({
+        id: '103',
+        title: 'Issue 3',
+        description: 'Description 3',
+        closed: false,
+        ownerId: '001',
+        createdAt: 3,
+      }),
+    ),
+  );
+
+  consume(
+    issueSource.push(
+      makeSourceChangeAdd({
+        id: '104',
+        title: 'Issue 4',
+        description: 'Description 4',
+        closed: false,
+        ownerId: '002',
+        createdAt: 4,
+      }),
+    ),
+  );
+  consume(
+    issueSource.push(
+      makeSourceChangeAdd({
+        id: '105',
+        title: 'Issue 5',
+        description: 'Description 5',
+        closed: false,
+        ownerId: '002',
+        createdAt: 5,
+      }),
+    ),
+  );
+  consume(
+    issueSource.push(
+      makeSourceChangeAdd({
+        id: '106',
+        title: 'Issue 6',
+        description: 'Description 6',
+        closed: true,
+        ownerId: '002',
+        createdAt: 6,
+      }),
+    ),
+  );
+  consume(
+    issueSource.push(
+      makeSourceChangeAdd({
+        id: '107',
+        title: 'Issue 7',
+        description: 'Description 7',
+        closed: true,
+        ownerId: '003',
+        createdAt: 7,
+      }),
+    ),
+  );
+  consume(
+    issueSource.push(
+      makeSourceChangeAdd({
+        id: '108',
+        title: 'Issue 8',
+        description: 'Description 8',
+        closed: true,
+        ownerId: '003',
+        createdAt: 8,
+      }),
+    ),
+  );
+  consume(
+    issueSource.push(
+      makeSourceChangeAdd({
+        id: '109',
+        title: 'Issue 9',
+        description: 'Description 9',
+        closed: false,
+        ownerId: '003',
+        createdAt: 9,
+      }),
+    ),
+  );
+  consume(
+    issueSource.push(
+      makeSourceChangeAdd({
+        id: '110',
+        title: 'Issue 10',
+        description: 'Description 10',
+        closed: false,
+        ownerId: '004',
+        createdAt: 10,
+      }),
+    ),
+  );
+
+  consume(
+    commentSource.push(
+      makeSourceChangeAdd({
+        id: '201',
+        issueId: '101',
+        text: 'Comment 1',
+        authorId: '001',
+        createdAt: 1,
+      }),
+    ),
+  );
+  consume(
+    commentSource.push(
+      makeSourceChangeAdd({
+        id: '202',
+        issueId: '101',
+        text: 'Comment 2',
+        authorId: '002',
+        createdAt: 2,
+      }),
+    ),
+  );
+  consume(
+    commentSource.push(
+      makeSourceChangeAdd({
+        id: '203',
+        issueId: '101',
+        text: 'Comment 3',
+        authorId: '003',
+        createdAt: 3,
+      }),
+    ),
+  );
+  consume(
+    commentSource.push(
+      makeSourceChangeAdd({
+        id: '204',
+        issueId: '102',
+        text: 'Comment 4',
+        authorId: '001',
+        createdAt: 4,
+      }),
+    ),
+  );
+  consume(
+    commentSource.push(
+      makeSourceChangeAdd({
+        id: '205',
+        issueId: '102',
+        text: 'Comment 5',
+        authorId: '002',
+        createdAt: 5,
+      }),
+    ),
+  );
+  consume(
+    commentSource.push(
+      makeSourceChangeAdd({
+        id: '206',
+        issueId: '102',
+        text: 'Comment 6',
+        authorId: '003',
+        createdAt: 6,
+      }),
+    ),
+  );
+  consume(
+    commentSource.push(
+      makeSourceChangeAdd({
+        id: '207',
+        issueId: '103',
+        text: 'Comment 7',
+        authorId: '001',
+        createdAt: 7,
+      }),
+    ),
+  );
+  consume(
+    commentSource.push(
+      makeSourceChangeAdd({
+        id: '208',
+        issueId: '103',
+        text: 'Comment 8',
+        authorId: '002',
+        createdAt: 8,
+      }),
+    ),
+  );
+  consume(
+    commentSource.push(
+      makeSourceChangeAdd({
+        id: '209',
+        issueId: '103',
+        text: 'Comment 9',
+        authorId: '003',
+        createdAt: 9,
+      }),
+    ),
+  );
+  consume(
+    commentSource.push(
+      makeSourceChangeAdd({
+        id: '210',
+        issueId: '105',
+        text: 'Comment 10',
+        authorId: '001',
+        createdAt: 10,
+      }),
+    ),
+  );
+  consume(
+    commentSource.push(
+      makeSourceChangeAdd({
+        id: '211',
+        issueId: '105',
+        text: 'Comment 11',
+        authorId: '002',
+        createdAt: 11,
+      }),
+    ),
+  );
+  consume(
+    commentSource.push(
+      makeSourceChangeAdd({
+        id: '212',
+        issueId: '105',
+        text: 'Comment 12',
+        authorId: '003',
+        createdAt: 12,
+      }),
+    ),
+  );
+
+  consume(
+    revisionSource.push(
+      makeSourceChangeAdd({
+        id: '301',
+        commentId: '209',
+        text: 'Revision 1',
+        authorId: '001',
+      }),
+    ),
+  );
+  consume(
+    revisionSource.push(
+      makeSourceChangeAdd({
+        id: '302',
+        commentId: '209',
+        text: 'Revision 2',
+        authorId: '001',
+      }),
+    ),
+  );
+  consume(
+    revisionSource.push(
+      makeSourceChangeAdd({
+        id: '303',
+        commentId: '209',
+        text: 'Revision 3',
+        authorId: '001',
+      }),
+    ),
+  );
+  consume(
+    revisionSource.push(
+      makeSourceChangeAdd({
+        id: '304',
+        commentId: '208',
+        text: 'Revision 1',
+        authorId: '002',
+      }),
+    ),
+  );
+  consume(
+    revisionSource.push(
+      makeSourceChangeAdd({
+        id: '305',
+        commentId: '208',
+        text: 'Revision 2',
+        authorId: '002',
+      }),
+    ),
+  );
+  consume(
+    revisionSource.push(
+      makeSourceChangeAdd({
+        id: '306',
+        commentId: '208',
+        text: 'Revision 3',
+        authorId: '002',
+      }),
+    ),
+  );
+  consume(
+    revisionSource.push(
+      makeSourceChangeAdd({
+        id: '307',
+        commentId: '211',
+        text: 'Revision 1',
+        authorId: '003',
+      }),
+    ),
+  );
+  consume(
+    revisionSource.push(
+      makeSourceChangeAdd({
+        id: '308',
+        commentId: '211',
+        text: 'Revision 2',
+        authorId: '003',
+      }),
+    ),
+  );
+  consume(
+    revisionSource.push(
+      makeSourceChangeAdd({
+        id: '309',
+        commentId: '211',
+        text: 'Revision 3',
+        authorId: '003',
+      }),
+    ),
+  );
+
+  consume(labelSource.push(makeSourceChangeAdd({id: '401', name: 'bug'})));
+  consume(labelSource.push(makeSourceChangeAdd({id: '402', name: 'feature'})));
+
+  consume(
+    issueLabelSource.push(
+      makeSourceChangeAdd({issueId: '103', labelId: '401'}),
+    ),
+  );
+  consume(
+    issueLabelSource.push(
+      makeSourceChangeAdd({issueId: '102', labelId: '401'}),
+    ),
+  );
+  consume(
+    issueLabelSource.push(
+      makeSourceChangeAdd({issueId: '102', labelId: '402'}),
+    ),
+  );
+}
+
+describe('kitchen sink query', () => {
+  test('complex query with filters, limits, and multiple joins', () => {
+    const queryDelegate = new QueryDelegateImpl();
+    addData(queryDelegate);
+    const issueQuery = newQuery(schema, 'issue')
+      .where('ownerId', 'IN', ['001', '002', '003'])
+      .where('closed', false)
+      .related('owner')
+      .related('comments', q =>
+        q
+          .orderBy('createdAt', 'desc')
+          .related('revisions', q => q.orderBy('id', 'desc').limit(1))
+          .limit(2),
+      )
+      .related('labels')
+      .start({
+        id: '101',
+        title: 'Issue 1',
+        description: 'Description 1',
+        closed: false,
+        ownerId: '001',
+      })
+      .orderBy('title', 'asc')
+      .limit(6);
+
+    const view = queryDelegate.materialize(issueQuery);
+
+    expect(queryDelegate.addedServerQueries).toMatchInlineSnapshot(`
+      [
+        {
+          "args": undefined,
+          "ast": {
+            "aggregate": undefined,
+            "alias": undefined,
+            "groupBy": undefined,
+            "limit": 6,
+            "orderBy": [
+              [
+                "title",
+                "asc",
+              ],
+            ],
+            "related": [
+              {
+                "aggregate": undefined,
+                "correlation": {
+                  "childField": [
+                    "issueId",
+                  ],
+                  "parentField": [
+                    "id",
+                  ],
+                },
+                "hidden": undefined,
+                "subquery": {
+                  "aggregate": undefined,
+                  "alias": "comments",
+                  "groupBy": undefined,
+                  "limit": 2,
+                  "orderBy": [
+                    [
+                      "createdAt",
+                      "desc",
+                    ],
+                  ],
+                  "related": [
+                    {
+                      "aggregate": undefined,
+                      "correlation": {
+                        "childField": [
+                          "commentId",
+                        ],
+                        "parentField": [
+                          "id",
+                        ],
+                      },
+                      "hidden": undefined,
+                      "subquery": {
+                        "aggregate": undefined,
+                        "alias": "revisions",
+                        "groupBy": undefined,
+                        "limit": 1,
+                        "orderBy": [
+                          [
+                            "id",
+                            "desc",
+                          ],
+                        ],
+                        "related": undefined,
+                        "schema": undefined,
+                        "start": undefined,
+                        "table": "revision",
+                        "where": undefined,
+                      },
+                      "system": "client",
+                    },
+                  ],
+                  "schema": undefined,
+                  "start": undefined,
+                  "table": "comment",
+                  "where": undefined,
+                },
+                "system": "client",
+              },
+              {
+                "aggregate": undefined,
+                "correlation": {
+                  "childField": [
+                    "issueId",
+                  ],
+                  "parentField": [
+                    "id",
+                  ],
+                },
+                "hidden": true,
+                "subquery": {
+                  "aggregate": undefined,
+                  "alias": "labels",
+                  "groupBy": undefined,
+                  "limit": undefined,
+                  "orderBy": undefined,
+                  "related": [
+                    {
+                      "aggregate": undefined,
+                      "correlation": {
+                        "childField": [
+                          "id",
+                        ],
+                        "parentField": [
+                          "labelId",
+                        ],
+                      },
+                      "hidden": undefined,
+                      "subquery": {
+                        "aggregate": undefined,
+                        "alias": "labels",
+                        "groupBy": undefined,
+                        "limit": undefined,
+                        "orderBy": undefined,
+                        "related": undefined,
+                        "schema": undefined,
+                        "start": undefined,
+                        "table": "label",
+                        "where": undefined,
+                      },
+                      "system": "client",
+                    },
+                  ],
+                  "schema": undefined,
+                  "start": undefined,
+                  "table": "issueLabel",
+                  "where": undefined,
+                },
+                "system": "client",
+              },
+              {
+                "aggregate": undefined,
+                "correlation": {
+                  "childField": [
+                    "id",
+                  ],
+                  "parentField": [
+                    "ownerId",
+                  ],
+                },
+                "hidden": undefined,
+                "subquery": {
+                  "aggregate": undefined,
+                  "alias": "owner",
+                  "groupBy": undefined,
+                  "limit": undefined,
+                  "orderBy": undefined,
+                  "related": undefined,
+                  "schema": undefined,
+                  "start": undefined,
+                  "table": "user",
+                  "where": undefined,
+                },
+                "system": "client",
+              },
+            ],
+            "schema": undefined,
+            "start": {
+              "exclusive": true,
+              "row": {
+                "closed": false,
+                "description": "Description 1",
+                "id": "101",
+                "ownerId": "001",
+                "title": "Issue 1",
+              },
+            },
+            "table": "issue",
+            "where": {
+              "conditions": [
+                {
+                  "left": {
+                    "name": "closed",
+                    "type": "column",
+                  },
+                  "op": "=",
+                  "right": {
+                    "type": "literal",
+                    "value": false,
+                  },
+                  "type": "simple",
+                },
+                {
+                  "left": {
+                    "name": "ownerId",
+                    "type": "column",
+                  },
+                  "op": "IN",
+                  "right": {
+                    "type": "literal",
+                    "value": [
+                      "001",
+                      "002",
+                      "003",
+                    ],
+                  },
+                  "type": "simple",
+                },
+              ],
+              "type": "and",
+            },
+          },
+          "name": undefined,
+          "ttl": 300000,
+        },
+      ]
+    `);
+
+    let rows: unknown[] = [];
+    view.addListener(data => {
+      rows = Array.from(data, row => ({
+        ...row,
+        owner: row.owner,
+        comments: Array.from(row.comments, comment => ({
+          ...comment,
+          revisions: [...comment.revisions],
+        })),
+        labels: Array.from(row.labels, label => ({
+          ...label,
+        })),
+      }));
+    });
+    expect(rows).toMatchInlineSnapshot(`
+      [
+        {
+          "closed": false,
+          "comments": [
+            {
+              "authorId": "003",
+              "createdAt": 6,
+              "id": "206",
+              "issueId": "102",
+              "revisions": [],
+              "text": "Comment 6",
+              Symbol(rc): 1,
+            },
+            {
+              "authorId": "002",
+              "createdAt": 5,
+              "id": "205",
+              "issueId": "102",
+              "revisions": [],
+              "text": "Comment 5",
+              Symbol(rc): 1,
+            },
+          ],
+          "createdAt": 2,
+          "description": "Description 2",
+          "id": "102",
+          "labels": [
+            {
+              "id": "401",
+              "name": "bug",
+              Symbol(rc): 1,
+            },
+            {
+              "id": "402",
+              "name": "feature",
+              Symbol(rc): 1,
+            },
+          ],
+          "owner": {
+            "id": "001",
+            "metadata": null,
+            "name": "Alice",
+            Symbol(rc): 1,
+          },
+          "ownerId": "001",
+          "title": "Issue 2",
+          Symbol(rc): 1,
+        },
+        {
+          "closed": false,
+          "comments": [
+            {
+              "authorId": "003",
+              "createdAt": 9,
+              "id": "209",
+              "issueId": "103",
+              "revisions": [
+                {
+                  "authorId": "001",
+                  "commentId": "209",
+                  "id": "303",
+                  "text": "Revision 3",
+                  Symbol(rc): 1,
+                },
+              ],
+              "text": "Comment 9",
+              Symbol(rc): 1,
+            },
+            {
+              "authorId": "002",
+              "createdAt": 8,
+              "id": "208",
+              "issueId": "103",
+              "revisions": [
+                {
+                  "authorId": "002",
+                  "commentId": "208",
+                  "id": "306",
+                  "text": "Revision 3",
+                  Symbol(rc): 1,
+                },
+              ],
+              "text": "Comment 8",
+              Symbol(rc): 1,
+            },
+          ],
+          "createdAt": 3,
+          "description": "Description 3",
+          "id": "103",
+          "labels": [
+            {
+              "id": "401",
+              "name": "bug",
+              Symbol(rc): 1,
+            },
+          ],
+          "owner": {
+            "id": "001",
+            "metadata": null,
+            "name": "Alice",
+            Symbol(rc): 1,
+          },
+          "ownerId": "001",
+          "title": "Issue 3",
+          Symbol(rc): 1,
+        },
+        {
+          "closed": false,
+          "comments": [],
+          "createdAt": 4,
+          "description": "Description 4",
+          "id": "104",
+          "labels": [],
+          "owner": {
+            "id": "002",
+            "metadata": null,
+            "name": "Bob",
+            Symbol(rc): 1,
+          },
+          "ownerId": "002",
+          "title": "Issue 4",
+          Symbol(rc): 1,
+        },
+        {
+          "closed": false,
+          "comments": [
+            {
+              "authorId": "003",
+              "createdAt": 12,
+              "id": "212",
+              "issueId": "105",
+              "revisions": [],
+              "text": "Comment 12",
+              Symbol(rc): 1,
+            },
+            {
+              "authorId": "002",
+              "createdAt": 11,
+              "id": "211",
+              "issueId": "105",
+              "revisions": [
+                {
+                  "authorId": "003",
+                  "commentId": "211",
+                  "id": "309",
+                  "text": "Revision 3",
+                  Symbol(rc): 1,
+                },
+              ],
+              "text": "Comment 11",
+              Symbol(rc): 1,
+            },
+          ],
+          "createdAt": 5,
+          "description": "Description 5",
+          "id": "105",
+          "labels": [],
+          "owner": {
+            "id": "002",
+            "metadata": null,
+            "name": "Bob",
+            Symbol(rc): 1,
+          },
+          "ownerId": "002",
+          "title": "Issue 5",
+          Symbol(rc): 1,
+        },
+        {
+          "closed": false,
+          "comments": [],
+          "createdAt": 9,
+          "description": "Description 9",
+          "id": "109",
+          "labels": [],
+          "owner": {
+            "id": "003",
+            "metadata": {
+              "foo": 1,
+            },
+            "name": "Charlie",
+            Symbol(rc): 1,
+          },
+          "ownerId": "003",
+          "title": "Issue 9",
+          Symbol(rc): 1,
+        },
+      ]
+    `);
+  });
+});
