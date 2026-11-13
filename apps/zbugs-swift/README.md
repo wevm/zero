@@ -47,7 +47,7 @@ loses Postgres, as when the Mac sleeps with Postgres in Docker.
 When Postgres stops instead, zero-cache keeps retrying and catches up once
 Postgres is back, but nothing brings Postgres back: Docker's `restart: always`
 leaves a container that `docker stop` stopped alone. Set `ZBUGS_PG_START` to a
-command that starts it, and a kept backend runs it once Postgres has missed
+command that starts it, and a kept backend runs it once Postgres has refused
 three checks 10 seconds apart:
 
 ```sh
@@ -55,6 +55,10 @@ ZBUGS_PG_START='docker compose -f apps/zbugs/docker/docker-compose.yml start' \
   ZBUGS_KEEP=1 ZBUGS_DIR=~/.zbugs-swift ZBUGS_PG=... \
   node apps/zbugs-swift/server/server.ts
 ```
+
+A check that times out doesn't count. That's how Postgres looks while the Mac
+sleeps and OrbStack has paused its VM, when `docker` can't start anything
+either. `node --test apps/zbugs-swift/server/postgres.test.ts` tests this.
 
 Then generate the Xcode project and run the `ZBugsApp` scheme on a Mac or an
 iOS simulator:

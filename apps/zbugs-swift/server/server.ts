@@ -31,11 +31,11 @@
  *                    keys in ZBUGS_DIR, which it needs, and to restart
  *                    zero-cache when it exits
  *   ZBUGS_PG_START   with ZBUGS_KEEP, a shell command that starts Postgres,
- *                    run once Postgres has missed three checks 10 seconds
+ *                    run once Postgres has refused three checks 10 seconds
  *                    apart (for example `docker compose -f
  *                    apps/zbugs/docker/docker-compose.yml start`)
  */
-import {execFile, execFileSync, spawn} from 'node:child_process';
+import {execFileSync, spawn} from 'node:child_process';
 import {
   existsSync,
   mkdtempSync,
@@ -48,8 +48,8 @@ import {registerHooks} from 'node:module';
 import {networkInterfaces, tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
-import {promisify} from 'node:util';
 import {createJwkPair} from '../../../packages/zero-cache/src/auth/jwt.ts';
+import {postgresAnswers, watchPostgres} from './postgres.ts';
 
 const env = process.env;
 const adminURL =
@@ -239,49 +239,9 @@ async function restartZeroCache(code: number | null) {
   }
   do {
     await new Promise(resolve => setTimeout(resolve, 5000));
-  } while (!(await postgresAnswers()));
+  } while (!(await postgresAnswers(upstreamURL, env)));
   process.stderr.write('restarting zero-cache\n');
   zeroCache = startZeroCache();
-}
-
-async function postgresAnswers() {
-  try {
-    await promisify(execFile)('psql', [upstreamURL, '-tAc', 'SELECT 1'], {
-      env: {...env, ['PGCONNECT_TIMEOUT']: '5'},
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * zero-cache keeps retrying while Postgres refuses connections and catches
- * up once it answers, but nothing starts a stopped Postgres again: Docker's
- * `restart: always` leaves a container that `docker stop` stopped alone
- * until Docker itself restarts. So a kept backend runs `start` once
- * Postgres has missed three checks 10 seconds apart, longer than a Docker
- * restart takes, and again after three more.
- */
-function watchPostgres(start: string) {
-  let misses = 0;
-  const check = async () => {
-    if (await postgresAnswers()) {
-      misses = 0;
-    } else if (++misses === 3) {
-      misses = 0;
-      process.stderr.write(
-        'Postgres is not answering; running ZBUGS_PG_START\n',
-      );
-      try {
-        await promisify(execFile)('/bin/sh', ['-c', start], {timeout: 60_000});
-      } catch (e) {
-        process.stderr.write(`ZBUGS_PG_START failed: ${String(e)}\n`);
-      }
-    }
-    setTimeout(check, 10_000);
-  };
-  setTimeout(check, 10_000);
 }
 
 let ready = false;
@@ -327,5 +287,5 @@ process.stdout.write(
   `ready ws://${localHost}:${port} http://${localHost}:${apiPort}\n`,
 );
 if (keep && env['ZBUGS_PG_START']) {
-  watchPostgres(env['ZBUGS_PG_START']);
+  watchPostgres(upstreamURL, env, env['ZBUGS_PG_START']);
 }

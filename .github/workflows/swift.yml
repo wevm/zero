@@ -219,6 +219,9 @@ jobs:
         env:
           ZERO_E2E_URL: ws://127.0.0.1:4848
         run: swift test --skip-build --filter E2ETests
+      # When a kept backend runs ZBUGS_PG_START, against real psql.
+      - name: Test zbugs' backend's Postgres watcher
+        run: node --test apps/zbugs-swift/server/postgres.test.ts
       # zbugs' Swift port against zbugs' backend: its migrations and seed
       # data, its API server running the TS queries and mutators, and
       # zero-cache.
