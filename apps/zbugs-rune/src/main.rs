@@ -152,6 +152,8 @@ pub struct App {
     pub checked: Vec<String>,
     /// Scroll the list to the selected issue once it's there (a relaunch).
     reveal_selected: bool,
+    /// How far down the list is scrolled, which the list's viewport sets.
+    pub list_offset: rune::Live<f32>,
     /// Select the list's first issue once it has rows: a launch with no
     /// selection to restore.
     select_first: bool,
@@ -279,6 +281,7 @@ impl App {
             select_mode: false,
             checked: Vec::new(),
             reveal_selected: false,
+            list_offset: rune::Live::new(0.0),
             select_first: true,
             detail: None,
             detail_result: ResultType::Unknown,
@@ -1158,6 +1161,12 @@ fn apply_issues(s: &mut App, rows: Vec<Issue>, result_type: ResultType, tx: &mut
     {
         s.reveal_selected = false;
         tx.scroll_into_view(id.clone());
+    } else if s.list_offset.get() < 0.5 {
+        // At the top, the list stays at the top, as zbugs-swift's and
+        // zbugs-gpui's do: Rune holds the top row in place when a new row
+        // comes above it, which left an issue just created, here or in
+        // another app, above the view while it showed selected.
+        tx.scroll_to_y("list-scroll", 0.0);
     }
 }
 

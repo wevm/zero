@@ -2,7 +2,8 @@
 # zbugs-rune against zbugs' backend, end to end: the app runs headless on
 # the wall clock (`--realtime`), opens at the list's first issue with no
 # selection saved, steps away from an open issue and back with
-# the arrow keys, then opens it, comments on it, reacts
+# the arrow keys, creates an issue and finds its row highlighted at the
+# list's top, then opens the issue it stepped to, comments on it, reacts
 # to it, labels it, closes it, edits the comment, creates a label for it,
 # makes it internal, and unsubscribes from it, pressing its controls as a
 # person would. Opening it marks it viewed. Then Postgres must have each
@@ -54,6 +55,34 @@ ZBUGS_RUNE_DIR="$out/arrows" cargo run --locked --quiet -- --realtime \
   --script "$out/arrows.json" --at 13.5 --size 1180x760 >/dev/null
 arrows=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).selection)' \
   "$out/arrows/settings.json")
+
+# A new issue, from the New Issue sheet with the list at its top: it opens,
+# and its row must show highlighted at the top of the list, not above it
+# out of view (where Rune keeps a new row that comes above the top one).
+# It draws (--snap), as a window does: Rune holds the row it drew on top.
+new_title="e2e-new-$(date +%s)"
+mkdir -p "$out/created"
+cat > "$out/created.json" <<EOF
+{"events": [
+  {"t": 12.0, "type": "tap", "key": "new-issue"},
+  {"t": 12.5, "type": "type", "text": "$new_title"},
+  {"t": 14.0, "type": "key", "name": "Enter"}
+]}
+EOF
+ZBUGS_RUNE_DIR="$out/created" cargo run --locked --quiet -- --realtime \
+  --script "$out/created.json" --at 16 --size 1180x760 \
+  --tree "$out/created-tree.json" --snap "$out/created.png" >/dev/null
+created=$(sql "select id from issue where title = '$new_title'")
+created_row=$(node -e '
+  const els = JSON.parse(require("fs").readFileSync(process.argv[1])).elements;
+  const list = els.find(e => e.key === "list-scroll")?.rect;
+  const row = els.find(e => e.key === process.argv[2]);
+  const shown = list && row && row.rect[1] >= list[1] && row.rect[1] + row.rect[3] <= list[1] + list[3];
+  console.log(shown ? (row.fill === "#00000000" ? "shown" : "shown, highlighted") : "out of view");
+' "$out/created-tree.json" "$created")
+created_selection=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1])).selection)' \
+  "$out/created/settings.json")
+sql "delete from issue where id = '$created'"
 
 # The label picker lists the issue's project's labels by name, bytewise.
 first_label=$(sql "select l.name from label l join issue i on i.\"projectID\" = l.\"projectID\"
@@ -107,6 +136,8 @@ check() {
 }
 check "the first issue, with none saved" "$first" "$first_issue"
 check "the arrow keys" "$arrows" "$issue"
+check "the new issue, open" "$created_selection" "$created"
+check "the new issue's row" "$created_row" "shown, highlighted"
 check "the comment, edited" \
   "$(sql "select count(*) from comment where \"issueID\" = '$issue' and body = '$body edited'")" 1
 check "the reaction" \
