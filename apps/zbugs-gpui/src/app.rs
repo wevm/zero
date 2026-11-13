@@ -361,6 +361,9 @@ pub struct ZbugsApp {
     /// Scroll to the selected issue once the list has it: after a launch
     /// restores the selection.
     reveal_selected: bool,
+    /// Select the list's first issue once it has rows: a launch with no
+    /// selection to restore (`select_first`).
+    select_first: bool,
     /// The first rows on screen and where they were, to keep them on
     /// screen when rows above them come and go.
     anchor: Vec<(String, usize)>,
@@ -437,7 +440,10 @@ impl ZbugsApp {
             }),
             // On every change, drawn or not: a window that isn't drawing
             // still marks the issue it shows viewed.
-            cx.observe_self(|this, cx| this.mark_viewed(cx)),
+            cx.observe_self(|this, cx| {
+                this.select_first(cx);
+                this.mark_viewed(cx);
+            }),
             // Light or dark, as the system is.
             cx.observe_window_appearance(window, |_, window, cx| {
                 Theme::sync_system_appearance(Some(window), cx)
@@ -498,6 +504,7 @@ impl ZbugsApp {
             detail_focus: cx.focus_handle(),
             checked: None,
             reveal_selected: false,
+            select_first: true,
             anchor: Vec::new(),
             search,
             comment,
@@ -516,6 +523,7 @@ impl ZbugsApp {
         if let Some(id) = saved.and_then(|s| s.selected) {
             app.select(id, cx);
             app.reveal_selected = true;
+            app.select_first = false;
         }
         // Keeps the relative times ("5 minutes ago") current.
         app._tasks.push(cx.spawn(async move |this, cx| {
@@ -1039,6 +1047,28 @@ impl ZbugsApp {
         self.comment_page = None;
         self.save();
         cx.notify();
+    }
+
+    /// With no issue selected at launch, selects the list's first one once
+    /// it has rows, as zbugs-swift does, so the issue column shows one.
+    /// Only the first time: an issue deleted later leaves none selected.
+    fn select_first(&mut self, cx: &mut Context<Self>) {
+        if !self.select_first {
+            return;
+        }
+        let first = self
+            .list
+            .snapshot()
+            .value
+            .as_ref()
+            .and_then(|rows| Some(rows.first()?.id.clone()));
+        let Some(id) = first else {
+            return;
+        };
+        self.select_first = false;
+        if self.selected.is_none() {
+            self.select(id, cx);
+        }
     }
 
     /// Selects the issue `delta` rows from the selected one, or the first.
