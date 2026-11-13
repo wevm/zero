@@ -227,6 +227,9 @@ export function storyboard(ax: string, mirrored = false) {
   // The phone's screen, and its navigation bar's buttons there, which
   // neither the simulator nor iPhone Mirroring expose: back, then close or
   // reopen.
+  // The wheel's way up the phone's list: positive in iPhone Mirroring and
+  // Simulator, negative in Device Hub, as its fast scroll finds out.
+  let wheelUp = 80;
   const phone = {
     /**
      * iPhone Mirroring's window, which keeps its size, stands for the
@@ -259,24 +262,53 @@ export function storyboard(ax: string, mirrored = false) {
       mirrored ? phone.at(apps, 0.116, 0.143) : phone.at(apps, 0.093, 0.096),
     toggleOpen: (apps: Apps) =>
       mirrored ? phone.at(apps, 0.752, 0.143) : phone.at(apps, 0.768, 0.096),
-    atList: (apps: Apps) =>
-      mirrored
-        ? !!tryText(apps.sim, 'search issues')
-        : !!tryFind(apps.sim, 'id=IssueRow'),
-    atIssue: (apps: Apps) =>
-      mirrored
-        ? !!tryText(apps.sim, 'issue #')
-        : !!tryFind(apps.sim, 'placeholder=Add a comment'),
     /**
-     * Back to the list. A tap the simulator takes for a long press opens
-     * the back button's menu instead, which has the list too.
+     * Which page the phone shows. Mirrored, from one read of its screen:
+     * an issue says "Issue #", the filters "Zero Bugs" and "Sort", and the
+     * list "Open Issues", or "Open Iss..." once scrolled. Its search field
+     * can show only its magnifier, so it isn't the list's mark.
+     */
+    page: (apps: Apps): 'list' | 'issue' | 'filters' | 'other' => {
+      if (!mirrored) {
+        if (tryFind(apps.sim, 'id=IssueRow')) return 'list';
+        if (tryFind(apps.sim, 'placeholder=Add a comment')) return 'issue';
+        return tryFind(apps.sim, 'desc=Issues') ? 'filters' : 'other';
+      }
+      const text = call(['text', String(apps.sim)]).toLowerCase();
+      if (text.includes('issue #')) return 'issue';
+      if (text.includes('zero bugs') && text.includes('sort')) return 'filters';
+      return text.includes('open iss') ? 'list' : 'other';
+    },
+    atList: (apps: Apps) => phone.page(apps) === 'list',
+    atIssue: (apps: Apps) => phone.page(apps) === 'issue',
+    /**
+     * Back to the list: from the filters, to their issues; from anything
+     * else, back. A tap the simulator takes for a long press opens the back
+     * button's menu instead, which has the list too.
      */
     toList: (apps: Apps) =>
       until(
         'the iPhone going back to its list',
         async () => {
+          if (phone.page(apps) === 'filters') {
+            // Its "Issues" button, or where it is if its small text doesn't
+            // read.
+            const issues = mirrored
+              ? tryText(apps.sim, '=issues')
+              : tryFind(apps.sim, 'desc=Issues');
+            await click(
+              issues
+                ? center(issues)
+                : await phone.at(
+                    apps,
+                    mirrored ? 0.833 : 0.86,
+                    mirrored ? 0.143 : 0.096,
+                  ),
+            );
+            return;
+          }
           await click(await phone.back(apps));
-          await sleep(500);
+          await sleep(1000);
           const menu = mirrored
             ? undefined
             : tryFind(apps.sim, 'Open Issues&role=AXButton');
@@ -284,10 +316,28 @@ export function storyboard(ax: string, mirrored = false) {
         },
         () => phone.atList(apps),
       ),
-    /** Its list at the top: a tap on the status bar. */
+    /**
+     * Its list at the top: in the simulator, a tap on the status bar;
+     * Mirroring passes that tap on to nothing, so its wheel, upwards until
+     * "Open Issues" is the large title again.
+     */
     toTop: async (apps: Apps) => {
-      await click(await phone.at(apps, 0.5, mirrored ? 0.08 : 0.03));
-      await sleep(800);
+      if (!mirrored) {
+        await click(await phone.at(apps, 0.5, 0.03));
+        await sleep(800);
+        return;
+      }
+      const p = center(await phone.screen(apps));
+      cliclick('-e', '250', `m:${Math.round(p.x)},${Math.round(p.y)}`);
+      // The way that's up, then, if that doesn't get there, the other.
+      for (let i = 0; i < 80 && !tryText(apps.sim, '=open issues'); i++) {
+        if (i === 20) wheelUp = -wheelUp;
+        call(['scroll', String(wheelUp), '60']);
+        await sleep(400);
+      }
+      if (!tryText(apps.sim, '=open issues')) {
+        throw new Error("the iPhone's list isn't at its top");
+      }
     },
     /**
      * A fast swipe down its list, then back to the top. Device Hub turns the
@@ -310,6 +360,7 @@ export function storyboard(ax: string, mirrored = false) {
       call(['scroll', String(dy), '60']);
       await sleep(500);
       if (list() === before) dy = -dy;
+      wheelUp = -dy;
       for (let i = 0; i < 4; i++) {
         call(['scroll', String(dy), '60']);
         await sleep(250);
@@ -373,12 +424,22 @@ export function storyboard(ax: string, mirrored = false) {
       detail: 'It lands at the top of the other four lists, and each opens it.',
       async run(apps) {
         await activate(apps.rune);
-        await click(center(await find(apps.rune, 'id=new-issue')));
-        await find(apps.rune, 'id=title-field');
+        await until(
+          'Rune opening its new issue dialog',
+          async () => click(center(await find(apps.rune, 'id=new-issue'))),
+          () => !!tryFind(apps.rune, 'id=title-field'),
+        );
         await type(TITLE);
         await click(center(await find(apps.rune, 'id=description-field')));
         await type(DESCRIPTION);
-        await click(center(await find(apps.rune, 'id=save')));
+        await until(
+          'Rune creating the issue',
+          async () => {
+            const save = tryFind(apps.rune, 'id=save');
+            if (save) await click(center(save));
+          },
+          () => !tryFind(apps.rune, 'id=title-field'),
+        );
         await activate(apps.swift);
         await click(center(await find(apps.swift, row(TITLE))));
         await activate(apps.gpui);
@@ -449,15 +510,22 @@ export function storyboard(ax: string, mirrored = false) {
       detail: "Open again everywhere: it leaves Rune's list of closed issues.",
       async run(apps) {
         await activate(apps.sim);
-        if (!phone.atIssue(apps)) throw new Error('the iPhone left the issue');
+        await until(
+          'the iPhone showing the issue',
+          async () => {},
+          () => phone.atIssue(apps),
+        );
         const toggle = await phone.toggleOpen(apps);
-        // Tapped again only while Swift still shows it closed.
+        // Tapped again only while the issue still shows closed: on the
+        // phone, mirrored (its change can take a moment to reach Swift);
+        // otherwise in Swift.
         await until(
           'the iPhone reopening the issue',
           async () => {
-            if (tryFind(apps.swift, 'role=AXButton&desc=Reopen')) {
-              await click(toggle);
-            }
+            const closed = mirrored
+              ? !tryText(apps.sim, 'open by')
+              : !!tryFind(apps.swift, 'role=AXButton&desc=Reopen');
+            if (closed) await click(toggle);
           },
           () => !!tryFind(apps.swift, 'role=AXButton&desc=Close Issue'),
         );
@@ -538,6 +606,10 @@ export function storyboard(ax: string, mirrored = false) {
       // dialog keeps Escape for its fields, so its close button.
       await activate(apps.rune);
       await key('esc');
+      const cancel = tryFind(apps.rune, 'id=issue-sheet-dialog')
+        ? tryFind(apps.rune, 'id=cancel')
+        : undefined;
+      if (cancel) await click(center(cancel));
       await activate(apps.gpui);
       await click(gpui.closeDialog(apps));
       await activate(apps.rune);
@@ -547,15 +619,7 @@ export function storyboard(ax: string, mirrored = false) {
       // simulator builds its tree once asked, so it can take a moment to
       // show either.
       await activate(apps.sim);
-      for (let i = 0; i < 20 && !phone.atList(apps); i++) {
-        const issues = mirrored ? undefined : tryFind(apps.sim, 'desc=Issues');
-        if (issues) await click(center(issues));
-        else if (i % 2) await click(await phone.back(apps));
-        await sleep(500);
-      }
-      if (!phone.atList(apps)) {
-        throw new Error('the iPhone is not at its list of issues');
-      }
+      await phone.toList(apps);
       // At its top, where the new issue lands.
       await phone.toTop(apps);
       // The web app at its list too.
