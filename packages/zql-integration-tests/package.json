@@ -23,7 +23,7 @@
   "devDependencies": {
     "@faker-js/faker": "^10.6.0",
     "@rocicorp/logger": "^6.1.0",
-    "@rocicorp/zero-previous": "npm:@rocicorp/zero@1.11.0",
+    "@rocicorp/zero-previous": "npm:@rocicorp/zero@1.12.0",
     "@rocicorp/zero-sqlite3": "^1.1.7",
     "@types/pg": "^8.20.0",
     "@types/tmp": "^0.2.6",
