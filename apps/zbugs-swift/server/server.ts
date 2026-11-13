@@ -30,6 +30,11 @@
  *   ZBUGS_KEEP       1 to keep the last run's database, and the replica and
  *                    keys in ZBUGS_DIR, which it needs, and to restart
  *                    zero-cache when it exits
+ *   ZBUGS_WEB        1 to serve the web app too, from its build
+ *                    (apps/zbugs/dist, `vite build` with VITE_PUBLIC_SERVER
+ *                    set to zero-cache's URL), on the API's port: zero-cache
+ *                    takes the web client's mutate and query URLs, which
+ *                    it makes from its page's origin, from there only
  *   ZBUGS_PG_START   with ZBUGS_KEEP, a shell command that starts Postgres,
  *                    run once Postgres has refused three checks 10 seconds
  *                    apart (for example `docker compose -f
@@ -42,11 +47,12 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import {registerHooks} from 'node:module';
 import {networkInterfaces, tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {extname, join} from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import {createJwkPair} from '../../../packages/zero-cache/src/auth/jwt.ts';
 import {postgresAnswers, watchPostgres} from './postgres.ts';
@@ -196,8 +202,42 @@ const {fastify} = (await import('../../zbugs/api/index.ts')) as {
   fastify: {
     listen(o: {port: number; host: string}): Promise<string>;
     close(): Promise<void>;
+    setNotFoundHandler(
+      handler: (
+        request: {url: string},
+        reply: {type(t: string): {send(body: Buffer): void}},
+      ) => void,
+    ): void;
   };
 };
+if (env['ZBUGS_WEB'] === '1') {
+  // Each path the API doesn't have is the web app's: a file of its build,
+  // or else its page, which routes in the browser.
+  const dist = join(zbugs, 'dist');
+  const types: Record<string, string> = {
+    '.html': 'text/html; charset=utf-8',
+    '.js': 'text/javascript',
+    '.css': 'text/css',
+    '.svg': 'image/svg+xml',
+    '.png': 'image/png',
+    '.ico': 'image/x-icon',
+    '.woff2': 'font/woff2',
+    '.json': 'application/json',
+  };
+  fastify.setNotFoundHandler((request, reply) => {
+    let file = join(dist, decodeURIComponent(request.url.split('?')[0]));
+    if (
+      !file.startsWith(dist) ||
+      !existsSync(file) ||
+      statSync(file).isDirectory()
+    ) {
+      file = join(dist, 'index.html');
+    }
+    reply
+      .type(types[extname(file)] ?? 'application/octet-stream')
+      .send(readFileSync(file));
+  });
+}
 await fastify.listen({port: apiPort, host});
 
 function startZeroCache() {

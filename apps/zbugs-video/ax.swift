@@ -1,14 +1,18 @@
 // The record script's eyes and hands beyond cliclick, through the macOS
 // accessibility API (the caller needs the Accessibility permission):
+//   ax permissions               checks (and asks for) Accessibility and
+//                                Screen Recording
 //   ax screen                    the main screen's usable area: "x y w h"
 //   ax scroll DY STEPS           a fast wheel swipe at the pointer
 //   ax dump PID [DEPTH]          an app's tree: role, labels, frame
 //   ax find PID QUERY [INDEX]    the INDEXth match's frame: "x y w h"
+//   ax show PID QUERY [INDEX]    the same, scrolled into view first
 //   ax window PID                the app's first window: "x y w h"
 //   ax place PID X Y W H         moves and sizes that window
 // QUERY is `field=text` pairs joined by `&` (role, title, desc, id,
-// placeholder, value, help), each a case-insensitive substring match, or bare
-// text matched against every label. Points are top-left-origin screen points.
+// placeholder, value, help), each a case-insensitive substring match
+// (`field==text` for the whole label), or bare text matched against every
+// label. Points are top-left-origin screen points.
 import AppKit
 import ApplicationServices
 import Foundation
@@ -44,12 +48,22 @@ func labels(_ e: AXUIElement) -> [String: String] {
 
 let args = CommandLine.arguments
 let usage = """
-  usage: ax screen | ax scroll DY STEPS | ax dump PID [DEPTH] | ax find PID QUERY [INDEX]
+  usage: ax permissions | ax screen | ax scroll DY STEPS | ax dump PID [DEPTH]
+         ax find|show PID QUERY [INDEX]
          ax window PID | ax place PID X Y W H
 
   """
 
 switch args.count > 1 ? args[1] : "" {
+case "permissions":
+  // Whether this process, and so the app that runs it, may use the
+  // accessibility API and capture the screen; asks for each it may not.
+  let accessibility = AXIsProcessTrustedWithOptions(
+    [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary)
+  let screen = CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess()
+  print("accessibility \(accessibility ? "granted" : "missing")")
+  print("screen-recording \(screen ? "granted" : "missing")")
+  exit(accessibility && screen ? 0 : 1)
 case "screen":
   // The main screen's usable area (below the menu bar, beside the Dock), in
   // the top-left-origin points the other commands use.
@@ -123,18 +137,32 @@ let pairs: [(String?, String)] = query.split(separator: "&").map { part in
   return kv.count == 2 ? (kv[0], kv[1].lowercased()) : (nil, kv[0].lowercased())
 }
 var found = 0
+var match: AXUIElement?
 func search(_ e: AXUIElement) -> CGRect? {
   let l = labels(e)
   let ok = pairs.allSatisfy { key, text in
+    // `field==text` matches the whole label.
+    if let key, text.hasPrefix("=") { return l[key]?.lowercased() == String(text.dropFirst()) }
     if let key { return l[key]?.lowercased().contains(text) ?? false }
     return l.contains { $0.key != "role" && $0.value.lowercased().contains(text) }
   }
-  if ok, let f = frame(e), f.width > 0, f.height > 0 {
-    if found == wanted { return f }
+  // `show` takes elements scrolled out of view, which have no height.
+  if ok, let f = frame(e), f.width > 0, f.height > 0 || args[1] == "show" {
+    if found == wanted {
+      match = e
+      return f
+    }
     found += 1
   }
   for c in children(e) { if let f = search(c) { return f } }
   return nil
 }
-guard let f = search(app) else { exit(1) }
+guard var f = search(app) else { exit(1) }
+if args[1] == "show", let e = match {
+  // Scrolled into view, as a web page's controls below the fold.
+  AXUIElementPerformAction(e, "AXScrollToVisible" as CFString)
+  usleep(400_000)
+  guard let shown = frame(e), shown.height > 0 else { exit(1) }
+  f = shown
+}
 print("\(Int(f.minX)) \(Int(f.minY)) \(Int(f.width)) \(Int(f.height))")

@@ -1,22 +1,30 @@
 /**
- * What record.ts records: eight steps, each one app changing the same issue
- * with the real cursor and keyboard while the other three show the change.
+ * What record.ts records: nine steps, each one app changing the same issue
+ * with the real cursor and keyboard while the other four show the change.
  * Targets are found by name through the accessibility API (ax.swift):
  * zbugs-rune exposes each element's key, zbugs-swift its labels, on macOS
- * and through the simulator alike. zbugs-gpui exposes none, so its targets
- * are its layout's: the 250-point sidebar, the 380-point list, and the
- * 52-point toolbars (apps/zbugs-gpui/src/app.rs).
+ * and through the simulator alike, and Chrome the web app's roles and text.
+ * zbugs-gpui exposes none, so its targets are its layout's: the 250-point
+ * sidebar, the 380-point list, and the 52-point toolbars
+ * (apps/zbugs-gpui/src/app.rs).
  */
 import {execFileSync} from 'node:child_process';
 
-export type Apps = {rune: number; gpui: number; swift: number; sim: number};
+export type Apps = {
+  rune: number;
+  gpui: number;
+  swift: number;
+  web: number;
+  sim: number;
+};
 
 /** The issue the storyboard makes, as Rune creates it and GPUI renames it. */
-export const TITLE = 'Live in all four apps';
-const RENAMED = 'Live in all four apps, renamed in GPUI';
+export const TITLE = 'Live in all five apps';
+const RENAMED = 'Live in all five apps, renamed in GPUI';
 const DESCRIPTION = 'Created in Rune, synced by Zero.';
 const IPHONE_COMMENT = 'Commented on the iPhone.';
 const MAC_COMMENT = 'Answered from the Mac.';
+const WEB_COMMENT = 'Signed off in the browser.';
 const LABEL = 'bug';
 
 type Rect = {x: number; y: number; w: number; h: number};
@@ -89,11 +97,11 @@ export function storyboard(ax: string) {
     await sleep(250);
   }
   /** Opens a menu and picks from it, pressing again if the menu didn't open. */
-  async function pick(pid: number, trigger: string, option: string) {
+  async function pick(pid: number, trigger: string, option: string, index = 0) {
     for (let i = 0; ; i++) {
       await click(center(await find(pid, trigger)));
       for (let j = 0; j < 8; j++) {
-        const o = tryFind(pid, option);
+        const o = tryFind(pid, option, index);
         if (o) return click(center(o));
         await sleep(250);
       }
@@ -164,12 +172,31 @@ export function storyboard(ax: string) {
     toggleOpen: (apps: Apps) => phone.at(apps, 0.768, 0.096),
   };
   const row = (title: string) => `id=IssueRow&desc=${title}`;
+  // The web app's page, whose controls below the fold Chrome reports
+  // without a height until they're scrolled into view.
+  const web = {
+    show: async (apps: Apps, query: string) => {
+      const deadline = Date.now() + 15_000;
+      for (;;) {
+        try {
+          return rect(call(['show', String(apps.web), query]));
+        } catch (e) {
+          if (Date.now() > deadline) throw e;
+          await sleep(250);
+        }
+      }
+    },
+    row: (title: string) => `role=AXLink&title=${title}`,
+    /** The sidebar's open issues, from any page. */
+    toList: async (apps: Apps) => {
+      await click(center(await find(apps.web, 'role=AXLink&title==Open')));
+    },
+  };
 
   const steps: Step[] = [
     {
       title: 'Rune creates an issue',
-      detail:
-        "It lands at the top of Swift's, GPUI's, and the iPhone's lists, and each opens it.",
+      detail: 'It lands at the top of the other four lists, and each opens it.',
       async run(apps) {
         await activate(apps.rune);
         await click(center(await find(apps.rune, 'id=new-issue')));
@@ -182,6 +209,8 @@ export function storyboard(ax: string) {
         await click(center(await find(apps.swift, row(TITLE))));
         await activate(apps.gpui);
         await click(gpui.row(apps, 0));
+        await activate(apps.web);
+        await click(center(await find(apps.web, web.row(TITLE))));
         await activate(apps.sim);
         await click(center(await find(apps.sim, row(TITLE))));
         await find(apps.sim, 'placeholder=Add a comment');
@@ -189,7 +218,7 @@ export function storyboard(ax: string) {
     },
     {
       title: 'The iPhone comments',
-      detail: 'The comment shows in Swift, GPUI, and Rune.',
+      detail: 'The comment shows in Swift, GPUI, Rune, and the browser.',
       async run(apps) {
         await click(center(await find(apps.sim, 'placeholder=Add a comment')));
         await type(IPHONE_COMMENT);
@@ -199,12 +228,18 @@ export function storyboard(ax: string) {
       },
     },
     {
-      title: 'GPUI closes it',
+      title: 'The browser closes it',
       detail:
-        'Closed in all four apps, and gone from their lists of open issues.',
+        'Closed in all five apps, and gone from their lists of open issues.',
       async run(apps) {
-        await activate(apps.gpui);
-        await click(gpui.button(apps, 0));
+        await activate(apps.web);
+        // The menu's Closed, after the sidebar's.
+        await pick(
+          apps.web,
+          'role=AXComboBox&value==open',
+          'role=AXStaticText&value==closed',
+          1,
+        );
         await find(apps.swift, 'role=AXButton&desc=Reopen');
         await sleep(1500);
       },
@@ -229,7 +264,7 @@ export function storyboard(ax: string) {
     },
     {
       title: 'Rune labels it, then lists closed issues',
-      detail: `The ${LABEL} label shows in GPUI and Rune, and the issue is at the top of Rune's closed ones.`,
+      detail: `The ${LABEL} label shows in Swift and GPUI, and the issue is at the top of Rune's closed ones.`,
       async run(apps) {
         await activate(apps.rune);
         await pick(apps.rune, 'id=labels-trigger', `id=label-${LABEL}`);
@@ -251,7 +286,8 @@ export function storyboard(ax: string) {
     },
     {
       title: 'GPUI renames it',
-      detail: 'The new title shows in Swift, Rune, and on the iPhone.',
+      detail:
+        'The new title shows in Swift, Rune, the browser, and on the iPhone.',
       async run(apps) {
         await activate(apps.gpui);
         await click(gpui.button(apps, 1));
@@ -260,6 +296,20 @@ export function storyboard(ax: string) {
         await type(RENAMED);
         await click(gpui.save(apps));
         await find(apps.swift, `value=${RENAMED}`);
+        await sleep(1500);
+      },
+    },
+    {
+      title: 'The browser comments',
+      detail: 'The third comment shows in the four native apps.',
+      async run(apps) {
+        await activate(apps.web);
+        await click(center(await web.show(apps, 'role=AXTextArea')));
+        await type(WEB_COMMENT);
+        await click(
+          center(await web.show(apps, 'role=AXButton&title==Add comment')),
+        );
+        await find(apps.swift, `value=${WEB_COMMENT}`);
         await sleep(1500);
       },
     },
@@ -276,6 +326,9 @@ export function storyboard(ax: string) {
         await scroll(gpui.row(apps, 3));
         await activate(apps.rune);
         await scroll(center(await find(apps.rune, 'id=list-scroll')));
+        await activate(apps.web);
+        await web.toList(apps);
+        await scroll(center(await find(apps.web, web.row(RENAMED))));
         await activate(apps.sim);
         await phone.toList(apps);
         await scroll(center(await find(apps.sim, 'id=IssueRow', 2)));
@@ -320,6 +373,10 @@ export function storyboard(ax: string) {
         }
         await sleep(500);
       }
+      // The web app at its list too.
+      await activate(apps.web);
+      await key('esc');
+      await web.toList(apps);
       await activate(apps.swift);
       await click(center(await find(apps.swift, 'id=IssueRow', 0)));
     },
@@ -349,7 +406,7 @@ export function storyboard(ax: string) {
         'comments',
         sql(`select string_agg(body, ' | ' order by created) from comment
           where "issueID" = '${issue}'`),
-        `${IPHONE_COMMENT} | ${MAC_COMMENT}`,
+        `${IPHONE_COMMENT} | ${MAC_COMMENT} | ${WEB_COMMENT}`,
       );
       expect(
         'labels',

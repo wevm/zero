@@ -1,17 +1,19 @@
 /**
- * Records the four zbugs apps side by side on one screen, against one
- * backend: zbugs-swift on macOS, zbugs-gpui, zbugs-rune, and zbugs-swift on
- * an iPhone simulator. One cursor and keyboard rotate the storyboard's steps
- * (storyboard.ts) across the apps, so each change shows up live in the other
- * three. Captions for the steps go on afterwards; then Postgres must have
- * each change.
+ * Records the five zbugs apps side by side on one screen, against one
+ * backend: zbugs-swift on macOS, zbugs-gpui, zbugs-rune, zbugs on the web in
+ * Chrome, and zbugs-swift on an iPhone simulator. One cursor and keyboard
+ * rotate the storyboard's steps (storyboard.ts) across the apps, so each
+ * change shows up live in the others. Captions for the steps go on
+ * afterwards, in a band under the screen; then Postgres must have each
+ * change.
  *
  *   node apps/zbugs-video/record.ts [build|seed|launch|record|all]
  *
- * macOS only. Needs Xcode, Rust, Node 24, Homebrew's ffmpeg, cliclick,
- * xcodegen, and psql, the backend running (apps/zbugs-swift/server/server.ts),
- * its crew token in ZBUGS_TOKEN, and the Accessibility and Screen Recording
- * permissions for the app that runs this (see README.md).
+ * macOS only. Needs Xcode, Rust, Node 24, Google Chrome, Homebrew's ffmpeg,
+ * cliclick, xcodegen, and psql, the backend running with the web app
+ * (ZBUGS_WEB=1 node apps/zbugs-swift/server/server.ts), its crew token in
+ * ZBUGS_TOKEN, and the Accessibility and Screen Recording permissions for the
+ * app that runs this (see README.md).
  *
  * Environment:
  *   ZBUGS_TOKEN        the backend's crew token
@@ -22,8 +24,9 @@
  *   ZBUGS_VIDEO_DIR    builds, the apps' local stores, and the videos
  *                      (default ~/.zbugs-video)
  *   ZBUGS_VIDEO_SIM    the simulator to use (default iPhone 17)
+ *   ZBUGS_VIDEO_CHROME Chrome's executable (default Google Chrome's)
  *   ZBUGS_VIDEO_DISPLAY  `keep` to leave the display's mode alone; by default,
- *                      a screen too small for the four windows switches to
+ *                      a screen too small for the windows switches to
  *                      its largest HiDPI mode for the recording (displayplacer),
  *                      then back
  */
@@ -48,6 +51,12 @@ const env = process.env;
 const work = env['ZBUGS_VIDEO_DIR'] ?? join(homedir(), '.zbugs-video');
 const dbURL =
   env['ZBUGS_DB_URL'] ?? 'postgresql://postgres@127.0.0.1:5432/zbugs_swift';
+const cacheURL = env['ZBUGS_CACHE_URL'] ?? 'http://127.0.0.1:4848';
+const apiURL = env['ZBUGS_API_URL'] ?? 'http://127.0.0.1:5173';
+const chrome =
+  env['ZBUGS_VIDEO_CHROME'] ??
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const CDP_PORT = 9339;
 const ax = join(work, 'ax');
 const derived = join(work, 'xcode');
 const swiftApp = join(derived, 'Build/Products/Debug/ZBugs.app');
@@ -55,12 +64,16 @@ const iosApp = join(derived, 'Build/Products/Debug-iphonesimulator/ZBugs.app');
 // Each app's smallest window: zbugs-rune's is 900x520.
 const MIN_CELL = {w: 900, h: 520};
 const LARGE_LIST = 20_000;
+// Chrome's zoom levels, Cmd-minus by Cmd-minus; zbugs on the web keeps its
+// sidebar above 900 CSS pixels.
+const ZOOMS = [1, 0.9, 0.8, 0.75, 0.67, 0.5];
+const WEB_MIN = 920;
 // What `displayplacer list` and ffmpeg print.
 const HIDPI_MODE = /res:(\d+)x(\d+) hz:(\d+).*scaling:on/g;
 const CURRENT_MODE =
   /res:\d+x\d+ hz:\d+ color_depth:\d+( scaling:on)? <-- current/;
 const SCREEN_DEVICE = /\[(\d+)\] Capture screen 0/;
-const VIDEO_SIZE = /Video: .*?, (\d+)x\d+/;
+const VIDEO_SIZE = /Video: .*?, (\d+)x(\d+)/;
 
 function run(cmd: string, args: string[], opts: {cwd?: string} = {}): string {
   return execFileSync(cmd, args, {
@@ -98,6 +111,16 @@ function build() {
       stdio: 'inherit',
     });
   }
+  step('zbugs on the web: @rocicorp/zero, then the app');
+  execFileSync('pnpm', ['run', 'build'], {
+    cwd: join(repo, 'packages/zero'),
+    stdio: ['ignore', 'ignore', 'inherit'],
+  });
+  execFileSync('pnpm', ['exec', 'vite', 'build'], {
+    cwd: join(repo, 'apps/zbugs'),
+    stdio: ['ignore', 'ignore', 'inherit'],
+    env: {...env, ['VITE_PUBLIC_SERVER']: cacheURL},
+  });
   step('zbugs-swift for macOS and the iOS simulator');
   const project = join(repo, 'apps/zbugs-swift/App');
   run('xcodegen', ['generate'], {cwd: project});
@@ -234,11 +257,14 @@ function background(
   return child;
 }
 
-async function waitFor<T>(what: string, f: () => T | undefined): Promise<T> {
+async function waitFor<T>(
+  what: string,
+  f: () => T | undefined | Promise<T | undefined>,
+): Promise<T> {
   const deadline = Date.now() + 60_000;
   for (;;) {
     try {
-      const v = f();
+      const v = await f();
       if (v !== undefined) return v;
     } catch {
       // Not yet.
@@ -251,7 +277,7 @@ async function waitFor<T>(what: string, f: () => T | undefined): Promise<T> {
 function quit() {
   if (!existsSync(pidsFile())) return;
   const pids = JSON.parse(readFileSync(pidsFile(), 'utf8')) as Apps;
-  for (const pid of [pids.rune, pids.gpui, pids.swift]) {
+  for (const pid of [pids.rune, pids.gpui, pids.swift, pids.web]) {
     try {
       process.kill(pid);
     } catch {
@@ -260,7 +286,92 @@ function quit() {
   }
 }
 
+/**
+ * Accessibility and Screen Recording, for the app this runs in: macOS asks
+ * for each the first time, and the app needs a restart once granted.
+ */
+function permissions() {
+  try {
+    run(ax, ['permissions']);
+  } catch (e) {
+    throw new Error(
+      `${String((e as {stdout?: string}).stdout ?? '').trim()}\n` +
+        'Grant the app that runs this Accessibility and Screen & System Audio ' +
+        'Recording in System Settings → Privacy & Security, quit and reopen ' +
+        'it, and run this again.',
+    );
+  }
+}
+
+/**
+ * The web app, served by the backend (ZBUGS_WEB=1) at the API's URL, in a
+ * Chrome of its own: an app window, with its accessibility tree on and the
+ * DevTools protocol on a port, through which it logs in as the native apps
+ * do, with the crew token, as zbugs' `jwt` cookie.
+ */
+async function launchWeb(token: string): Promise<number> {
+  const page = `${apiURL}/`;
+  const web = background(
+    chrome,
+    [
+      `--user-data-dir=${join(work, 'chrome')}`,
+      `--remote-debugging-port=${CDP_PORT}`,
+      '--force-renderer-accessibility',
+      // No keychain prompt or banner for the profile's own.
+      '--use-mock-keychain',
+      '--password-store=basic',
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-features=Translate',
+      `--app=${page}`,
+    ],
+    {log: 'chrome.log'},
+  );
+  const targets = await waitFor('Chrome', () =>
+    cdpTargets().then(t => (t.some(x => x.type === 'page') ? t : undefined)),
+  );
+  const browser = (await (
+    await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`)
+  ).json()) as {webSocketDebuggerUrl: string};
+  await cdp(browser.webSocketDebuggerUrl, 'Storage.setCookies', {
+    cookies: [{name: 'jwt', value: token, url: page}],
+  });
+  const tab = targets.find(t => t.type === 'page')!;
+  await cdp(tab.webSocketDebuggerUrl, 'Page.navigate', {url: page});
+  return web.pid!;
+}
+
+async function cdpTargets() {
+  try {
+    const res = await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`);
+    return (await res.json()) as {type: string; webSocketDebuggerUrl: string}[];
+  } catch {
+    return [];
+  }
+}
+
+/** One DevTools protocol call. */
+function cdp(url: string, method: string, params: object): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(url);
+    ws.onopen = () => ws.send(JSON.stringify({id: 1, method, params}));
+    ws.onmessage = m => {
+      const reply = JSON.parse(String(m.data)) as {
+        id?: number;
+        error?: unknown;
+        result?: unknown;
+      };
+      if (reply.id !== 1) return;
+      ws.close();
+      if (reply.error) reject(new Error(JSON.stringify(reply.error)));
+      else resolve(reply.result);
+    };
+    ws.onerror = () => reject(new Error(`DevTools at ${url}`));
+  });
+}
+
 async function launch(): Promise<Apps> {
+  permissions();
   quit();
   const e = appEnv();
   step('zbugs-rune and zbugs-gpui');
@@ -279,6 +390,8 @@ async function launch(): Promise<Apps> {
     env: e,
     log: 'swift.log',
   });
+  step('zbugs on the web, in Chrome');
+  const web = await launchWeb(e['ZBUGS_TOKEN']!);
   step('zbugs-swift on the simulator');
   const udid = simulator();
   try {
@@ -309,6 +422,7 @@ async function launch(): Promise<Apps> {
     rune: rune.pid!,
     gpui: gpui.pid!,
     swift: swift.pid!,
+    web,
     sim,
   };
   writeFileSync(pidsFile(), JSON.stringify(apps));
@@ -359,9 +473,9 @@ function restoreDisplay() {
 }
 
 /**
- * Fits the four windows on the main screen, two by two: Swift, GPUI, then
- * Rune, and the simulator in the fourth cell, at its height. A screen
- * smaller than four of the smallest Rune window switches to its largest
+ * Fits the five windows on the main screen in two rows: Swift and GPUI,
+ * then Rune, the web, and the simulator, as tall as the row. A screen whose
+ * halves are smaller than Rune's smallest window switches to its largest
  * HiDPI mode first, until `restoreDisplay`.
  */
 async function layout(apps: Apps) {
@@ -383,12 +497,6 @@ async function layout(apps: Apps) {
   }
   const w = Math.floor(screen.w / 2);
   const h = Math.floor(screen.h / 2);
-  step(`layout: ${screen.w}x${screen.h} points, cells ${w}x${h}`);
-  if (w < MIN_CELL.w || h < MIN_CELL.h) {
-    say(
-      `    the cells are smaller than zbugs-rune's ${MIN_CELL.w}x${MIN_CELL.h}: windows overlap`,
-    );
-  }
   const place = (pid: number, x: number, y: number, pw: number, ph: number) =>
     rect(
       run(ax, [
@@ -400,14 +508,46 @@ async function layout(apps: Apps) {
         String(ph),
       ]),
     );
-  place(apps.swift, 0, 0, w, h);
-  place(apps.gpui, w, 0, w, h);
-  place(apps.rune, 0, h, w, h);
-  // The simulator without its bezel, as tall as the cell: it keeps the
-  // phone's aspect, so it's narrower than asked for.
+  // The simulator without its bezel, as tall as the bottom row: it keeps
+  // the phone's aspect, so it's narrower than asked for.
   bezels(false);
-  const sim = place(apps.sim, w, h, w, h);
-  place(apps.sim, w + Math.floor((w - sim.w) / 2), h, sim.w, sim.h);
+  const phone = place(apps.sim, screen.w - h, h, h, h).w;
+  const rune = Math.max(MIN_CELL.w, Math.floor((screen.w - phone) / 2));
+  const web = screen.w - phone - rune;
+  step(
+    `layout: ${screen.w}x${screen.h} points: Swift and GPUI ${w}x${h}; ` +
+      `Rune ${rune}, the web ${web}, and the phone ${phone} wide`,
+  );
+  if (w < MIN_CELL.w || h < MIN_CELL.h) {
+    say(
+      `    smaller than zbugs-rune's ${MIN_CELL.w}x${MIN_CELL.h} window: windows overlap`,
+    );
+  }
+  place(apps.swift, 0, 0, w, h);
+  place(apps.gpui, w, 0, screen.w - w, h);
+  place(apps.rune, 0, h, rune, h);
+  place(apps.web, rune, h, web, h);
+  place(apps.sim, screen.w - phone, h, phone, h);
+  zoomWeb(apps.web, web);
+}
+
+/** Zooms the web app out until its cell is wide enough for its sidebar. */
+function zoomWeb(pid: number, width: number) {
+  const outs = ZOOMS.findIndex(z => width / z > WEB_MIN);
+  const steps = outs < 0 ? ZOOMS.length - 1 : outs;
+  step(`the web at ${ZOOMS[steps] * 100}%`);
+  run('osascript', [
+    '-e',
+    `tell application "System Events" to set frontmost of (first process whose unix id is ${pid}) to true`,
+  ]);
+  run('cliclick', [
+    '-w',
+    '150',
+    'kd:cmd',
+    't:0',
+    ...Array(steps).fill('t:-'),
+    'ku:cmd',
+  ]);
 }
 
 function bezels(show: boolean) {
@@ -446,8 +586,7 @@ async function record(apps: Apps) {
   try {
     const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
     const raw = join(work, `raw-${stamp}.mp4`);
-    const out = join(work, `zbugs-four-apps-${stamp}.mp4`);
-    const screen = rect(run(ax, ['screen']));
+    const out = join(work, `zbugs-five-apps-${stamp}.mp4`);
     const board = storyboard(ax);
 
     // Each app at its list before the take, the simulator's keyboard hidden.
@@ -508,7 +647,7 @@ async function record(apps: Apps) {
       ffmpeg.stdin.write('q');
       await new Promise(r => ffmpeg.on('exit', r));
     }
-    captioned(raw, out, captions, screen, apps);
+    captioned(raw, out, captions);
     step(`video: ${out}`);
   } finally {
     restoreDisplay();
@@ -516,16 +655,10 @@ async function record(apps: Apps) {
 }
 
 /**
- * Re-encodes the take at up to 3840 wide with each step's caption in the
- * fourth cell, beside the simulator.
+ * Re-encodes the take at up to 3840 wide with each step's caption in a band
+ * under it.
  */
-function captioned(
-  raw: string,
-  out: string,
-  captions: Caption[],
-  screen: Rect,
-  apps: Apps,
-) {
+function captioned(raw: string, out: string, captions: Caption[]) {
   step('captions');
   let probe = '';
   try {
@@ -535,43 +668,32 @@ function captioned(
   } catch (e) {
     probe = String((e as {stderr?: Buffer}).stderr ?? '');
   }
-  const capturedWidth = Number(VIDEO_SIZE.exec(probe)?.[1]);
-  if (!capturedWidth) throw new Error(`can't read the take's size:\n${probe}`);
-  const outWidth = Math.min(3840, capturedWidth);
-  // Points of the screen to pixels of the output: the full screen is
-  // captured, menu bar and all.
-  const full = rect(run(ax, ['screen']));
-  const pointsWide = full.x + full.w;
-  const k = outWidth / pointsWide;
-  const sim = rect(run(ax, ['window', String(apps.sim)]));
-  const cell = {
-    x: screen.x + Math.floor(screen.w / 2),
-    y: screen.y + Math.floor(screen.h / 2),
-  };
-  const margin = 24;
-  const x = Math.round((cell.x + margin) * k);
-  const width = Math.round((sim.x - cell.x - 2 * margin) * k);
-  const y = Math.round((cell.y + margin * 2) * k);
+  const size = VIDEO_SIZE.exec(probe);
+  if (!size) throw new Error(`can't read the take's size:\n${probe}`);
+  const even = (n: number) => 2 * Math.round(n / 2);
+  const width = Math.min(3840, Number(size[1]));
+  const height = even((Number(size[2]) * width) / Number(size[1]));
+  // A band under the screen for the captions, as no app's cell is free.
+  const band = even(height * 0.075);
+  const big = Math.round(band * 0.34);
+  const small = Math.round(band * 0.24);
+  const x = Math.round(band * 0.35);
   const font = existsSync('/System/Library/Fonts/SFNS.ttf')
     ? '/System/Library/Fonts/SFNS.ttf'
     : '/System/Library/Fonts/Helvetica.ttc';
-  const big = Math.round(Math.min(width / 12, 34 * k));
-  const small = Math.round(big * 0.62);
   const dir = join(work, 'captions');
   mkdirSync(dir, {recursive: true});
   const filters = captions.flatMap((c, i) => {
     const title = join(dir, `${i}-title.txt`);
     const detail = join(dir, `${i}-detail.txt`);
     writeFileSync(title, c.title);
-    writeFileSync(detail, wrap(c.detail, Math.floor(width / (small * 0.5))));
+    writeFileSync(detail, c.detail);
     // Each caption stays up until the next one starts.
     const end = captions[i + 1]?.start ?? 1e9;
     const enable = `enable='between(t,${c.start.toFixed(2)},${end.toFixed(2)})'`;
-    // A long title gets smaller to fit beside the phone.
-    const size = Math.min(big, Math.floor(width / (0.55 * c.title.length)));
     return [
-      `drawtext=fontfile=${font}:textfile=${title}:fontsize=${size}:fontcolor=white:x=${x}:y=${y}:${enable}`,
-      `drawtext=fontfile=${font}:textfile=${detail}:fontsize=${small}:fontcolor=white@0.85:line_spacing=${Math.round(small * 0.35)}:x=${x}:y=${y + Math.round(big * 1.6)}:${enable}`,
+      `drawtext=fontfile=${font}:textfile=${title}:fontsize=${big}:fontcolor=white:x=${x}:y=${height + Math.round(band * 0.16)}:${enable}`,
+      `drawtext=fontfile=${font}:textfile=${detail}:fontsize=${small}:fontcolor=white@0.8:x=${x}:y=${height + Math.round(band * 0.58)}:${enable}`,
     ];
   });
   execFileSync(
@@ -583,7 +705,11 @@ function captioned(
       '-i',
       raw,
       '-vf',
-      [`scale=${outWidth}:-2`, ...filters].join(','),
+      [
+        `scale=${width}:${height}`,
+        `pad=${width}:${height + band}:0:0:color=0x1c1c1e`,
+        ...filters,
+      ].join(','),
       '-c:v',
       'libx264',
       '-crf',
@@ -598,20 +724,6 @@ function captioned(
     ],
     {stdio: 'inherit'},
   );
-}
-
-function wrap(text: string, width: number): string {
-  const lines: string[] = [];
-  let line = '';
-  for (const word of text.split(' ')) {
-    if (line && (line + ' ' + word).length > width) {
-      lines.push(line);
-      line = word;
-    } else {
-      line = line ? `${line} ${word}` : word;
-    }
-  }
-  return [...lines, line].join('\n');
 }
 
 // --- check ---
