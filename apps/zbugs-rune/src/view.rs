@@ -557,6 +557,7 @@ fn issue_list(s: &App, k: &Kit, layer: &mut Vec<El>) -> El {
             .child(text(message).font(k.ty.ui).color(k.c.text_faint))
     } else {
         let kit = k.clone();
+        let offset = s.list_offset.clone();
         col()
             .key("list-scroll")
             .w_full()
@@ -564,6 +565,9 @@ fn issue_list(s: &App, k: &Kit, layer: &mut Vec<El>) -> El {
             .min_h(0.0)
             .scroll(ScrollSpec {
                 stick_bottom: false,
+            })
+            .on_scroll_offset(move |at| {
+                offset.set(at.offset[1]);
             })
             .child(
                 col()
