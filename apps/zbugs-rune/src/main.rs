@@ -798,13 +798,27 @@ impl App {
                     return;
                 };
                 // Not if another change came in the meantime: its own timer will.
-                if issue.modified == modified && s.is_unread(issue) {
-                    let args = ViewStateArgs {
-                        issue_id: id,
-                        viewed: now_ms(),
-                    };
-                    s.mutate(SET_VIEW_STATE.with(&args));
+                if issue.modified != modified || !s.is_unread(issue) {
+                    return;
                 }
+                // Then once the server has confirmed what's pending: it
+                // stamps an issue's `modified` itself as it applies a change,
+                // after the app showed it, so a viewed time taken before
+                // that would leave the issue unread.
+                s.sync.when_settled(move |s| {
+                    let Some(issue) = s.detail.as_ref().filter(|i| i.id == id) else {
+                        return;
+                    };
+                    if s.is_unread(issue) {
+                        let args = ViewStateArgs {
+                            issue_id: id,
+                            // No earlier than the change, whatever the
+                            // server's clock says.
+                            viewed: now_ms().max(issue.modified),
+                        };
+                        s.mutate(SET_VIEW_STATE.with(&args));
+                    }
+                });
             });
         });
     }
