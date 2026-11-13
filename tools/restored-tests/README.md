@@ -127,11 +127,13 @@ adds a file at one of them. Two things can still need a hand after a merge:
    `node tools/restored-tests/align-manifests.mjs`, which sets their
    dependencies to the lockfile's, and commit the result as its own commit.
    It doesn't touch the lockfile.
-2. **A restored test that breaks.** Don't change zql to fix it, and don't edit
-   the restored file. Move it to the table above with the upstream commit that
-   broke it, remove it from `verbatim.txt`, and delete it. If
-   `restored-ivm.test.ts` imports it, remove it from that list as well, and
-   regenerate the vectors.
+2. **A restored test that breaks.** The sync reports the failing file and the
+   upstream commit that broke it, and changes neither zql nor the test: the
+   break may be a behavior change Swift has to port, which deleting the test
+   would hide. Once that's settled, and only with tmm's OK, a follow-up moves
+   it to the table above, removes it from `verbatim.txt` and deletes it. If
+   `restored-ivm.test.ts` imports it, it comes out of that list as well, and the
+   vectors are regenerated.
 
 To restore a file again, fetch the commit above and run
 `git show 7ebeb2172fc9e621ecfc2f262c4d228b16e9684e:<path> > <path>`.
