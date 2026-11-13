@@ -364,7 +364,8 @@ export function withColumnsOrderedOnce(ast: AST): AST {
 
 /**
  * Materializes `ast` over sources loaded with `data`, applies `pushes` one
- * by one, and records the view after each.
+ * by one, and records the view after each. `options` are builder settings the
+ * client leaves off; only the restored zql tests set them.
  */
 export function runQuery(
   schema: Schema,
@@ -372,6 +373,10 @@ export function runQuery(
   ast: AST,
   format: Format,
   pushes: readonly Push[],
+  options: {
+    enableNotExists?: boolean | undefined;
+    disableCorrelatedPredicatePushdown?: boolean | undefined;
+  } = {},
 ): QueryResult {
   const sources: Record<string, MemorySource> = {};
   for (const [name, table] of Object.entries(schema.tables)) {
@@ -381,7 +386,12 @@ export function runQuery(
     }
     sources[name] = source;
   }
-  const delegate = new TestBuilderDelegate(sources);
+  const delegate = new TestBuilderDelegate(
+    sources,
+    false,
+    options.enableNotExists,
+    options.disableCorrelatedPredicatePushdown,
+  );
   ast = withColumnsOrderedOnce(ast);
   let recorder: Recorder;
   let view: ArrayView<never>;

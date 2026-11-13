@@ -101,6 +101,20 @@ fuzzer's `decorated push memory parity (n=2)` takes about 55 to 57 s of its
   `vitest.config.deferred-writes.ts`: exclude `../zql/src/ivm/source.test.ts`
   (see above), with a comment saying so.
 
+## Conformance vectors
+
+`packages/zero-conformance` turns two of these into vectors that the Swift
+client replays (`swift/Tests/ConformanceTests/RestoredIVMTests.swift`):
+
+- `src/ivm/restored-ivm.test.ts` runs the restored zql tests that build a
+  pipeline from an AST, with their own assertions. It records each case they
+  pass to `runPushTest` or `runFetchTest` and writes `vectors/restored-ivm.json`:
+  the view and its changes after hydration and after each push.
+- `src/ivm/restored-chinook.test.ts` builds the chinook fuzzer's decorated
+  push lane from its modules into `generated/restored-chinook-decpush.json`,
+  which isn't checked in. Pull requests run the one-row lane; the nightly adds
+  the two-row lane.
+
 ## Upstream syncs
 
 The weekly sync merges rocicorp/mono into this fork. mono's history after the
@@ -115,7 +129,9 @@ adds a file at one of them. Two things can still need a hand after a merge:
    It doesn't touch the lockfile.
 2. **A restored test that breaks.** Don't change zql to fix it, and don't edit
    the restored file. Move it to the table above with the upstream commit that
-   broke it, remove it from `verbatim.txt`, and delete it.
+   broke it, remove it from `verbatim.txt`, and delete it. If
+   `restored-ivm.test.ts` imports it, remove it from that list as well, and
+   regenerate the vectors.
 
 To restore a file again, fetch the commit above and run
 `git show 7ebeb2172fc9e621ecfc2f262c4d228b16e9684e:<path> > <path>`.

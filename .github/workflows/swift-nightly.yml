@@ -50,11 +50,14 @@ jobs:
           export SWEEP_IVM_SEED=$base SWEEP_IVM_CASES=15000
           export HARDEN_IVM_SEED=$((base * 10)) HARDEN_IVM_SEEDS=5
           export AGG_FUZZ_SEED=$base AGG_FUZZ_CASES=750
-          env | grep -E '_(SEED|SEEDS|CASES)=' | sort
+          # Not seeded: the restored chinook fuzzer's lane, with two-row pushes too.
+          export RESTORED_CHINOOK_PUSH_ROWS=1,2
+          env | grep -E '_(SEED|SEEDS|CASES|ROWS)=' | sort
           # Five to ten times the cases outlast vitest's 10 s default; the
           # job's timeout bounds them.
           pnpm exec vitest run --test-timeout=600000 src/ivm/ivm.test.ts src/ivm/ivm-features.test.ts \
-            src/ivm/sweep-ivm.test.ts src/ivm/harden-ivm.test.ts src/client/bughunt.test.ts
+            src/ivm/sweep-ivm.test.ts src/ivm/harden-ivm.test.ts src/client/bughunt.test.ts \
+            src/ivm/restored-chinook.test.ts
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: differential-vectors
@@ -84,7 +87,7 @@ jobs:
       - name: Build
         run: swift build --build-tests
       - name: Compare with JS
-        run: swift test --skip-build --filter 'HardenIVMTests|SweepIVMTests|IVMConformanceTests|BugHuntTests'
+        run: swift test --skip-build --filter 'HardenIVMTests|SweepIVMTests|IVMConformanceTests|BugHuntTests|RestoredIVMTests'
 
   virtual-fuzz:
     name: ZeroVirtual fuzz
