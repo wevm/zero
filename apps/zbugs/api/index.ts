@@ -22,6 +22,7 @@ import {dbProvider, sql} from '../server/db.ts';
 import {registerMachineRoutes} from '../server/machine-routes.ts';
 import {isLocalHostname, nativeAppRedirect} from '../server/native-login.ts';
 import {createServerMutators} from '../server/server-mutators.ts';
+import {verifyUnsubscribeToken} from '../server/unsubscribe-token.ts';
 import {jwtDataSchema, type JWTData} from '../shared/auth.ts';
 import {queries} from '../shared/queries.ts';
 import {schema} from '../shared/schema.ts';
@@ -258,7 +259,7 @@ fastify.post<{
 });
 
 fastify.get<{
-  Querystring: {id: string; email: string};
+  Querystring: {id: string; email: string; token?: string | undefined};
 }>('/api/unsubscribe', async (request, reply) => {
   if (!request.query.email) {
     reply.status(400).send('Email is required');
@@ -273,6 +274,21 @@ fastify.get<{
     return;
   }
 
+  // The token is only in the link we emailed to this address, so knowing
+  // someone's email is not enough to unsubscribe them.
+  const {token} = request.query;
+  if (
+    typeof token !== 'string' ||
+    !verifyUnsubscribeToken(token, request.query.email, shortID)
+  ) {
+    reply
+      .status(403)
+      .send(
+        'This unsubscribe link is not valid. Use the link in a more recent email, or unsubscribe on the issue page.',
+      );
+    return;
+  }
+
   const existingUserResult =
     await sql`SELECT id, email FROM "user" WHERE "email" = ${request.query.email}`;
 
@@ -284,7 +300,7 @@ fastify.get<{
   }
 
   const issueResult =
-    await sql`SELECT id, title FROM "issue" WHERE "shortID" = ${shortID}`;
+    await sql`SELECT id FROM "issue" WHERE "shortID" = ${shortID}`;
 
   const issue = issueResult[0];
 
@@ -297,10 +313,12 @@ fastify.get<{
     VALUES (${existingUser.id}, ${issue.id}, false)
     ON CONFLICT ("userID", "issueID") 
     DO UPDATE SET "subscribed" = false`;
+  // No stored content, such as the issue title, goes in this response: it is
+  // HTML on the app origin, and the endpoint is unauthenticated.
   reply
     .type('text/html')
     .send(
-      `OK! You are unsubscribed from <a href="https://bugs.rocicorp.dev/issue/${shortID}">${issue.title}</a>.`,
+      `OK! You are unsubscribed from <a href="https://bugs.rocicorp.dev/issue/${shortID}">issue #${shortID}</a>.`,
     );
 });
 
