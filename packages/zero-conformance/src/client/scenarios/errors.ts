@@ -195,6 +195,17 @@ export const errorScenarios: Scenario[] = [
     ],
   },
   {
+    name: 'error while connected: Rehome without maxBackoffMs reconnects after the full 5 s',
+    steps: [
+      start,
+      connected,
+      errorMessage({kind: 'Rehome', message: 'rehomed', origin: 'zeroCache'}),
+      advance(4999),
+      advance(1),
+      connected,
+    ],
+  },
+  {
     name: 'error while connected: ServerOverloaded with both bounds',
     steps: [
       start,
