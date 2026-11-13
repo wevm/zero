@@ -153,34 +153,58 @@ export function storyboard(ax: string, mirrored = false) {
       '-e',
       `tell application "System Events" to set frontmost of (first process whose unix id is ${pid}) to true`,
     ]);
-    await sleep(500);
+    await sleep(800);
   }
   /** Opens a menu and picks from it, pressing again if the menu didn't open. */
-  async function pick(pid: number, trigger: string, option: string, index = 0) {
-    for (let i = 0; ; i++) {
-      await click(center(await find(pid, trigger)));
-      for (let j = 0; j < 8; j++) {
-        const o = tryFind(pid, option, index);
-        if (o) return click(center(o));
-        await sleep(250);
-      }
-      if (i === 2) throw new Error(`${trigger} didn't open ${option}`);
-    }
+  /**
+   * Opens a menu and picks from it, again until `done`: pressing the menu
+   * again if it didn't open, the option again if it didn't take.
+   */
+  async function pick(
+    pid: number,
+    trigger: string,
+    option: string,
+    done: () => boolean,
+    index = 0,
+  ) {
+    await until(
+      `${option} from ${trigger}`,
+      async () => {
+        let o = tryFind(pid, option, index);
+        if (!o) {
+          await click(center(await find(pid, trigger)));
+          for (let j = 0; j < 8 && !o; j++) {
+            await sleep(250);
+            o = tryFind(pid, option, index);
+          }
+        }
+        if (o) await click(center(o));
+      },
+      done,
+    );
   }
+  /** Rune's issue has the label: its chip beside the Labels button. */
+  const runeLabeled = (apps: Apps) => {
+    const labels = tryFind(apps.rune, 'id=labels-trigger');
+    if (!labels) return false;
+    for (let i = 0; ; i++) {
+      const chip = tryFind(apps.rune, `role=AXStaticText&value==${LABEL}`, i);
+      if (!chip) return false;
+      if (Math.abs(chip.y + chip.h / 2 - (labels.y + labels.h / 2)) < 15) {
+        return true;
+      }
+    }
+  };
   /**
    * Rune's list at its open or closed issues, from its status menu, picked
    * again until the menu shows it: a click on the menu can be dropped, and
    * leave it open.
    */
   async function runeStatus(apps: Apps, value: 'Open' | 'Closed') {
-    const option = value === 'Open' ? 'id=option0' : 'id=option1';
-    await until(
-      `Rune listing ${value.toLowerCase()} issues`,
-      async () => {
-        const open = tryFind(apps.rune, option);
-        if (open) await click(center(open));
-        else await pick(apps.rune, 'id=status-trigger', option);
-      },
+    await pick(
+      apps.rune,
+      'id=status-trigger',
+      value === 'Open' ? 'id=option0' : 'id=option1',
       () => !!tryFind(apps.rune, `id=status-trigger&value==${value}`),
     );
   }
@@ -334,6 +358,12 @@ export function storyboard(ax: string, mirrored = false) {
         if (i === 20) wheelUp = -wheelUp;
         call(['scroll', String(wheelUp), '60']);
         await sleep(400);
+        // A wheel that runs into the top can land as a tap on its first
+        // issue: back to the list, and on up.
+        if (phone.atIssue(apps)) {
+          await phone.toList(apps);
+          cliclick(`m:${Math.round(p.x)},${Math.round(p.y)}`);
+        }
       }
       if (!tryText(apps.sim, '=open issues')) {
         throw new Error("the iPhone's list isn't at its top");
@@ -440,12 +470,25 @@ export function storyboard(ax: string, mirrored = false) {
           },
           () => !tryFind(apps.rune, 'id=title-field'),
         );
+        // Each opens it, again until its detail shows the description.
         await activate(apps.swift);
-        await click(center(await find(apps.swift, row(TITLE))));
+        await until(
+          'Swift opening the issue',
+          async () => click(center(await find(apps.swift, row(TITLE)))),
+          () => !!tryFind(apps.swift, `value=${DESCRIPTION}`),
+        );
         await activate(apps.gpui);
-        await click(gpui.row(apps, 0));
+        await until(
+          'GPUI opening the issue',
+          () => click(gpui.row(apps, 0)),
+          () => !!tryText(apps.gpui, 'synced by zero'),
+        );
         await activate(apps.web);
-        await click(center(await find(apps.web, web.row(TITLE))));
+        await until(
+          'the browser opening the issue',
+          async () => click(center(await find(apps.web, web.row(TITLE)))),
+          () => !!tryFind(apps.web, DESCRIPTION),
+        );
         await activate(apps.sim);
         await phone.open(apps, TITLE);
       },
@@ -470,6 +513,7 @@ export function storyboard(ax: string, mirrored = false) {
           apps.web,
           'role=AXComboBox&value==open',
           'role=AXStaticText&value==closed',
+          () => !!tryFind(apps.web, 'role=AXComboBox&value==closed'),
           1,
         );
         await find(apps.swift, 'role=AXButton&desc=Reopen');
@@ -486,8 +530,12 @@ export function storyboard(ax: string, mirrored = false) {
           'role=AXTextField&placeholder=comment',
           MAC_COMMENT,
         );
-        await click(
-          center(await find(apps.swift, 'role=AXButton&desc=Comment')),
+        // Sent once the field is empty again.
+        await until(
+          'Swift sending its comment',
+          async () =>
+            click(center(await find(apps.swift, 'role=AXButton&desc=Comment'))),
+          () => !tryFind(apps.swift, `role=AXTextField&value=${MAC_COMMENT}`),
         );
         await find(apps.rune, MAC_COMMENT);
         await sleep(1500);
@@ -498,7 +546,9 @@ export function storyboard(ax: string, mirrored = false) {
       detail: `The ${LABEL} label shows in Swift and GPUI, and the issue is at the top of Rune's closed ones.`,
       async run(apps) {
         await activate(apps.rune);
-        await pick(apps.rune, 'id=labels-trigger', `id=label-${LABEL}`);
+        await pick(apps.rune, 'id=labels-trigger', `id=label-${LABEL}`, () =>
+          runeLabeled(apps),
+        );
         await key('esc');
         await sleep(400);
         await runeStatus(apps, 'Closed');
@@ -546,7 +596,12 @@ export function storyboard(ax: string, mirrored = false) {
         await sleep(600);
         await selectAll();
         await type(RENAMED);
-        await click(gpui.save(apps));
+        // Saved once the dialog is gone.
+        await until(
+          'GPUI saving the title',
+          () => click(gpui.save(apps)),
+          () => !tryText(apps.gpui, 'edit issue'),
+        );
         await find(apps.swift, `value=${RENAMED}`);
         await sleep(1500);
       },
@@ -556,12 +611,19 @@ export function storyboard(ax: string, mirrored = false) {
       detail: 'The third comment shows in the four native apps.',
       async run(apps) {
         await activate(apps.web);
-        await click(center(await web.show(apps, 'role=AXTextArea')));
-        await type(WEB_COMMENT);
-        await click(
-          center(await web.show(apps, 'role=AXButton&title==Add comment')),
+        // Typed again (over what's there) and sent until Swift has it.
+        await until(
+          'the browser sending its comment',
+          async () => {
+            await click(center(await web.show(apps, 'role=AXTextArea')));
+            await selectAll();
+            await type(WEB_COMMENT);
+            await click(
+              center(await web.show(apps, 'role=AXButton&title==Add comment')),
+            );
+          },
+          () => !!tryFind(apps.swift, `value=${WEB_COMMENT}`),
         );
-        await find(apps.swift, `value=${WEB_COMMENT}`);
         await sleep(1500);
       },
     },
