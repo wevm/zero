@@ -217,9 +217,13 @@ pub fn suites() -> Vec<Suite> {
 /// generated corpora there that no suite replays. `filter` keeps the files
 /// whose names contain it.
 pub fn run(filter: Option<&str>) -> Result<Report, String> {
-    let vectors = vectors_dir();
-    let generated = generated_dir();
-    let checked_files = list_json(&vectors).map_err(|e| {
+    run_in(&vectors_dir(), &generated_dir(), filter)
+}
+
+/// [`run`] over the vectors in `vectors` and the generated corpora in
+/// `generated`, such as a doctored copy of them.
+pub fn run_in(vectors: &Path, generated: &Path, filter: Option<&str>) -> Result<Report, String> {
+    let checked_files = list_json(vectors).map_err(|e| {
         format!(
             "can't read the conformance vectors at {}: {e}; set ZERO_CONFORMANCE_VECTORS",
             vectors.display()
@@ -238,11 +242,11 @@ pub fn run(filter: Option<&str>) -> Result<Report, String> {
     let claimed =
         |source: Source, name: &str| by_file.keys().any(|(s, f, _)| *s == source && *f == name);
     // Generated corpora are listed when they are there.
-    let generated_files = list_json(&generated).unwrap_or_default();
+    let generated_files = list_json(generated).unwrap_or_default();
     let mut files = Vec::new();
     for (source, dir, names) in [
-        (Source::Checked, &vectors, &checked_files),
-        (Source::Generated, &generated, &generated_files),
+        (Source::Checked, vectors, &checked_files),
+        (Source::Generated, generated, &generated_files),
     ] {
         for name in names {
             if keep(name) && !claimed(source, name) {
@@ -255,9 +259,9 @@ pub fn run(filter: Option<&str>) -> Result<Report, String> {
             continue;
         }
         let dir = if *source == Source::Checked {
-            &vectors
+            vectors
         } else {
-            &generated
+            generated
         };
         let mut report = replay(dir, *source, name, suites);
         report.variant = *variant;

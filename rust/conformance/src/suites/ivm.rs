@@ -1,13 +1,16 @@
 //! Incremental view maintenance: `ivm/ivm.test.ts`,
-//! `ivm/ivm-features.test.ts`, `ivm/bughunt.test.ts` (its IVM cases), and
-//! `ivm/sweep-ivm.test.ts`.
+//! `ivm/ivm-features.test.ts`, `ivm/bughunt.test.ts` (its IVM cases),
+//! `ivm/sweep-ivm.test.ts`, and the zql tests restored from rocicorp/mono
+//! (`ivm/restored-ivm.test.ts`, `ivm/restored-chinook.test.ts`).
 //!
 //! Each case is a program of query builder calls (`ivm/harness.ts`). Rust
 //! replays it with its own builder and must build JS's AST and format, or
 //! reject it with JS's message. Then it builds the pipeline for JS's AST
 //! over memory sources loaded with the case's dataset, hydrates a view,
 //! applies the dataset's pushes one by one, and compares the changes the
-//! view received and the view after each with JS's.
+//! view received and the view after each with JS's. A restored case has
+//! JS's AST and format instead of a program, so only the pipeline is
+//! replayed.
 
 use crate::case::{Case, ensure, same};
 use crate::{Outcome, Source, Suite};
@@ -55,6 +58,18 @@ pub fn suites() -> Vec<Suite> {
             file: "harden-ivm-special",
             source: Source::Generated,
             check: harden,
+        },
+        Suite {
+            variant: None,
+            file: "restored-ivm",
+            source: Source::Checked,
+            check: restored,
+        },
+        Suite {
+            variant: None,
+            file: "restored-chinook-decpush",
+            source: Source::Generated,
+            check: restored,
         },
     ]
 }
@@ -108,16 +123,72 @@ fn ivm(c: &Value, file: &Value) -> Result<Outcome, String> {
         .arr("datasets")?
         .get(c.num("dataset")? as usize)
         .ok_or("no such dataset")?;
-    let sources = load_sources(&schema, dataset, |v| v.clone())?;
-    let delegate = Delegate(sources.clone());
-    let result = c.field("result")?;
-    let expected_error = result.get("error").and_then(Value::as_str);
+    let sources = load_sources(&schema, dataset.get("data"), |v| v.clone())?;
+    let delegate = Delegate::new(sources.clone());
+    replay(
+        &ast,
+        format,
+        &sources,
+        &delegate,
+        dataset.arr("pushes")?,
+        c.field("result")?,
+    )
+}
 
+/// `restored-ivm.test.ts` and `restored-chinook.test.ts`: cases of the zql
+/// tests restored from rocicorp/mono 7ebeb2172, as an AST, a format and
+/// pushes over the case's own schema and data, or the file's shared ones.
+/// A case may turn on a builder setting the client leaves off.
+fn restored(c: &Value, file: &Value) -> Result<Outcome, String> {
+    let (schema, data) = match c.get("schema") {
+        Some(schema) => (schema, c.field("data")?),
+        None => {
+            let shared = file.field("shared")?;
+            (shared.field("schema")?, shared.field("data")?)
+        }
+    };
+    let schema = Schema::from_json(schema).map_err(|e| e.to_string())?;
+    let ast = Ast::from_json(c.field("ast")?).map_err(|e| e.to_string())?;
+    let format = Format::from_json(c.field("format")?).map_err(|e| e.to_string())?;
+    let sources = load_sources(&schema, Some(data), |v| v.clone())?;
+    let option = |key: &str| {
+        c.get("options")
+            .and_then(|o| o.get(key))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    };
+    let delegate = Delegate {
+        enable_not_exists: option("enableNotExists"),
+        disable_correlated_predicate_pushdown: option("disableCorrelatedPredicatePushdown"),
+        ..Delegate::new(sources.clone())
+    };
+    replay(
+        &ast,
+        format,
+        &sources,
+        &delegate,
+        c.arr("pushes")?,
+        c.field("result")?,
+    )
+}
+
+/// Builds the pipeline for `ast` over `sources`, hydrates a view, applies
+/// `pushes` one by one, and compares the changes the view received and the
+/// view after each with JS's `result`.
+fn replay(
+    ast: &Ast,
+    format: Format,
+    sources: &HashMap<String, Rc<MemorySource>>,
+    delegate: &Delegate,
+    pushes: &[Value],
+    result: &Value,
+) -> Result<Outcome, String> {
+    let expected_error = result.get("error").and_then(Value::as_str);
     let built = (|| -> Result<(Rc<Recorder>, Rc<ArrayView>), PipelineError> {
-        let input = build_pipeline(&ast, &delegate, "q")?;
+        let input = build_pipeline(ast, delegate, "q")?;
         let recorder = Recorder::new(input);
         let view_input: Rc<dyn Input> = if ast.group_by.is_some() {
-            group_view_input(recorder.clone(), &ast, &delegate)?
+            group_view_input(recorder.clone(), ast, delegate)?
         } else {
             recorder.clone()
         };
@@ -136,7 +207,7 @@ fn ivm(c: &Value, file: &Value) -> Result<Outcome, String> {
         same("initial view", &view_json(), result.field("initial")?)?;
     }
     let steps = result.get("steps").and_then(Value::as_array);
-    for (i, push) in dataset.arr("pushes")?.iter().enumerate() {
+    for (i, push) in pushes.iter().enumerate() {
         recorder.changes.borrow_mut().clear();
         let (table, change) = source_change(push)?;
         let source = sources.get(table).ok_or("push to an unknown table")?;
@@ -150,7 +221,10 @@ fn ivm(c: &Value, file: &Value) -> Result<Outcome, String> {
         }
         view.flush();
         let Some(step) = steps.and_then(|s| s.get(i)) else {
-            return Err(format!("JS failed with {expected_error:?}, Rust did not"));
+            return Err(match expected_error {
+                Some(e) => format!("JS failed with {e:?}, Rust did not"),
+                None => format!("the vector has no step for push {i}"),
+            });
         };
         let changes = Value::Array(recorder.changes.borrow().clone());
         same(
@@ -170,15 +244,14 @@ fn ivm(c: &Value, file: &Value) -> Result<Outcome, String> {
     Ok(Outcome::Pass)
 }
 
-/// A memory source for each table of `schema`, loaded with the dataset's
-/// rows as `decode` reads them.
+/// A memory source for each table of `schema`, loaded with `data`'s rows
+/// (by table) as `decode` reads them.
 fn load_sources(
     schema: &Schema,
-    dataset: &Value,
+    data: Option<&Value>,
     decode: impl Fn(&Value) -> Value,
 ) -> Result<HashMap<String, Rc<MemorySource>>, String> {
     let mut sources = HashMap::new();
-    let data = dataset.get("data");
     for (name, table) in schema.tables.iter() {
         let source = MemorySource::new(table.clone());
         let rows = data
@@ -214,7 +287,7 @@ fn harden(c: &Value, file: &Value) -> Result<Outcome, String> {
         .arr("datasets")?
         .get(c.num("dataset")? as usize)
         .ok_or("no such dataset")?;
-    let sources = load_sources(&schema, dataset, decode_numbers)?;
+    let sources = load_sources(&schema, dataset.get("data"), decode_numbers)?;
     let program = decode_numbers(c.field("program")?);
     let built = build(&schema, &program)?;
     if let Some(m) = built.invalid() {
@@ -234,7 +307,7 @@ fn harden(c: &Value, file: &Value) -> Result<Outcome, String> {
         &built.format().to_json(),
         c.field("format")?,
     )?;
-    let delegate = Delegate(sources.clone());
+    let delegate = Delegate::new(sources.clone());
     let notified = Rc::new(std::cell::Cell::new(0));
     let built = (|| -> Result<(Rc<Recorder>, Rc<ArrayView>), PipelineError> {
         let input = build_pipeline(built.ast(), &delegate, "q")?;
@@ -394,13 +467,34 @@ fn source_change(push: &Value) -> Result<(&str, SourceChange), String> {
     Ok((push.str("table")?, change))
 }
 
-struct Delegate(HashMap<String, Rc<MemorySource>>);
+struct Delegate {
+    sources: HashMap<String, Rc<MemorySource>>,
+    enable_not_exists: bool,
+    disable_correlated_predicate_pushdown: bool,
+}
+
+impl Delegate {
+    /// With the client's builder settings.
+    fn new(sources: HashMap<String, Rc<MemorySource>>) -> Self {
+        Delegate {
+            sources,
+            enable_not_exists: false,
+            disable_correlated_predicate_pushdown: false,
+        }
+    }
+}
 
 impl BuilderDelegate for Delegate {
     fn get_source(&self, table_name: &str) -> Option<Rc<dyn IvmSource>> {
-        self.0
+        self.sources
             .get(table_name)
             .map(|s| s.clone() as Rc<dyn IvmSource>)
+    }
+    fn enable_not_exists(&self) -> bool {
+        self.enable_not_exists
+    }
+    fn disable_correlated_predicate_pushdown(&self) -> bool {
+        self.disable_correlated_predicate_pushdown
     }
 }
 
