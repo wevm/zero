@@ -1,5 +1,5 @@
 import {afterAll, describe, expect, vi} from 'vitest';
-import type {JSONValue} from '../../../shared/src/json.ts';
+import {deepEqual, type JSONValue} from '../../../shared/src/json.ts';
 import type {Row} from '../../../zero-protocol/src/data.ts';
 import type {Schema} from '../../../zero-types/src/schema.ts';
 import {ChangeType} from '../../../zql/src/ivm/change-type.ts';
@@ -67,9 +67,32 @@ const files: [string, () => Promise<unknown>][] = [
     () => import('../../../zql/src/ivm/take.push-child.test.ts'),
   ],
 ];
+// The re-baselined copies (tools/restored-tests/README.md): their snapshots
+// of operator internals were regenerated, but their cases, and their
+// assertions on views and pushes, are as published. Their cases go to a file
+// of their own, which leaves out those `restored-ivm.json` already has.
+const rebaselined: [string, () => Promise<unknown>][] = [
+  [
+    'cap.push.rebaselined.test.ts',
+    () => import('../../../zql/src/ivm/cap.push.rebaselined.test.ts'),
+  ],
+  [
+    'flipped-join.more-fetch.rebaselined.test.ts',
+    () =>
+      import('../../../zql/src/ivm/flipped-join.more-fetch.rebaselined.test.ts'),
+  ],
+  [
+    'flipped-join.push.rebaselined.test.ts',
+    () => import('../../../zql/src/ivm/flipped-join.push.rebaselined.test.ts'),
+  ],
+  [
+    'take.push.rebaselined.test.ts',
+    () => import('../../../zql/src/ivm/take.push.rebaselined.test.ts'),
+  ],
+];
 /* oxlint-enable no-restricted-imports */
 
-for (const [file, load] of files) {
+for (const [file, load] of [...files, ...rebaselined]) {
   await describe(file, async () => {
     await load();
   });
@@ -136,11 +159,39 @@ afterAll(() => {
     seen.set(name, n);
     return toCase(n === 1 ? name : `${name} (${n})`, test);
   });
+  const isRebaselined = (c: Case) =>
+    rebaselined.some(([file]) => c.name.startsWith(`${file} > `));
+  const published = cases.filter(c => !isRebaselined(c));
   emitVectors(
     'restored-ivm',
     'ivm-ast',
     'The runPushTest and runFetchTest cases of zql tests restored from rocicorp/mono 7ebeb2172: sources, an AST and pushes, with the view and its changes after hydration and after each push. See src/ivm/restored-ivm.test.ts.',
-    cases,
+    published,
+    undefined,
+    {compact: true},
+  );
+
+  // A case with the same sources, AST, options and pushes as one already
+  // kept, as written to JSON, adds nothing.
+  const input = ({name: _, result: __, ...rest}: Case) =>
+    JSON.parse(JSON.stringify(rest)) as JSONValue;
+  const kept = published.map(input);
+  const added = cases.filter(c => {
+    if (!isRebaselined(c)) {
+      return false;
+    }
+    const i = input(c);
+    if (kept.some(k => deepEqual(k, i))) {
+      return false;
+    }
+    kept.push(i);
+    return true;
+  });
+  emitVectors(
+    'restored-ivm-rebaselined',
+    'ivm-ast',
+    'Like restored-ivm.json, the runPushTest and runFetchTest cases of the re-baselined copies of zql tests restored from rocicorp/mono 7ebeb2172 (see tools/restored-tests/README.md), less those restored-ivm.json already has. See src/ivm/restored-ivm.test.ts.',
+    added,
     undefined,
     {compact: true},
   );
