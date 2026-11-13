@@ -1,0 +1,295 @@
+// Re-baselined copy of packages/zql/src/query/test/query-gen.test.ts from
+// rocicorp/mono 7ebeb2172fc9e621ecfc2f262c4d228b16e9684e (2026-09-26), Apache
+// License 2.0. The original fails against today's zql only on inline snapshots
+// of internals, so it stays out of this repository. This copy differs from it
+// only in this header and in those snapshots, regenerated after upstream
+// c9d1b15fc ("synced aggregates") and effd2da27 ("distinct() for top-level
+// queries") gave every AST `aggregate` and `groupBy` keys. See
+// tools/restored-tests/README.md.
+import {en, Faker, generateMersenne53Randomizer} from '@faker-js/faker';
+import {describe, expect, test} from 'vitest';
+import {asQueryInternals} from '../query-internals.ts';
+import {generateQuery} from './query-gen.ts';
+import {generateSchema} from './schema-gen.ts';
+
+describe('random generation', () => {
+  test.each([
+    {name: '794617431', seed: 794617431},
+    {name: 'random seed', seed: Date.now() ^ (Math.random() * 0x100000000)},
+  ])('$name', ({seed}) => {
+    const randomizer = generateMersenne53Randomizer(seed);
+    const rng = () => randomizer.next();
+    const faker = new Faker({
+      locale: en,
+      randomizer,
+    });
+    let schema;
+    try {
+      schema = generateSchema(rng, faker);
+    } catch (e) {
+      // oxlint-disable-next-line no-console
+      console.error('Error generating schema for seed', seed);
+      throw e;
+    }
+
+    expect(
+      () => generateQuery(schema, {}, rng, faker),
+      `seed: ${seed}`,
+    ).not.toThrow();
+  });
+});
+test('stable generation', () => {
+  const randomizer = generateMersenne53Randomizer(42);
+  const rng = () => randomizer.next();
+  const faker = new Faker({
+    locale: en,
+    randomizer,
+  });
+  const schema = generateSchema(rng, faker);
+  const q = generateQuery(schema, {}, rng, faker);
+
+  expect(asQueryInternals(q).ast).toMatchInlineSnapshot(`
+    {
+      "alias": undefined,
+      "limit": 126,
+      "orderBy": undefined,
+      "related": [
+        {
+          "correlation": {
+            "childField": [
+              "thorn",
+            ],
+            "parentField": [
+              "councilman",
+            ],
+          },
+          "hidden": undefined,
+          "subquery": {
+            "alias": "cleaner",
+            "limit": 45,
+            "orderBy": [
+              [
+                "exploration",
+                "asc",
+              ],
+            ],
+            "related": undefined,
+            "schema": undefined,
+            "start": undefined,
+            "table": "cleaner",
+            "where": {
+              "conditions": [
+                {
+                  "left": {
+                    "name": "disk",
+                    "type": "column",
+                  },
+                  "op": "<=",
+                  "right": {
+                    "type": "literal",
+                    "value": 283088937894669,
+                  },
+                  "type": "simple",
+                },
+                {
+                  "left": {
+                    "name": "petticoat",
+                    "type": "column",
+                  },
+                  "op": "!=",
+                  "right": {
+                    "type": "literal",
+                    "value": 1077209202886782,
+                  },
+                  "type": "simple",
+                },
+                {
+                  "left": {
+                    "name": "petticoat",
+                    "type": "column",
+                  },
+                  "op": ">",
+                  "right": {
+                    "type": "literal",
+                    "value": 2928990975813516,
+                  },
+                  "type": "simple",
+                },
+                {
+                  "left": {
+                    "name": "petticoat",
+                    "type": "column",
+                  },
+                  "op": "IS",
+                  "right": {
+                    "type": "literal",
+                    "value": 0.49379559636439074,
+                  },
+                  "type": "simple",
+                },
+              ],
+              "type": "and",
+            },
+          },
+          "system": "permissions",
+        },
+      ],
+      "schema": undefined,
+      "start": undefined,
+      "table": "negotiation",
+      "where": {
+        "conditions": [
+          {
+            "left": {
+              "name": "archaeology",
+              "type": "column",
+            },
+            "op": "<",
+            "right": {
+              "type": "literal",
+              "value": 6559189752506948,
+            },
+            "type": "simple",
+          },
+          {
+            "left": {
+              "name": "schnitzel",
+              "type": "column",
+            },
+            "op": ">",
+            "right": {
+              "type": "literal",
+              "value": 4408598537602987,
+            },
+            "type": "simple",
+          },
+          {
+            "flip": undefined,
+            "op": "NOT EXISTS",
+            "related": {
+              "correlation": {
+                "childField": [
+                  "thorn",
+                ],
+                "parentField": [
+                  "councilman",
+                ],
+              },
+              "hidden": undefined,
+              "subquery": {
+                "alias": "zsubq_cleaner",
+                "limit": undefined,
+                "orderBy": undefined,
+                "related": undefined,
+                "schema": undefined,
+                "start": undefined,
+                "table": "cleaner",
+                "where": {
+                  "conditions": [
+                    {
+                      "left": {
+                        "name": "disk",
+                        "type": "column",
+                      },
+                      "op": ">",
+                      "right": {
+                        "type": "literal",
+                        "value": 5490467414740416,
+                      },
+                      "type": "simple",
+                    },
+                    {
+                      "flip": undefined,
+                      "op": "EXISTS",
+                      "related": {
+                        "correlation": {
+                          "childField": [
+                            "amendment",
+                          ],
+                          "parentField": [
+                            "amendment",
+                          ],
+                        },
+                        "hidden": undefined,
+                        "subquery": {
+                          "alias": "zsubq_cleaner",
+                          "limit": undefined,
+                          "orderBy": undefined,
+                          "related": undefined,
+                          "schema": undefined,
+                          "start": undefined,
+                          "table": "cleaner",
+                          "where": {
+                            "conditions": [
+                              {
+                                "left": {
+                                  "name": "disk",
+                                  "type": "column",
+                                },
+                                "op": "<",
+                                "right": {
+                                  "type": "literal",
+                                  "value": 8492975582368892,
+                                },
+                                "type": "simple",
+                              },
+                              {
+                                "left": {
+                                  "name": "disk",
+                                  "type": "column",
+                                },
+                                "op": "IS",
+                                "right": {
+                                  "type": "literal",
+                                  "value": 991259612588502,
+                                },
+                                "type": "simple",
+                              },
+                              {
+                                "left": {
+                                  "name": "thorn",
+                                  "type": "column",
+                                },
+                                "op": "IS",
+                                "right": {
+                                  "type": "literal",
+                                  "value": "undique absconditus dolorem",
+                                },
+                                "type": "simple",
+                              },
+                              {
+                                "left": {
+                                  "name": "thorn",
+                                  "type": "column",
+                                },
+                                "op": "IS NOT",
+                                "right": {
+                                  "type": "literal",
+                                  "value": "convoco volup vivo",
+                                },
+                                "type": "simple",
+                              },
+                            ],
+                            "type": "and",
+                          },
+                        },
+                        "system": "permissions",
+                      },
+                      "scalar": undefined,
+                      "type": "correlatedSubquery",
+                    },
+                  ],
+                  "type": "and",
+                },
+              },
+              "system": "permissions",
+            },
+            "scalar": undefined,
+            "type": "correlatedSubquery",
+          },
+        ],
+        "type": "and",
+      },
+    }
+  `);
+});
