@@ -224,6 +224,9 @@
         IssueCount(filter: filter, list: issues)
           .foregroundStyle(.secondary)
           .monospacedDigit()
+          // At its full width: an iPhone's or an iPad's navigation bar
+          // otherwise gives it a few characters' width and truncates it.
+          .fixedSize()
       }
       ToolbarItem {
         ConnectionBadge(connection: model.zero.connection)
