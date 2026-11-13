@@ -18,6 +18,9 @@ four:
 8. The browser comments.
 9. Each app scrolls fast through its list of 20,000 issues.
 
+The iPhone shows in Xcode 26's Simulator or, with Xcode 27, in Device Hub,
+which replaces it.
+
 Each step's caption goes on afterwards, in a band under the screen. Then
 Postgres must have each change. A take runs about two minutes.
 

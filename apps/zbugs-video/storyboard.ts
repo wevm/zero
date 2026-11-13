@@ -151,7 +151,25 @@ export function storyboard(ax: string) {
   // The phone's screen, and its navigation bar's buttons there, which the
   // simulator doesn't expose: back, then close or reopen.
   const phone = {
-    screen: (apps: Apps) => find(apps.sim, 'role=AXGroup'),
+    /**
+     * The first phone-shaped group but the window's own: Simulator's first
+     * group is the screen, Device Hub's its whole window, which can be
+     * phone-shaped too.
+     */
+    screen: async (apps: Apps) => {
+      const deadline = Date.now() + 15_000;
+      for (;;) {
+        const w = window(apps.sim);
+        for (let i = 0; ; i++) {
+          const g = tryFind(apps.sim, 'role=AXGroup', i);
+          if (!g) break;
+          const own = g.x === w.x && g.y === w.y && g.w === w.w && g.h === w.h;
+          if (!own && g.h > 1.9 * g.w) return g;
+        }
+        if (Date.now() > deadline) throw new Error('no phone screen');
+        await sleep(250);
+      }
+    },
     at: async (apps: Apps, fx: number, fy: number) => {
       const s = await phone.screen(apps);
       return {x: s.x + fx * s.w, y: s.y + fy * s.h};

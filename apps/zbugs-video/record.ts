@@ -41,7 +41,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import {homedir} from 'node:os';
-import {dirname, join} from 'node:path';
+import {basename, dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {storyboard, TITLE, type Apps} from './storyboard.ts';
 
@@ -68,6 +68,9 @@ const LARGE_LIST = 20_000;
 // sidebar above 900 CSS pixels.
 const ZOOMS = [1, 0.9, 0.8, 0.75, 0.67, 0.5];
 const WEB_MIN = 920;
+// Device Hub's window for the phone, width over height: its toolbar and
+// controls above and below a zoomed-to-fit iPhone.
+const DEVICE_HUB_ASPECT = 0.55;
 // What `displayplacer list` and ffmpeg print.
 const HIDPI_MODE = /res:(\d+)x(\d+) hz:(\d+).*scaling:on/g;
 const CURRENT_MODE =
@@ -221,18 +224,22 @@ function simulator(): string {
   throw new Error(`no available simulator named ${name}`);
 }
 
+/**
+ * The app that shows the simulator: Xcode 26's Simulator, or Xcode 27's
+ * Device Hub, which replaces it.
+ */
 function simulatorApp(): string {
   const developer = run('xcode-select', ['-p']);
-  const bundled = join(developer, 'Applications/Simulator.app');
-  if (existsSync(bundled)) return bundled;
-  // An Xcode beta can come without it: any installed Xcode's runs the
-  // same runtimes.
-  const found = run('mdfind', [
-    'kMDItemCFBundleIdentifier == com.apple.iphonesimulator',
-  ]).split('\n')[0];
-  if (!found) throw new Error('Simulator.app is not installed');
-  return found;
+  for (const app of [
+    join(developer, 'Applications/Simulator.app'),
+    join(developer, '../Applications/DeviceHub.app'),
+  ]) {
+    if (existsSync(app)) return app;
+  }
+  throw new Error(`no Simulator.app or DeviceHub.app in ${developer}`);
 }
+
+const deviceHub = () => simulatorApp().endsWith('DeviceHub.app');
 
 const pidsFile = () => join(work, 'pids.json');
 
@@ -399,7 +406,8 @@ async function launch(): Promise<Apps> {
   } catch {
     // Booted already.
   }
-  run('open', ['-a', simulatorApp()]);
+  const simApp = simulatorApp();
+  run('open', ['-a', simApp]);
   run('xcrun', ['simctl', 'bootstatus', udid, '-b']);
   run('xcrun', ['simctl', 'install', udid, iosApp]);
   const simEnv: NodeJS.ProcessEnv = {...process.env};
@@ -417,7 +425,9 @@ async function launch(): Promise<Apps> {
     ],
     {env: simEnv, stdio: 'ignore'},
   );
-  const sim = Number(run('pgrep', ['-x', 'Simulator']));
+  const sim = Number(
+    run('pgrep', ['-x', basename(simApp, '.app')]).split('\n')[0],
+  );
   const apps: Apps = {
     rune: rune.pid!,
     gpui: gpui.pid!,
@@ -508,10 +518,17 @@ async function layout(apps: Apps) {
         String(ph),
       ]),
     );
-  // The simulator without its bezel, as tall as the bottom row: it keeps
-  // the phone's aspect, so it's narrower than asked for.
-  bezels(false);
-  const phone = place(apps.sim, screen.w - h, h, h, h).w;
+  // The phone as tall as the bottom row. Simulator, without its bezel,
+  // keeps the phone's aspect, so it's narrower than asked for; Device Hub's
+  // window, without its sidebar, takes any size and fits the phone in it.
+  let phone: number;
+  if (deviceHub()) {
+    await deviceHubWindow(apps.sim);
+    phone = Math.round(h * DEVICE_HUB_ASPECT);
+  } else {
+    bezels(false);
+    phone = place(apps.sim, screen.w - h, h, h, h).w;
+  }
   const rune = Math.max(MIN_CELL.w, Math.floor((screen.w - phone) / 2));
   const web = screen.w - phone - rune;
   step(
@@ -548,6 +565,30 @@ function zoomWeb(pid: number, width: number) {
     ...Array(steps).fill('t:-'),
     'ku:cmd',
   ]);
+}
+
+/**
+ * Device Hub's main window with only the phone in it: from its compact
+ * window, which can't change size, and without its sidebar of devices.
+ */
+async function deviceHubWindow(pid: number) {
+  const press = async (query: string) => {
+    let r: string;
+    try {
+      r = run(ax, ['find', String(pid), query]);
+    } catch {
+      return;
+    }
+    const {x, y, w, h} = rect(r);
+    run('cliclick', [`c:${Math.round(x + w / 2)},${Math.round(y + h / 2)}`]);
+    await sleep(1500);
+  };
+  run('osascript', [
+    '-e',
+    `tell application "System Events" to set frontmost of (first process whose unix id is ${pid}) to true`,
+  ]);
+  await press('desc=Show in Device Hub');
+  await press('desc=Hide Sidebar');
 }
 
 function bezels(show: boolean) {
