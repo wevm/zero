@@ -86,7 +86,10 @@
   final class RowsLayout {
     let host = LayoutHost()
     let views: any RowViews
-    var source = RowsSource()
+    private(set) var source = RowsSource()
+    /// Each row's place in `source.items`, by key: a layout pass looks up
+    /// every row near the screen, each time it stacks them.
+    private var positions: [AnyHashable: Int] = [:]
     private var cells: [AnyHashable: RowCell] = [:]
     /// Views rows left, hidden, for other rows: as many as `spareViews`
     /// kept, the rest released a few a frame.
@@ -153,8 +156,14 @@
     /// A new snapshot to draw.
     func update(_ source: RowsSource) {
       self.source = source
+      positions = Dictionary(
+        source.items.enumerated().map { ($1.key, $0) }, uniquingKeysWith: { first, _ in first })
       generation += 1
       host.invalidate()
+    }
+
+    private func item(_ key: AnyHashable) -> RowsItem? {
+      positions[key].map { source.items[$0] }
     }
 
     /// The row with `key` changed height on its own: it's measured again in
@@ -283,8 +292,7 @@
 
     /// The row with `key` is shown again, in its state now.
     private func reshow(_ key: AnyHashable?) {
-      guard let key, let cell = cells[key], let item = source.items.first(where: { $0.key == key })
-      else { return }
+      guard let key, let cell = cells[key], let item = item(key) else { return }
       show(item, in: cell)
       host.invalidate()
     }
@@ -308,7 +316,7 @@
     }
 
     private func measure(_ key: AnyHashable) -> Double {
-      guard let item = source.items.first(where: { $0.key == key }) else { return 0 }
+      guard let item = item(key) else { return 0 }
       if let cell = cells[key] {
         if seen[key] != generation {
           seen[key] = generation
@@ -445,8 +453,11 @@
 
     private func makeController() -> Controller {
       let controller = Controller(rootView: AnyView(EmptyView()))
+      // No safe area: following it, every row's view (on screen or not)
+      // worked its insets out again, and laid itself out, on each frame the
+      // list scrolled.
+      controller.safeAreaRegions = []
       #if canImport(UIKit)
-        controller.safeAreaRegions = []
         controller.view.backgroundColor = .clear
       #else
         controller.sizingOptions = []
