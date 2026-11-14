@@ -147,6 +147,7 @@ final class ScenarioRunner {
     if let v = o["disconnectTimeoutMs"]?.numberValue { options.disconnectTimeoutMs = v }
     if let v = o["queryChangeThrottleMs"]?.numberValue { options.queryChangeThrottleMs = v }
     if let v = o["maxHeaderLength"]?.numberValue { options.maxHeaderLength = Int(v) }
+    if let v = o["slowMaterializeThreshold"]?.numberValue { options.slowMaterializeThreshold = v }
     options.hiddenDisconnectDelayMs = o["hiddenTabDisconnectDelay"]?.numberValue ?? 300_000
     options.mutateURL = o["mutateURL"]?.stringValue
     options.mutateHeaders = o["mutateHeaders"]?.objectValue?.dictionary.compactMapValues(

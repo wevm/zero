@@ -23,6 +23,7 @@ public final class Zero<Context: Sendable> {
   private var preloads: [PreloadRecord] = []
   private var outcomeListeners: [(id: Int, listener: (MutationServerOutcome) -> Void)] = []
   private var nextOutcomeListenerID = 0
+  private var inspectorStorage: Inspector?
   #if canImport(Darwin)
     private var lifecycle: AppLifecycle?
   #endif
@@ -79,7 +80,17 @@ public final class Zero<Context: Sendable> {
   public var schema: ZeroSchema { engine.schema }
   public var closed: Bool { engine.closed }
 
+  /// Inspects the client's queries, local data, and metrics, and the
+  /// server's, for debugging (`zero.inspector`).
+  public var inspector: Inspector {
+    if let inspectorStorage { return inspectorStorage }
+    let inspector = Inspector { [weak self] in self?.engine }
+    inspectorStorage = inspector
+    return inspector
+  }
+
   private func attach(_ engine: Engine) {
+    inspectorStorage?.state.attach(engine)
     if options.onClientStateNotFound == nil {
       engine.onClientStateNotFound = { [weak self] in self?.replaceClient() }
     }
