@@ -17,6 +17,9 @@
 //! - `tls`: `wss://` for that transport, with rustls on `ring`.
 //! - `sqlite`: SQLite storage, `ZeroStorage::Sqlite`, on the system
 //!   `libsqlite3`; `sqlite-bundled` compiles SQLite in.
+//! - `serde`: the `define` module, typed named queries and mutators
+//!   (`define_query`, `define_mutator`) over serde argument types, and
+//!   serde for `json::Value`.
 //!
 //! # Storage
 //!
@@ -92,6 +95,9 @@ pub mod builder;
 pub mod client;
 pub mod compare;
 pub mod decode;
+#[cfg(feature = "serde")]
+#[warn(missing_docs)]
+pub mod define;
 pub mod format;
 pub mod hash;
 pub mod ivm;
