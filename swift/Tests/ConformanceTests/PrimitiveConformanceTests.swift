@@ -116,4 +116,76 @@ struct PrimitiveConformanceTests {
       }
     }
   }
+  /// A vector number: NaN and the infinities are strings.
+  static func number(_ v: JSONValue) -> Double {
+    switch v {
+    case .string("NaN"): .nan
+    case .string("Infinity"): .infinity
+    case .string("-Infinity"): -.infinity
+    default: v.numberValue ?? .nan
+    }
+  }
+
+  static func encode(_ n: Double) -> JSONValue {
+    n.isNaN ? "NaN" : n.isInfinite ? (n > 0 ? "Infinity" : "-Infinity") : .number(n)
+  }
+
+  /// `shared/src/tdigest.ts`: each case runs its ops on its digests, and
+  /// each op's result must be JS's, number for number (JSON drops the sign
+  /// of zero, so only that may differ).
+  @Test func tdigest() throws {
+    var passed = 0
+    for c in try Vectors.cases("tdigest") {
+      let name = c["name"]?.stringValue ?? "?"
+      var digests = (c["compressions"]?.arrayValue ?? []).map {
+        TDigest(compression: $0.numberValue ?? 100)
+      }
+      let expect = c["expect"]?.arrayValue ?? []
+      var ok = true
+      for (i, op) in (c["ops"]?.arrayValue ?? []).enumerated() {
+        let d = Int(op["d"]?.numberValue ?? 0)
+        let got: JSONValue
+        switch op["op"]?.stringValue {
+        case "add":
+          for pair in op["values"]?.arrayValue ?? [] {
+            digests[d].add(Self.number(pair[0] ?? .null), weight: Self.number(pair[1] ?? .null))
+          }
+          got = .null
+        case "merge":
+          digests[d].merge(digests[Int(op["from"]?.numberValue ?? 0)])
+          got = .null
+        case "quantile":
+          got = .array(
+            (op["q"]?.arrayValue ?? []).map { Self.encode(digests[d].quantile(Self.number($0))) })
+        case "cdf":
+          got = .array(
+            (op["x"]?.arrayValue ?? []).map { Self.encode(digests[d].cdf(Self.number($0))) })
+        case "count":
+          got = Self.encode(digests[d].count())
+        case "toJSON":
+          got = .array(digests[d].toJSON().map(Self.encode))
+        case "fromJSON":
+          do {
+            digests[d] = try TDigest(json: (op["json"]?.arrayValue ?? []).map(Self.number))
+            got = "ok"
+          } catch {
+            got = ["threw": .string(error.description)]
+          }
+        case "reset":
+          digests[d].reset()
+          got = .null
+        case let other:
+          throw ClientApp.Failure("Unknown op \(other ?? "")")
+        }
+        let want = i < expect.count ? expect[i] : .null
+        if got != want {
+          Issue.record("\(name) op \(i) (\(op["op"] ?? .null)): Swift \(got), JS \(want)")
+          ok = false
+          break
+        }
+      }
+      if ok { passed += 1 }
+    }
+    print("[tdigest] \(passed) passed")
+  }
 }

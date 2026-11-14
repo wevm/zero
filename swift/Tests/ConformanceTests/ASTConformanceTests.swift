@@ -62,4 +62,17 @@ struct ASTConformanceTests {
       #expect(QueryHash.hashOfNameAndArgs(name, args) == c["hash"]!.stringValue!, "\(name) \(args)")
     }
   }
+  /// `astToZQL` (`packages/ast-to-zql/src/ast-to-zql.ts`) of each AST, as
+  /// the inspector shows a query. Swift has no `redactLiterals`, which only
+  /// zero-cache uses, so the cases' `redacted` code isn't checked.
+  @Test func astToZQLCode() throws {
+    var passed = 0
+    for c in try Vectors.cases("ast-to-zql") {
+      let ast = try AST(json: c["ast"]!)
+      let code = astToZQL(ast)
+      #expect(code == c["zql"]?.stringValue, "astToZQL(\(c["ast"]!))")
+      if code == c["zql"]?.stringValue { passed += 1 }
+    }
+    print("[ast-to-zql] \(passed) passed")
+  }
 }
