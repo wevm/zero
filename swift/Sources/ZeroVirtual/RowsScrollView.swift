@@ -94,6 +94,20 @@
     /// Views rows left, hidden, for other rows: as many as `spareViews`
     /// kept, the rest released a few a frame.
     private var pool: [PlatformView] = []
+    /// Rows that left the snapshot, with their views, hidden, for when they
+    /// come back, oldest first: as many as `maxKeptRows`.
+    private var kept: [AnyHashable: RowCell] = [:]
+    private var keptOrder: [AnyHashable] = []
+    /// How many rows that leave the snapshot, as the list pages, keep their
+    /// views for when they come back: shown again at once, with their state,
+    /// not made and measured anew. 0 keeps none.
+    var maxKeptRows = 0 {
+      didSet {
+        guard maxKeptRows != oldValue else { return }
+        trimKept()
+        releaseSpares()
+      }
+    }
     private var releasing = false
     private var width = 0.0
     /// Changes with each snapshot: rows are compared with their cells' then.
@@ -169,6 +183,10 @@
     /// The row with `key` changed height on its own: it's measured again in
     /// the next layout pass.
     func rowHeightDidChange(_ key: AnyHashable) {
+      if let cell = kept[key] {
+        cell.height = nil
+        return
+      }
       guard let cell = cells[key] else { return }
       cell.height = nil
       host.invalidate()
@@ -205,6 +223,7 @@
       if width != self.width {
         self.width = width
         for cell in cells.values { cell.height = nil }
+        for cell in kept.values { cell.height = nil }
         header?.height = nil
         footer?.height = nil
         host.invalidateHeights()
@@ -216,8 +235,10 @@
         cells[key] = nil
         seen[key] = nil
         cell.view.isHidden = true
-        pool.append(cell.view)
+        kept[key] = cell
+        keptOrder.append(key)
       }
+      trimKept()
       releaseSpares()
       var accessories: [(view: PlatformView, minY: Double, maxY: Double)] = []
       if let header { accessories.append((header.view, 0, host.headerHeight)) }
@@ -229,6 +250,17 @@
         r.frames.compactMap { f in cells[f.key].map { ($0, f.minY, f.maxY) } }, r.contentHeight,
         r.offset, accessories, selected.map { ($0.minY, $0.maxY) }
       )
+    }
+
+    /// The oldest kept rows beyond `maxKeptRows` give their views up, for
+    /// other rows.
+    private func trimKept() {
+      let over = keptOrder.count - maxKeptRows
+      guard over > 0 else { return }
+      for key in keptOrder.prefix(over) {
+        if let cell = kept.removeValue(forKey: key) { pool.append(cell.view) }
+      }
+      keptOrder.removeFirst(over)
     }
 
     /// Releases a few of the views beyond `spareViews` in the next frame,
@@ -292,9 +324,23 @@
 
     /// The row with `key` is shown again, in its state now.
     private func reshow(_ key: AnyHashable?) {
-      guard let key, let cell = cells[key], let item = item(key) else { return }
+      guard let key else { return }
+      // A kept row would come back in the state it left in: it gives its
+      // view up, and comes back anew.
+      if let cell = unkeep(key) {
+        pool.append(cell.view)
+        releaseSpares()
+      }
+      guard let cell = cells[key], let item = item(key) else { return }
       show(item, in: cell)
       host.invalidate()
+    }
+
+    /// The kept row with `key`, no longer kept.
+    private func unkeep(_ key: AnyHashable) -> RowCell? {
+      guard let cell = kept.removeValue(forKey: key) else { return nil }
+      keptOrder.removeAll { $0 == key }
+      return cell
     }
 
     private func replace(_ old: RowsAccessory?, with new: RowsAccessory?) {
@@ -317,6 +363,8 @@
 
     private func measure(_ key: AnyHashable) -> Double {
       guard let item = item(key) else { return 0 }
+      // A kept row is back: its view, and its height, as it left.
+      if cells[key] == nil, let cell = unkeep(key) { cells[key] = cell }
       if let cell = cells[key] {
         if seen[key] != generation {
           seen[key] = generation
@@ -362,7 +410,7 @@
     /// The row's height as it laid itself out: when it's another than the
     /// one measured, it's measured again.
     func row(_ key: AnyHashable, laidOutAt height: Double) {
-      guard let old = cells[key]?.height, abs(old - height) > 0.5 else { return }
+      guard let old = (cells[key] ?? kept[key])?.height, abs(old - height) > 0.5 else { return }
       rowHeightDidChange(key)
     }
   }
@@ -913,6 +961,7 @@
     /// The selected row, and what a tap or a key sets it to; nil when rows
     /// aren't selectable.
     let selection: (key: AnyHashable?, set: (AnyHashable) -> Void)?
+    let maxKeptRows: Int
     let model: VirtualListModel
 
     func make() -> RowsScrollView {
@@ -933,6 +982,7 @@
       view.selectable = selection != nil
       rows.onSelect = selection?.set ?? { _ in }
       rows.selected = selection?.key
+      rows.maxKeptRows = maxKeptRows
       rows.update(source())
     }
   }
