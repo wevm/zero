@@ -88,7 +88,9 @@ jobs:
           else
             echo "mirror=true" >> "$GITHUB_OUTPUT"
           fi
-          status="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" \
+          # The lookups retry network errors and 408, 429, and 5xx responses,
+          # not a 404.
+          status="$(curl -sS --retry 3 --retry-all-errors -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" \
             "https://api.github.com/repos/wevm/zero-rust/releases/tags/$version")"
           case "$status" in
             200) echo "release=false" >> "$GITHUB_OUTPUT" ;;
@@ -98,10 +100,10 @@ jobs:
           # Only a 404 means unpublished: a failed lookup isn't a reason to
           # publish. Trusted publishing needs the package to exist, so the
           # first publish is made by hand, as for crates.io.
-          pkg="$(curl -s -o /dev/null -w '%{http_code}' https://registry.npmjs.org/zero-rust)"
+          pkg="$(curl -sS --retry 3 --retry-all-errors -o /dev/null -w '%{http_code}' https://registry.npmjs.org/zero-rust)"
           case "$pkg" in
             200)
-              npm="$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/zero-rust/$version")"
+              npm="$(curl -sS --retry 3 --retry-all-errors -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/zero-rust/$version")"
               case "$npm" in
                 200) echo "npm=false" >> "$GITHUB_OUTPUT" ;;
                 404) echo "npm=true" >> "$GITHUB_OUTPUT" ;;
@@ -116,7 +118,7 @@ jobs:
           esac
           # crates.io asks for a User-Agent that says who is asking.
           ua='wevm/zero rust-release (https://github.com/wevm/zero)'
-          crate="$(curl -s -o /dev/null -w '%{http_code}' -A "$ua" https://crates.io/api/v1/crates/zero-client)"
+          crate="$(curl -sS --retry 3 --retry-all-errors -o /dev/null -w '%{http_code}' -A "$ua" https://crates.io/api/v1/crates/zero-client)"
           case "$crate" in
             200) ;;
             404)
@@ -128,7 +130,7 @@ jobs:
               ;;
             *) echo "Looking up zero-client on crates.io returned HTTP $crate." >&2; exit 1 ;;
           esac
-          published="$(curl -s -o /dev/null -w '%{http_code}' -A "$ua" "https://crates.io/api/v1/crates/zero-client/$version")"
+          published="$(curl -sS --retry 3 --retry-all-errors -o /dev/null -w '%{http_code}' -A "$ua" "https://crates.io/api/v1/crates/zero-client/$version")"
           case "$published" in
             200) echo "crates=false" >> "$GITHUB_OUTPUT" ;;
             404) echo "crates=true" >> "$GITHUB_OUTPUT" ;;
