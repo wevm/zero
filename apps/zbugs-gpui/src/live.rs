@@ -12,9 +12,10 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use zbugs_model::Context as Auth;
 use zero_client::client::{MaterializedView, Zero};
+use zero_client::define::QueryRequest;
 use zero_client::ivm::ResultType;
 use zero_client::ttl::Ttl;
-use zero_client::typed::{Query, QueryValue};
+use zero_client::typed::QueryValue;
 
 pub struct Live<T> {
     value: Rc<RefCell<Snapshot<T>>>,
@@ -34,7 +35,7 @@ impl<T: QueryValue + 'static> Live<T> {
     /// rows change, until dropped.
     pub fn new<R: 'static, V: 'static>(
         zero: &Zero<Auth>,
-        query: Query<R, T>,
+        query: QueryRequest<Auth, R, T>,
         ttl: &Ttl,
         cx: &mut Context<V>,
     ) -> Live<T> {
@@ -45,7 +46,7 @@ impl<T: QueryValue + 'static> Live<T> {
         }));
         let (wake, mut woken) = mpsc::unbounded::<()>();
         let view = zero
-            .materialize(query.any(), ttl)
+            .materialize(&query, ttl)
             .expect("a query of the app's schema materializes");
         let v = value.clone();
         let remove = view.add_listener(move |data, result_type, _| {

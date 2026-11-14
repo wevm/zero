@@ -220,7 +220,7 @@ impl<C: 'static> Zero<C> {
     /// synced from the server; an unnamed one only sees local data.
     pub fn materialize(
         &self,
-        query: &impl ZeroQuery<C>,
+        query: &(impl ZeroQuery<C> + ?Sized),
         ttl: &Ttl,
     ) -> Result<MaterializedView, Error> {
         let query = query.any_query(self.context());
@@ -240,7 +240,7 @@ impl<C: 'static> Zero<C> {
     /// it, so waiting for `Complete` or `Cached` never settles.
     pub fn run(
         &self,
-        query: &impl ZeroQuery<C>,
+        query: &(impl ZeroQuery<C> + ?Sized),
         run_type: RunType,
         ttl: Option<&Ttl>,
     ) -> Deferred<ViewValue> {
@@ -252,7 +252,7 @@ impl<C: 'static> Zero<C> {
     /// Keeps the query's rows synced without a view, until `cleanup`.
     /// Preloading an unnamed query does nothing. JS's default `ttl` for a
     /// preload is [`Ttl::DEFAULT_PRELOAD`], not `Ttl::default()`.
-    pub fn preload(&self, query: &impl ZeroQuery<C>, ttl: &Ttl) -> Preload {
+    pub fn preload(&self, query: &(impl ZeroQuery<C> + ?Sized), ttl: &Ttl) -> Preload {
         let query = query.any_query(self.context());
         let e = self.engine();
         let preload = e.event_loop.call(|| e.context.preload(&query, ttl));

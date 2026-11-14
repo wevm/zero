@@ -17,11 +17,13 @@ and depends on this crate by path.
 use zbugs_model::args::{IssueListV2Args, ListContextParams, PageDirection};
 use zbugs_model::{mutators, queries};
 
-let list = queries::ISSUE_LIST_V2.call(&args, auth.as_ref()); // a typed Query<Issue>, named
-let view = zero.materialize(list.any(), &ttl)?;
+// `define_query` and `define_mutator` definitions; the client's context
+// (the logged-in user) comes from `zero`.
+let list = queries::ISSUE_LIST_V2.with(args);
+let view = zero.materialize(&list, &ttl)?;
 let issues = list.read(&view.data())?;
 
-mutators::CREATE_ISSUE.with(&create_args).run(&zero);
+zero.mutate_request(mutators::CREATE_ISSUE.with(create_args));
 // Zero::new(schema::schema(), auth, zbugs_model::client_mutators(), …)
 ```
 

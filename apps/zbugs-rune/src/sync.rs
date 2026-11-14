@@ -19,12 +19,13 @@ use zero_client::client::{
     ConnectionState, MaterializedView, MutationOutcome, Mutator, MutatorResult, Preload, Zero,
     ZeroOptions, ZeroStorage,
 };
+use zero_client::define::QueryRequest;
 use zero_client::ivm::ResultType;
-use zero_client::query::AnyQuery;
+use zero_client::query::ZeroQuery;
 use zero_client::schema::Schema;
 use zero_client::tokio_transport::{TokioScheduler, TokioSocketFactory};
 use zero_client::ttl::Ttl;
-use zero_client::typed::{Query, QueryValue};
+use zero_client::typed::QueryValue;
 
 /// The app's state, which the sync thread updates.
 pub type Ui<S> = AppHandle<S>;
@@ -61,7 +62,7 @@ pub struct Setup<C: 'static> {
     pub schema: fn() -> Arc<Schema>,
     pub mutators: fn() -> Vec<Mutator<C>>,
     /// The queries to keep synced for a client's life, as zbugs preloads.
-    pub preload: fn(&C) -> Vec<AnyQuery>,
+    pub preload: fn() -> Vec<Box<dyn ZeroQuery<C>>>,
     /// Keeps local stores of one app apart from another's.
     pub storage_key: &'static str,
     /// Where the SQLite replica is kept.
@@ -115,7 +116,7 @@ impl<S: 'static, C: Clone + Send + 'static> SyncThread<S, C> {
     pub fn watch<R: 'static, T: QueryValue + Send + 'static>(
         &self,
         slot: &'static str,
-        query: impl Fn(&C) -> Query<R, T> + Send + 'static,
+        query: QueryRequest<C, R, T>,
         apply: fn(&mut S, T, ResultType, &mut rune::Tx),
     ) {
         self.send(move |w| w.watch(slot, query, apply));
@@ -278,9 +279,9 @@ impl<S: 'static, C: Clone + 'static> Worker<S, C> {
             }
         };
         let ttl = Ttl::seconds(10.0);
-        let preloads = (self.setup.preload)(&session.context)
+        let preloads = (self.setup.preload)()
             .iter()
-            .map(|q| zero.preload(q, &ttl))
+            .map(|q| zero.preload(q.as_ref(), &ttl))
             .collect();
         let (ui, f) = (self.ui.clone(), self.on_connection);
         let state = zero.connection().state();
@@ -303,16 +304,15 @@ impl<S: 'static, C: Clone + 'static> Worker<S, C> {
     fn watch<R: 'static, T: QueryValue + Send + 'static>(
         &mut self,
         slot: &'static str,
-        query: impl Fn(&C) -> Query<R, T> + Send + 'static,
+        query: QueryRequest<C, R, T>,
         apply: fn(&mut S, T, ResultType, &mut rune::Tx),
     ) {
         let ui = self.ui.clone();
         // Built for each client, with its context: logging in changes what
         // a query asks for.
         let remake: Remake<C> = Rc::new(move |zero| {
-            let query = query(zero.context());
-            let view = zero.materialize(query.any(), &Ttl::seconds(10.0)).ok()?;
-            let ui = ui.clone();
+            let view = zero.materialize(&query, &Ttl::seconds(10.0)).ok()?;
+            let (ui, query) = (ui.clone(), query.clone());
             let remove = view.add_listener(move |data, result_type, _| {
                 // Rows the generated types can't read are a bug of the
                 // port; say so rather than show nothing.

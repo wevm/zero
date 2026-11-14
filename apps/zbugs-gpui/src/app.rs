@@ -31,8 +31,8 @@ use std::rc::Rc;
 use zbugs_model::args::*;
 use zbugs_model::mutators::{
     ADD_COMMENT, ADD_EMOJI_TO_COMMENT, ADD_EMOJI_TO_ISSUE, ADD_LABEL, CREATE_AND_ADD_LABEL,
-    CREATE_ISSUE, DELETE_ISSUE, DELETE_ISSUES, EDIT_COMMENT, MutateRequest, REMOVE_COMMENT,
-    REMOVE_EMOJI, REMOVE_LABEL, SET_USER_PREF, SET_VIEW_STATE, UPDATE_ISSUE, UPDATE_NOTIFICATION,
+    CREATE_ISSUE, DELETE_ISSUE, DELETE_ISSUES, EDIT_COMMENT, REMOVE_COMMENT, REMOVE_EMOJI,
+    REMOVE_LABEL, SET_USER_PREF, SET_VIEW_STATE, UPDATE_ISSUE, UPDATE_NOTIFICATION,
 };
 use zbugs_model::queries::{
     ALL_PROJECTS, COMMENTS_PAGE, ISSUE_DETAIL, ISSUE_LIST_COUNT, ISSUE_LIST_V2, LABELS, USER,
@@ -40,7 +40,7 @@ use zbugs_model::queries::{
 };
 use zbugs_model::schema::{Comment, Emoji, Issue, IssueVisibility, Label, Project, User, UserPref};
 use zbugs_model::{AuthData, ZERO_PROJECT_NAME, make_id};
-use zero_client::client::{ConnectionState, MutationOutcome};
+use zero_client::client::{ConnectionState, MutateRequest, MutationOutcome};
 use zero_client::ttl::Ttl;
 
 /// Rows the list asks for at a time, as zbugs' list pages.
@@ -468,16 +468,15 @@ impl ZbugsApp {
         });
 
         let (list, count) = Self::queries(&session, &filters, limit, cx);
-        let auth = session.auth.as_ref();
-        let projects = Live::new(&session.zero, ALL_PROJECTS.call(&(), auth), &ttl(), cx);
+        let projects = Live::new(&session.zero, ALL_PROJECTS.with(()), &ttl(), cx);
         let (creators, assignees, crew, labels) =
             Self::project_lives(&session, &filters.project, cx);
         let me = session
             .auth
             .as_ref()
-            .map(|a| Live::new(&session.zero, USER.call(&a.sub, Some(a)), &ttl(), cx));
-        let skin_tone = session.auth.as_ref().map(|a| {
-            let q = USER_PREF.call(&SKIN_TONE_PREF.to_owned(), Some(a));
+            .map(|a| Live::new(&session.zero, USER.with(a.sub.clone()), &ttl(), cx));
+        let skin_tone = session.auth.as_ref().map(|_| {
+            let q = USER_PREF.with(SKIN_TONE_PREF.to_owned());
             Live::new(&session.zero, q, &ttl(), cx)
         });
         // A zero-cache address the client can't take, from the environment
@@ -746,7 +745,7 @@ impl ZbugsApp {
             label_name: name,
             project_id: None,
         };
-        self.mutate(CREATE_AND_ADD_LABEL.with(&args), cx);
+        self.mutate(CREATE_AND_ADD_LABEL.with(args), cx);
         true
     }
 
@@ -883,7 +882,6 @@ impl ZbugsApp {
 
     /// The creators, assignees, crew, and labels of `project`.
     fn project_lives(session: &Session, project: &str, cx: &mut Context<Self>) -> ProjectLives {
-        let auth = session.auth.as_ref();
         let mut users = |filter| {
             let args = UsersForProjectArgs {
                 disabled: false,
@@ -891,12 +889,7 @@ impl ZbugsApp {
                 project_name: project.into(),
                 filter: Some(filter),
             };
-            Live::new(
-                &session.zero,
-                USERS_FOR_PROJECT.call(&args, auth),
-                &ttl(),
-                cx,
-            )
+            Live::new(&session.zero, USERS_FOR_PROJECT.with(args), &ttl(), cx)
         };
         let creators = users(UsersFilter::Creators);
         let assignees = users(UsersFilter::Assignees);
@@ -904,7 +897,7 @@ impl ZbugsApp {
         let args = ProjectArgs {
             project_name: project.into(),
         };
-        let labels = Live::new(&session.zero, LABELS.call(&args, auth), &ttl(), cx);
+        let labels = Live::new(&session.zero, LABELS.with(args), &ttl(), cx);
         (creators, assignees, crew, labels)
     }
 
@@ -962,19 +955,15 @@ impl ZbugsApp {
         limit: i64,
         cx: &mut Context<Self>,
     ) -> (Live<Vec<Issue>>, Live<i64>) {
-        let auth = session.auth.as_ref();
         let list_context = Self::list_context(filters);
-        let list = ISSUE_LIST_V2.call(
-            &IssueListV2Args {
-                list_context: list_context.clone(),
-                limit: Some(limit),
-                start: None,
-                dir: PageDirection::Forward,
-                inclusive: None,
-            },
-            auth,
-        );
-        let count = ISSUE_LIST_COUNT.call(&IssueListCountArgs { list_context }, auth);
+        let list = ISSUE_LIST_V2.with(IssueListV2Args {
+            list_context: list_context.clone(),
+            limit: Some(limit),
+            start: None,
+            dir: PageDirection::Forward,
+            inclusive: None,
+        });
+        let count = ISSUE_LIST_COUNT.with(IssueListCountArgs { list_context });
         (
             Live::new(&session.zero, list, &ttl(), cx),
             Live::new(&session.zero, count, &ttl(), cx),
@@ -1034,13 +1023,10 @@ impl ZbugsApp {
         if self.selected.as_deref() == Some(id.as_str()) {
             return;
         }
-        let q = ISSUE_DETAIL.call(
-            &IssueDetailArgs {
-                id_field: IdField::Id,
-                id: IssueKey::String(id.clone()),
-            },
-            self.session.auth.as_ref(),
-        );
+        let q = ISSUE_DETAIL.with(IssueDetailArgs {
+            id_field: IdField::Id,
+            id: IssueKey::String(id.clone()),
+        });
         self.detail = Some(Live::new(&self.session.zero, q, &ttl(), cx));
         self.selected = Some(id);
         self.comments_limit = COMMENT_PAGE;
@@ -1105,7 +1091,7 @@ impl ZbugsApp {
             dir: PageDirection::Backward,
             inclusive: false,
         };
-        let q = COMMENTS_PAGE.call(&args, self.session.auth.as_ref());
+        let q = COMMENTS_PAGE.with(args);
         self.comment_page = Some(Live::new(&self.session.zero, q, &ttl(), cx));
         cx.notify();
     }
@@ -1113,7 +1099,7 @@ impl ZbugsApp {
     /// Runs a mutation and shows why it failed, on the client or the
     /// server.
     fn mutate(&mut self, request: MutateRequest, cx: &mut Context<Self>) {
-        let result = request.run(&self.session.zero);
+        let result = self.session.zero.mutate_request(request);
         if let Some(Ok(MutationOutcome::AppError { message, .. })) = result.client.result() {
             self.error = Some(message);
             cx.notify();
@@ -1203,12 +1189,12 @@ impl ZbugsApp {
             cx.notify();
             return false;
         }
-        self.mutate(EDIT_COMMENT.with(&EditCommentArgs { id, body }), cx);
+        self.mutate(EDIT_COMMENT.with(EditCommentArgs { id, body }), cx);
         true
     }
 
     fn delete_comment(&mut self, id: &String, cx: &mut Context<Self>) {
-        self.mutate(REMOVE_COMMENT.with(id), cx);
+        self.mutate(REMOVE_COMMENT.with(id.to_owned()), cx);
     }
 
     /// Asks before a delete, which `delete` does.
@@ -1252,7 +1238,7 @@ impl ZbugsApp {
     /// Deletes issue `id`, and leaves it if it's selected, as the web app
     /// goes back to the list.
     fn delete_issue(&mut self, id: &String, cx: &mut Context<Self>) {
-        self.mutate(DELETE_ISSUE.with(id), cx);
+        self.mutate(DELETE_ISSUE.with(id.to_owned()), cx);
         self.leave_deleted(std::slice::from_ref(id), cx);
     }
 
@@ -1296,7 +1282,7 @@ impl ZbugsApp {
             return;
         };
         let ids = checked.into_iter().collect::<Vec<_>>();
-        self.mutate(DELETE_ISSUES.with(&ids), cx);
+        self.mutate(DELETE_ISSUES.with(ids.clone()), cx);
         self.leave_deleted(&ids, cx);
     }
 
@@ -1322,7 +1308,7 @@ impl ZbugsApp {
             }),
             ..UpdateIssueArgs::new(issue_id, now_ms())
         };
-        self.mutate(UPDATE_ISSUE.with(&args), cx);
+        self.mutate(UPDATE_ISSUE.with(args), cx);
     }
 
     fn set_subscribed(&mut self, issue_id: String, subscribe: bool, cx: &mut Context<Self>) {
@@ -1335,7 +1321,7 @@ impl ZbugsApp {
             },
             created: now_ms(),
         };
-        self.mutate(UPDATE_NOTIFICATION.with(&args), cx);
+        self.mutate(UPDATE_NOTIFICATION.with(args), cx);
     }
 
     /// Tells the user when someone else comments on or reacts to the
@@ -1466,7 +1452,7 @@ impl ZbugsApp {
                         issue_id: id,
                         viewed: now_ms().max(modified),
                     };
-                    this.mutate(SET_VIEW_STATE.with(&args), cx);
+                    this.mutate(SET_VIEW_STATE.with(args), cx);
                 }
                 this.mark_viewed(cx);
             });
@@ -1479,7 +1465,7 @@ impl ZbugsApp {
             open: Some(!issue.open),
             ..UpdateIssueArgs::new(issue.id.clone(), now_ms())
         };
-        self.mutate(UPDATE_ISSUE.with(&args), cx);
+        self.mutate(UPDATE_ISSUE.with(args), cx);
     }
 
     fn set_assignee(&mut self, issue_id: String, user_id: Option<String>, cx: &mut Context<Self>) {
@@ -1487,7 +1473,7 @@ impl ZbugsApp {
             assignee_id: Some(user_id),
             ..UpdateIssueArgs::new(issue_id, now_ms())
         };
-        self.mutate(UPDATE_ISSUE.with(&args), cx);
+        self.mutate(UPDATE_ISSUE.with(args), cx);
     }
 
     /// Adds the label to the issue, or takes it off when it has it.
@@ -1495,9 +1481,9 @@ impl ZbugsApp {
         let has = issue.labels.iter().flatten().any(|l| l.id == label_id);
         let issue_id = issue.id.clone();
         let request = if has {
-            REMOVE_LABEL.with(&RemoveLabelArgs { issue_id, label_id })
+            REMOVE_LABEL.with(RemoveLabelArgs { issue_id, label_id })
         } else {
-            ADD_LABEL.with(&IssueLabelArgs {
+            ADD_LABEL.with(IssueLabelArgs {
                 issue_id,
                 label_id,
                 project_id: None,
@@ -1522,7 +1508,7 @@ impl ZbugsApp {
             key: SKIN_TONE_PREF.to_owned(),
             value: tone.to_string(),
         };
-        self.mutate(SET_USER_PREF.with(&args), cx);
+        self.mutate(SET_USER_PREF.with(args), cx);
     }
 
     /// Takes back the user's reaction with `unicode`, or adds it.
@@ -1543,7 +1529,7 @@ impl ZbugsApp {
             .find(|e| e.creator_id == me && normalize_emoji(&e.value) == key)
         {
             let id = mine.id.clone();
-            self.mutate(REMOVE_EMOJI.with(&id), cx);
+            self.mutate(REMOVE_EMOJI.with(id), cx);
             return;
         }
         let annotation = REACTIONS
@@ -1569,7 +1555,7 @@ impl ZbugsApp {
             Subject::Issue => ADD_EMOJI_TO_ISSUE,
             Subject::Comment => ADD_EMOJI_TO_COMMENT,
         };
-        self.mutate(add.with(&args), cx);
+        self.mutate(add.with(args), cx);
     }
 
     /// Opens the picker with every emoji, to react with any of them.
@@ -1623,7 +1609,7 @@ impl ZbugsApp {
             body,
             created: now_ms(),
         };
-        self.mutate(ADD_COMMENT.with(&args), cx);
+        self.mutate(ADD_COMMENT.with(args), cx);
         self.comment
             .update(cx, |state, cx| state.set_value("", window, cx));
     }
@@ -1735,7 +1721,7 @@ impl ZbugsApp {
                     description: Some(description),
                     ..UpdateIssueArgs::new(id, now)
                 };
-                self.mutate(UPDATE_ISSUE.with(&args), cx);
+                self.mutate(UPDATE_ISSUE.with(args), cx);
             }
             None => {
                 let Some(project_id) = self.project_id() else {
@@ -1755,7 +1741,7 @@ impl ZbugsApp {
                     modified: now,
                     project_id,
                 };
-                self.mutate(CREATE_ISSUE.with(&args), cx);
+                self.mutate(CREATE_ISSUE.with(args), cx);
                 self.select(id, cx);
             }
         }

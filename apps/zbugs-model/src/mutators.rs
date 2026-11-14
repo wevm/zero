@@ -8,90 +8,15 @@ use crate::schema::{
     Comment, CommentUpdate, Emoji, EmojiKey, Issue, IssueKey, IssueLabel, IssueLabelKey,
     IssueNotifications, IssueUpdate, IssueVisibility, Label, UserPref, ViewState, mutate, zql,
 };
-use serde::Serialize;
-use serde::de::DeserializeOwned;
-use zero_client::client::{Error, Mutator, MutatorResult, Transaction, Zero};
-use zero_client::json::Value;
+use zero_client::client::{Error, Mutator, Transaction};
+use zero_client::define::{MutatorDefinition, NamedMutator, define_mutator};
 use zero_client::typed::{ColumnUpdate, RelationshipAggregates};
 
 /// What a mutator is given besides its arguments: who is logged in.
 pub type Context = Option<AuthData>;
 
-type Body<A> = fn(&Transaction, A, Option<&AuthData>) -> Result<(), Error>;
-
-/// A mutator with typed arguments (`defineMutator`).
-pub struct MutatorDef<A> {
-    pub name: &'static str,
-    body: Body<A>,
-}
-
-/// A mutation to run: the mutator's name and its arguments as JSON, for
-/// `Zero::mutate`.
-#[derive(Clone, Debug, PartialEq)]
-pub struct MutateRequest {
-    pub name: &'static str,
-    pub args: Value,
-}
-
-impl MutateRequest {
-    /// Runs the mutation on `zero`: optimistically now, then on the server.
-    pub fn run(self, zero: &Zero<Context>) -> MutatorResult {
-        zero.mutate(self.name, Some(self.args))
-    }
-}
-
-impl<A: Serialize> MutatorDef<A> {
-    /// The mutation of this mutator with `args`.
-    pub fn with(&self, args: &A) -> MutateRequest {
-        MutateRequest {
-            name: self.name,
-            args: to_value(args),
-        }
-    }
-}
-
-impl<A: Serialize + DeserializeOwned + 'static> MutatorDef<A> {
-    /// The client's mutator: reads the JSON arguments as `A`.
-    pub fn mutator(&self) -> Mutator<Context> {
-        let body = self.body;
-        Mutator::new(self.name, move |tx, args, auth: &Context| {
-            let args: A = from_value(args.unwrap_or(&Value::Null))
-                .map_err(zero_client::client::ApplicationError::new)?;
-            body(tx, args, auth.as_ref())?;
-            Ok(None)
-        })
-    }
-
-    /// `args` read as `A` and written back, for the drift test.
-    pub fn reencode(&self, args: Option<&Value>) -> Result<Value, String> {
-        let a: A = from_value(args.unwrap_or(&Value::Null))?;
-        Ok(to_value(&a))
-    }
-}
-
-/// Reads JSON arguments and writes them back.
-pub type Reencode = Box<dyn Fn(Option<&Value>) -> Result<Value, String>>;
-
-/// A mutator of every definition, for the client and the drift test.
-pub struct AnyMutator {
-    pub name: &'static str,
-    pub mutator: Mutator<Context>,
-    pub reencode: Reencode,
-}
-
-fn erase<A: Serialize + DeserializeOwned + 'static>(def: MutatorDef<A>) -> AnyMutator {
-    let mutator = def.mutator();
-    let name = def.name;
-    AnyMutator {
-        name,
-        mutator,
-        reencode: Box::new(move |args| def.reencode(args)),
-    }
-}
-
-pub const CREATE_ISSUE: MutatorDef<CreateIssueArgs> = MutatorDef {
-    name: "issue.create",
-    body: |tx, args, auth| {
+pub const CREATE_ISSUE: MutatorDefinition<CreateIssueArgs, Context> =
+    define_mutator("issue.create", |tx, args, auth| {
         let auth = assert_is_logged_in(auth)?;
         mutate::issue(tx).insert(&Issue {
             id: args.id.clone(),
@@ -125,12 +50,10 @@ pub const CREATE_ISSUE: MutatorDef<CreateIssueArgs> = MutatorDef {
             args.created,
             false,
         )
-    },
-};
+    });
 
-pub const UPDATE_ISSUE: MutatorDef<UpdateIssueArgs> = MutatorDef {
-    name: "issue.update",
-    body: |tx, change, auth| {
+pub const UPDATE_ISSUE: MutatorDefinition<UpdateIssueArgs, Context> =
+    define_mutator("issue.update", |tx, change, auth| {
         // Authorization comes first, so the error does not tell whether a
         // private issue exists.
         assert_is_creator_or_admin(tx, auth, zql::issue(), &change.id)?;
@@ -189,22 +112,18 @@ pub const UPDATE_ISSUE: MutatorDef<UpdateIssueArgs> = MutatorDef {
             )?;
         }
         Ok(())
-    },
-};
+    });
 
-pub const DELETE_ISSUE: MutatorDef<String> = MutatorDef {
-    name: "issue.delete",
-    body: |tx, id, auth| {
+pub const DELETE_ISSUE: MutatorDefinition<String, Context> =
+    define_mutator("issue.delete", |tx, id, auth| {
         assert_is_creator_or_admin(tx, auth, zql::issue(), &id)?;
         mutate::issue(tx).delete(&IssueKey { id })
-    },
-};
+    });
 
 /// Deletes the issues if the user created every one of them (or is an
 /// admin); otherwise none.
-pub const DELETE_ISSUES: MutatorDef<Vec<String>> = MutatorDef {
-    name: "issue.deleteMany",
-    body: |tx, ids, auth| {
+pub const DELETE_ISSUES: MutatorDefinition<Vec<String>, Context> =
+    define_mutator("issue.deleteMany", |tx, ids, auth| {
         assert_is_logged_in(auth)?;
         for id in &ids {
             assert_is_creator_or_admin(tx, auth, zql::issue(), id)?;
@@ -213,32 +132,26 @@ pub const DELETE_ISSUES: MutatorDef<Vec<String>> = MutatorDef {
             mutate::issue(tx).delete(&IssueKey { id })?;
         }
         Ok(())
-    },
-};
+    });
 
-pub const ADD_LABEL: MutatorDef<IssueLabelArgs> = MutatorDef {
-    name: "issue.addLabel",
-    body: |tx, args, auth| {
+pub const ADD_LABEL: MutatorDefinition<IssueLabelArgs, Context> =
+    define_mutator("issue.addLabel", |tx, args, auth| {
         assert_is_creator_or_admin(tx, auth, zql::issue(), &args.issue_id)?;
         let project_id = issue_project_id(tx, &args.issue_id)?;
         mutate::issue_label(tx).insert(&issue_label(args.issue_id, args.label_id, project_id))
-    },
-};
+    });
 
-pub const REMOVE_LABEL: MutatorDef<RemoveLabelArgs> = MutatorDef {
-    name: "issue.removeLabel",
-    body: |tx, args, auth| {
+pub const REMOVE_LABEL: MutatorDefinition<RemoveLabelArgs, Context> =
+    define_mutator("issue.removeLabel", |tx, args, auth| {
         assert_is_creator_or_admin(tx, auth, zql::issue(), &args.issue_id)?;
         mutate::issue_label(tx).delete(&IssueLabelKey {
             label_id: args.label_id,
             issue_id: args.issue_id,
         })
-    },
-};
+    });
 
-pub const UPDATE_NOTIFICATION: MutatorDef<NotificationUpdateArgs> = MutatorDef {
-    name: "notification.update",
-    body: |tx, args, auth| {
+pub const UPDATE_NOTIFICATION: MutatorDefinition<NotificationUpdateArgs, Context> =
+    define_mutator("notification.update", |tx, args, auth| {
         let auth = assert_is_logged_in(auth)?;
         update_issue_notification(
             tx,
@@ -248,30 +161,26 @@ pub const UPDATE_NOTIFICATION: MutatorDef<NotificationUpdateArgs> = MutatorDef {
             args.created,
             true,
         )
-    },
-};
+    });
 
-pub const ADD_EMOJI_TO_ISSUE: MutatorDef<AddEmojiArgs> = MutatorDef {
-    name: "emoji.addToIssue",
-    body: |tx, args, auth| add_emoji(tx, EmojiSubject::Issue, args, auth),
-};
+pub const ADD_EMOJI_TO_ISSUE: MutatorDefinition<AddEmojiArgs, Context> =
+    define_mutator("emoji.addToIssue", |tx, args, auth| {
+        add_emoji(tx, EmojiSubject::Issue, args, auth)
+    });
 
-pub const ADD_EMOJI_TO_COMMENT: MutatorDef<AddEmojiArgs> = MutatorDef {
-    name: "emoji.addToComment",
-    body: |tx, args, auth| add_emoji(tx, EmojiSubject::Comment, args, auth),
-};
+pub const ADD_EMOJI_TO_COMMENT: MutatorDefinition<AddEmojiArgs, Context> =
+    define_mutator("emoji.addToComment", |tx, args, auth| {
+        add_emoji(tx, EmojiSubject::Comment, args, auth)
+    });
 
-pub const REMOVE_EMOJI: MutatorDef<String> = MutatorDef {
-    name: "emoji.remove",
-    body: |tx, id, auth| {
+pub const REMOVE_EMOJI: MutatorDefinition<String, Context> =
+    define_mutator("emoji.remove", |tx, id, auth| {
         assert_is_creator_or_admin(tx, auth, zql::emoji(), &id)?;
         mutate::emoji(tx).delete(&EmojiKey { id })
-    },
-};
+    });
 
-pub const ADD_COMMENT: MutatorDef<AddCommentArgs> = MutatorDef {
-    name: "comment.add",
-    body: |tx, args, auth| {
+pub const ADD_COMMENT: MutatorDefinition<AddCommentArgs, Context> =
+    define_mutator("comment.add", |tx, args, auth| {
         let creator_id = assert_is_logged_in(auth)?.sub.clone();
         assert_user_can_see_issue(tx, &creator_id, &args.issue_id)?;
         mutate::comment(tx).insert(&Comment {
@@ -293,31 +202,25 @@ pub const ADD_COMMENT: MutatorDef<AddCommentArgs> = MutatorDef {
             args.created,
             false,
         )
-    },
-};
+    });
 
-pub const EDIT_COMMENT: MutatorDef<EditCommentArgs> = MutatorDef {
-    name: "comment.edit",
-    body: |tx, args, auth| {
+pub const EDIT_COMMENT: MutatorDefinition<EditCommentArgs, Context> =
+    define_mutator("comment.edit", |tx, args, auth| {
         assert_is_creator_or_admin(tx, auth, zql::comment(), &args.id)?;
         mutate::comment(tx).update(&CommentUpdate {
             body: Some(args.body),
             ..CommentUpdate::new(args.id)
         })
-    },
-};
+    });
 
-pub const REMOVE_COMMENT: MutatorDef<String> = MutatorDef {
-    name: "comment.remove",
-    body: |tx, id, auth| {
+pub const REMOVE_COMMENT: MutatorDefinition<String, Context> =
+    define_mutator("comment.remove", |tx, id, auth| {
         assert_is_creator_or_admin(tx, auth, zql::comment(), &id)?;
         mutate::comment(tx).delete(&crate::schema::CommentKey { id })
-    },
-};
+    });
 
-pub const CREATE_LABEL: MutatorDef<CreateLabelArgs> = MutatorDef {
-    name: "label.create",
-    body: |tx, args, auth| {
+pub const CREATE_LABEL: MutatorDefinition<CreateLabelArgs, Context> =
+    define_mutator("label.create", |tx, args, auth| {
         if !is_admin(auth)? {
             return Err(mutation_error(
                 "Only admins can create labels",
@@ -326,12 +229,10 @@ pub const CREATE_LABEL: MutatorDef<CreateLabelArgs> = MutatorDef {
             ));
         }
         mutate::label(tx).insert(&label(args.id, args.name, args.project_id))
-    },
-};
+    });
 
-pub const CREATE_AND_ADD_LABEL: MutatorDef<CreateAndAddLabelArgs> = MutatorDef {
-    name: "label.createAndAddToIssue",
-    body: |tx, args, auth| {
+pub const CREATE_AND_ADD_LABEL: MutatorDefinition<CreateAndAddLabelArgs, Context> =
+    define_mutator("label.createAndAddToIssue", |tx, args, auth| {
         if !is_admin(auth)? {
             return Err(mutation_error(
                 "Only admins can create labels",
@@ -346,59 +247,54 @@ pub const CREATE_AND_ADD_LABEL: MutatorDef<CreateAndAddLabelArgs> = MutatorDef {
             project_id.clone(),
         ))?;
         mutate::issue_label(tx).insert(&issue_label(args.issue_id, args.label_id, project_id))
-    },
-};
+    });
 
-pub const SET_VIEW_STATE: MutatorDef<ViewStateArgs> = MutatorDef {
-    name: "viewState.set",
-    body: |tx, args, auth| {
+pub const SET_VIEW_STATE: MutatorDefinition<ViewStateArgs, Context> =
+    define_mutator("viewState.set", |tx, args, auth| {
         let user_id = assert_is_logged_in(auth)?.sub.clone();
         mutate::view_state(tx).upsert(&ViewState {
             issue_id: args.issue_id,
             user_id,
             viewed: args.viewed,
         })
-    },
-};
+    });
 
-pub const SET_USER_PREF: MutatorDef<UserPrefArgs> = MutatorDef {
-    name: "userPref.set",
-    body: |tx, args, auth| {
+pub const SET_USER_PREF: MutatorDefinition<UserPrefArgs, Context> =
+    define_mutator("userPref.set", |tx, args, auth| {
         let user_id = assert_is_logged_in(auth)?.sub.clone();
         mutate::user_pref(tx).upsert(&UserPref {
             key: args.key,
             user_id,
             value: args.value,
         })
-    },
-};
+    });
 
 /// Every mutator, for the client and the drift test.
-pub fn all() -> Vec<AnyMutator> {
+pub fn all() -> Vec<Box<dyn NamedMutator<Context>>> {
     vec![
-        erase(CREATE_ISSUE),
-        erase(UPDATE_ISSUE),
-        erase(DELETE_ISSUE),
-        erase(DELETE_ISSUES),
-        erase(ADD_LABEL),
-        erase(REMOVE_LABEL),
-        erase(UPDATE_NOTIFICATION),
-        erase(ADD_EMOJI_TO_ISSUE),
-        erase(ADD_EMOJI_TO_COMMENT),
-        erase(REMOVE_EMOJI),
-        erase(ADD_COMMENT),
-        erase(EDIT_COMMENT),
-        erase(REMOVE_COMMENT),
-        erase(CREATE_LABEL),
-        erase(CREATE_AND_ADD_LABEL),
-        erase(SET_VIEW_STATE),
-        erase(SET_USER_PREF),
+        Box::new(CREATE_ISSUE),
+        Box::new(UPDATE_ISSUE),
+        Box::new(DELETE_ISSUE),
+        Box::new(DELETE_ISSUES),
+        Box::new(ADD_LABEL),
+        Box::new(REMOVE_LABEL),
+        Box::new(UPDATE_NOTIFICATION),
+        Box::new(ADD_EMOJI_TO_ISSUE),
+        Box::new(ADD_EMOJI_TO_COMMENT),
+        Box::new(REMOVE_EMOJI),
+        Box::new(ADD_COMMENT),
+        Box::new(EDIT_COMMENT),
+        Box::new(REMOVE_COMMENT),
+        Box::new(CREATE_LABEL),
+        Box::new(CREATE_AND_ADD_LABEL),
+        Box::new(SET_VIEW_STATE),
+        Box::new(SET_USER_PREF),
     ]
 }
 
 /// The client's mutators: every one, so pending mutations replay by name.
 pub fn client_mutators() -> Vec<Mutator<Context>> {
-    all().into_iter().map(|m| m.mutator).collect()
+    all().iter().map(|m| m.mutator()).collect()
 }
 
 fn label(id: String, name: String, project_id: String) -> Label {
@@ -447,7 +343,7 @@ fn add_emoji(
     tx: &Transaction,
     subject: EmojiSubject,
     args: AddEmojiArgs,
-    auth: Option<&AuthData>,
+    auth: &Context,
 ) -> Result<(), Error> {
     let creator_id = assert_is_logged_in(auth)?.sub.clone();
     match subject {
