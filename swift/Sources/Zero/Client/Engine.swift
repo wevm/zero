@@ -75,6 +75,10 @@ public struct ZeroOptions: Sendable {
   /// hydration), with its listener calls. It must call the function it is
   /// given, once, before it returns.
   public var batchViewUpdates: (@MainActor @Sendable (() -> Void) -> Void)?
+  /// How long, in milliseconds, a query may take to materialize, until the
+  /// server has sent its rows, before a warning is logged
+  /// (`slowMaterializeThreshold`). Faster ones are logged at debug level.
+  public var slowMaterializeThreshold: Double = 5_000
 
   public init(
     cacheURL: String? = nil, userID: String? = nil, auth: String? = nil,
@@ -145,6 +149,8 @@ final class Engine {
   private(set) var mutationTracker: MutationTracker!
   private(set) var queryManager: QueryManager!
   private var pokeHandler: PokeHandler!
+  /// The inspector's requests (`zero.inspector`).
+  let inspectRPCs = InspectRPCs()
 
   /// The current token: `options.auth`, then the last one `connect(auth:)` set.
   private(set) var auth: String?
@@ -302,12 +308,17 @@ final class Engine {
       closedReason: { [weak self] in
         guard case .closed(let reason) = self?.connectionManager.state else { return nil }
         return reason
-      })
+      },
+      addMetric: { [weak self] metric, value, queryID, ast in
+        self?.queryManager.addMetric(metric, value, queryID: queryID, ast: ast)
+      },
+      monotonicNow: { [scheduler] in scheduler.monotonicNow })
     _ = connectionManager.subscribe { [weak self] state in self?.onConnectionStateChange(state) }
     onConnectionStateChange(connectionManager.state)
     queryManager = QueryManager(
       clientID: clientID, schema: schema, mutationTracker: mutationTracker, scheduler: scheduler,
       queryChangeThrottleMs: options.queryChangeThrottleMs, recentQueriesMaxSize: 0,
+      slowMaterializeThreshold: options.slowMaterializeThreshold, log: log,
       send: { [weak self] body in
         guard let self else { return }
         var body = body
@@ -915,6 +926,7 @@ final class Engine {
     connectedAt = nil
     socket?.close(code: closeCode)
     socket = nil
+    inspectRPCs.connectionLost(reason)
     lastMutationIDsSent.removeAll()
     pokeHandler.handleDisconnect()
     queryManager.clearGotQueriesAuthoritative()
@@ -1047,8 +1059,8 @@ final class Engine {
         try mutationTracker.processPushResponse(body)
       case .transformError(let errors):
         queryManager.handleTransformErrors(errors)
-      case .inspect:
-        break
+      case .inspect(let body):
+        inspectRPCs.receive(body)
       }
     } catch {
       disconnect(.client(.internal, message: errorMessage(error)))
@@ -1265,6 +1277,44 @@ final class Engine {
     database.release()
     database.removeWriteFailureListener(clientID)
     connectionManager.closed()
+    inspectRPCs.clientClosed()
+  }
+
+  /// The socket of the connection, once the current attempt has made it
+  /// (the inspector's `getSocket`).
+  func inspectorSocket(_ done: @escaping (Result<SocketHandle, InspectorError>) -> Void) {
+    if repClosed { return done(.failure(.clientClosed)) }
+    // Swift only: JS waits for a connection that never comes.
+    if socketOrigin == nil {
+      return done(.failure(.connectionLost("No server socket origin provided")))
+    }
+    let waiter = inspectRPCs.addSocketWaiter(done)
+    connectionReady.onSettle(loop) { [weak self] connected in
+      guard let self, let done = self.inspectRPCs.takeSocketWaiter(waiter) else { return }
+      if connected, let socket = self.socket {
+        done(.success(socket))
+      } else {
+        let reason =
+          Self.connectionError(self.connectionManager.state)
+          ?? self.connectionManager.state.reason
+        done(.failure(.connectionLost(reason?.message ?? "Not connected")))
+      }
+    }
+  }
+
+  /// Sends an inspector request on `socket`, which must still be the
+  /// connection's, and calls `done` with its response.
+  func sendInspect(
+    _ socket: SocketHandle, _ body: InspectUpBody,
+    _ done: @escaping (Result<InspectDownBody, InspectorError>) -> Void
+  ) {
+    if repClosed { return done(.failure(.clientClosed)) }
+    guard socket === self.socket else {
+      return done(
+        .failure(.connectionLost(connectionManager.state.reason?.message ?? "Disconnected")))
+    }
+    inspectRPCs.expect(body.id, done)
+    socket.send(Upstream.inspect(body).text)
   }
 
   // MARK: - Storage and the client lifecycle
