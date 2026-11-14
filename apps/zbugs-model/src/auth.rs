@@ -107,8 +107,8 @@ pub(crate) fn must<T>(value: Option<T>) -> Result<T, Error> {
     value.ok_or_else(|| ApplicationError::new("Unexpected undefined value").into())
 }
 
-pub(crate) fn assert_is_logged_in(auth: Option<&AuthData>) -> Result<&AuthData, Error> {
-    auth.ok_or_else(|| {
+pub(crate) fn assert_is_logged_in(auth: &Option<AuthData>) -> Result<&AuthData, Error> {
+    auth.as_ref().ok_or_else(|| {
         mutation_error(
             "User must be logged in for this operation",
             MutationErrorCode::NotLoggedIn,
@@ -117,7 +117,7 @@ pub(crate) fn assert_is_logged_in(auth: Option<&AuthData>) -> Result<&AuthData, 
     })
 }
 
-pub(crate) fn is_admin(auth: Option<&AuthData>) -> Result<bool, Error> {
+pub(crate) fn is_admin(auth: &Option<AuthData>) -> Result<bool, Error> {
     Ok(assert_is_logged_in(auth)?.is_crew())
 }
 
@@ -157,7 +157,7 @@ impl Created for Emoji {
 
 pub(crate) fn assert_is_creator_or_admin<R: Created + zero_client::typed::OptionalQueryElement>(
     tx: &Transaction,
-    auth: Option<&AuthData>,
+    auth: &Option<AuthData>,
     query: Query<R>,
     id: &str,
 ) -> Result<(), Error> {

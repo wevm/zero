@@ -1,84 +1,21 @@
 //! The queries of `apps/zbugs/shared/queries.ts`. The drift test checks
 //! that each builds the same AST as its TS definition.
 //!
-//! Each is a [`NamedQuery`]: the client builds its AST for local results
-//! and sends its name and arguments, which zero-cache asks the API server
-//! to run with the TS definition.
+//! Each is a [`QueryDefinition`]: the client builds its AST for local
+//! results and sends its name and arguments, which zero-cache asks the API
+//! server to run with the TS definition.
 
 use crate::args::*;
-use crate::auth::AuthData;
+use crate::mutators::Context;
 use crate::schema::{
     Comment, Emoji, Issue, IssueLabel, Label, Project, User, UserPref, UserRole, ViewState, zql,
 };
+use zero_client::define::{NamedQuery, QueryDefinition, define_query};
 use zero_client::json::Value;
 use zero_client::like::escape_like;
 use zero_client::typed::{Condition, Direction, ExistsOptions, Query, SimpleOperator, ZeroRow};
 
 pub const ZERO_PROJECT_NAME: &str = "Zero";
-
-/// A query the server runs by name (`defineQuery`): `A` is its argument,
-/// `()` for none.
-pub struct NamedQuery<A, R, T = Vec<R>> {
-    pub name: &'static str,
-    build: fn(&A, Option<&AuthData>) -> Query<R, T>,
-    encode: fn(&A) -> Vec<Value>,
-}
-
-impl<A, R, T> NamedQuery<A, R, T> {
-    /// The query for `args`, as the logged-in user (`auth`) sees it.
-    pub fn call(&self, args: &A, auth: Option<&AuthData>) -> Query<R, T> {
-        let q = (self.build)(args, auth);
-        Query::from_any(q.into_any().name_and_args(self.name, (self.encode)(args)))
-    }
-}
-
-fn no_args(_: &()) -> Vec<Value> {
-    Vec::new()
-}
-
-fn one_arg<A: serde::Serialize>(args: &A) -> Vec<Value> {
-    vec![to_value(args)]
-}
-
-/// Builds a query from JSON arguments, with the arguments as encoded.
-pub type BuildAny =
-    Box<dyn Fn(&[Value], Option<&AuthData>) -> Result<(Query<()>, Vec<Value>), String>>;
-
-/// A query of every query's definition, for the drift test: from the JSON
-/// arguments, the query and the arguments as this side encodes them.
-pub struct AnyNamedQuery {
-    pub name: &'static str,
-    pub build: BuildAny,
-}
-
-fn erase<A: serde::de::DeserializeOwned + 'static, R: 'static, T: 'static>(
-    q: NamedQuery<A, R, T>,
-    decode: fn(&[Value]) -> Result<A, String>,
-) -> AnyNamedQuery {
-    AnyNamedQuery {
-        name: q.name,
-        build: Box::new(move |args, auth| {
-            let a = decode(args)?;
-            let built = q.call(&a, auth);
-            Ok((Query::from_any(built.into_any()), (q.encode)(&a)))
-        }),
-    }
-}
-
-fn decode_none(args: &[Value]) -> Result<(), String> {
-    if args.is_empty() {
-        Ok(())
-    } else {
-        Err(format!("expected no arguments, got {}", args.len()))
-    }
-}
-
-fn decode_one<A: serde::de::DeserializeOwned>(args: &[Value]) -> Result<A, String> {
-    match args {
-        [a] => from_value(a),
-        _ => Err(format!("expected one argument, got {}", args.len())),
-    }
-}
 
 /// The string when JS would take it as true: neither `None` nor empty.
 fn truthy(s: Option<&str>) -> Option<&str> {
@@ -142,18 +79,18 @@ fn labels_query(project_name: &str, order_by: Option<SortDirection>) -> Query<La
     }
 }
 
-fn role(auth: Option<&AuthData>) -> Option<UserRole> {
-    auth.map(|a| a.role)
+fn role(auth: &Context) -> Option<UserRole> {
+    auth.as_ref().map(|a| a.role)
 }
 
 /// The user's own rows of a per-user relationship, or none when logged
 /// out.
 fn own<R: ZeroRow, T>(
     q: Query<R, T>,
-    auth: Option<&AuthData>,
+    auth: &Context,
     user_id: zero_client::typed::Column<R, String>,
 ) -> Query<R, T> {
-    match truthy(auth.map(|a| a.sub.as_str())) {
+    match truthy(auth.as_ref().map(|a| a.sub.as_str())) {
         Some(sub) => q.where_eq(user_id, sub.to_owned()),
         None => always_false(q),
     }
@@ -173,56 +110,38 @@ fn crew(q: Query<User>) -> Query<User> {
     })
 }
 
-pub const ALL_LABELS: NamedQuery<(), Label> = NamedQuery {
-    name: "allLabels",
-    build: |_, _| zql::label(),
-    encode: no_args,
-};
+pub const ALL_LABELS: QueryDefinition<(), Context, Label> =
+    define_query("allLabels", |_, _| zql::label());
 
-pub const ALL_USERS: NamedQuery<(), User> = NamedQuery {
-    name: "allUsers",
-    build: |_, _| zql::user(),
-    encode: no_args,
-};
+pub const ALL_USERS: QueryDefinition<(), Context, User> =
+    define_query("allUsers", |_, _| zql::user());
 
-pub const ALL_PROJECTS: NamedQuery<(), Project> = NamedQuery {
-    name: "allProjects",
-    build: |_, _| zql::project(),
-    encode: no_args,
-};
+pub const ALL_PROJECTS: QueryDefinition<(), Context, Project> =
+    define_query("allProjects", |_, _| zql::project());
 
-pub const USER: NamedQuery<String, User, Option<User>> = NamedQuery {
-    name: "user",
-    build: |id, _| zql::user().where_eq(User::ID, id.clone()).one(),
-    encode: one_arg,
-};
+pub const USER: QueryDefinition<String, Context, User, Option<User>> =
+    define_query("user", |id, _| {
+        zql::user().where_eq(User::ID, id.clone()).one()
+    });
 
-pub const CREW_USER: NamedQuery<String, User, Option<User>> = NamedQuery {
-    name: "crewUser",
-    build: |id, _| {
+pub const CREW_USER: QueryDefinition<String, Context, User, Option<User>> =
+    define_query("crewUser", |id, _| {
         zql::user()
             .where_eq(User::ID, id.clone())
             .where_eq(User::ROLE, UserRole::Crew)
             .one()
-    },
-    encode: one_arg,
-};
+    });
 
-pub const LABELS: NamedQuery<ProjectArgs, Label> = NamedQuery {
-    name: "labels",
-    build: |a, _| labels_query(&a.project_name, None),
-    encode: one_arg,
-};
+pub const LABELS: QueryDefinition<ProjectArgs, Context, Label> =
+    define_query("labels", |a, _| labels_query(&a.project_name, None));
 
-pub const LABELS_ORDER_BY_NAME: NamedQuery<LabelsOrderByNameArgs, Label> = NamedQuery {
-    name: "labelsOrderByName",
-    build: |a, _| labels_query(&a.project_name, Some(a.order_by)),
-    encode: one_arg,
-};
+pub const LABELS_ORDER_BY_NAME: QueryDefinition<LabelsOrderByNameArgs, Context, Label> =
+    define_query("labelsOrderByName", |a, _| {
+        labels_query(&a.project_name, Some(a.order_by))
+    });
 
-pub const ISSUE_PRELOAD_V2: NamedQuery<ProjectArgs, Issue> = NamedQuery {
-    name: "issuePreloadV2",
-    build: |a, auth| {
+pub const ISSUE_PRELOAD_V2: QueryDefinition<ProjectArgs, Context, Issue> =
+    define_query("issuePreloadV2", |a, auth| {
         apply_issue_permissions(
             in_project(zql::issue(), Issue::PROJECT, &a.project_name)
                 .related(Issue::LABELS, |l| l)
@@ -241,28 +160,24 @@ pub const ISSUE_PRELOAD_V2: NamedQuery<ProjectArgs, Issue> = NamedQuery {
                 .limit(1000),
             role(auth),
         )
-    },
-    encode: one_arg,
-};
+    });
 
-pub const USER_PREF: NamedQuery<String, UserPref, Option<UserPref>> = NamedQuery {
-    name: "userPref",
-    build: |key, auth| {
+pub const USER_PREF: QueryDefinition<String, Context, UserPref, Option<UserPref>> =
+    define_query("userPref", |key, auth| {
         // `where('userID', auth?.sub)`: `= null` when logged out.
-        let sub = auth.map_or(Value::Null, |a| Value::from(a.sub.as_str()));
+        let sub = auth
+            .as_ref()
+            .map_or(Value::Null, |a| Value::from(a.sub.as_str()));
         where_named(
             zql::user_pref().where_eq(UserPref::KEY, key.clone()),
             "userID",
             sub,
         )
         .one()
-    },
-    encode: one_arg,
-};
+    });
 
-pub const USERS_FOR_PROJECT: NamedQuery<UsersForProjectArgs, User> = NamedQuery {
-    name: "usersForProject",
-    build: |a, _| {
+pub const USERS_FOR_PROJECT: QueryDefinition<UsersForProjectArgs, Context, User> =
+    define_query("usersForProject", |a, _| {
         let q = zql::user();
         if let (true, Some(login)) = (a.disabled, truthy(a.login.as_deref())) {
             return q.where_eq(User::LOGIN, login.to_owned());
@@ -282,15 +197,12 @@ pub const USERS_FOR_PROJECT: NamedQuery<UsersForProjectArgs, User> = NamedQuery 
             }
             None => q,
         }
-    },
-    encode: one_arg,
-};
+    });
 
 /// A page of an issue's comments, ordered by (created, id); a backward page
 /// flips the order. `start` is the cursor row.
-pub const COMMENTS_PAGE: NamedQuery<CommentsPageArgs, Comment> = NamedQuery {
-    name: "commentsPage",
-    build: |a, auth| {
+pub const COMMENTS_PAGE: QueryDefinition<CommentsPageArgs, Context, Comment> =
+    define_query("commentsPage", |a, auth| {
         let dir = match a.dir {
             PageDirection::Forward => Direction::Asc,
             PageDirection::Backward => Direction::Desc,
@@ -314,13 +226,10 @@ pub const COMMENTS_PAGE: NamedQuery<CommentsPageArgs, Comment> = NamedQuery {
             );
         }
         q.limit(a.limit)
-    },
-    encode: one_arg,
-};
+    });
 
-pub const COMMENT: NamedQuery<String, Comment, Option<Comment>> = NamedQuery {
-    name: "comment",
-    build: |id, auth| {
+pub const COMMENT: QueryDefinition<String, Context, Comment, Option<Comment>> =
+    define_query("comment", |id, auth| {
         apply_comment_permissions(
             zql::comment()
                 .related(Comment::CREATOR, |u| u)
@@ -329,13 +238,10 @@ pub const COMMENT: NamedQuery<String, Comment, Option<Comment>> = NamedQuery {
             role(auth),
         )
         .one()
-    },
-    encode: one_arg,
-};
+    });
 
-pub const ISSUE_DETAIL: NamedQuery<IssueDetailArgs, Issue, Option<Issue>> = NamedQuery {
-    name: "issueDetail",
-    build: |a, auth| {
+pub const ISSUE_DETAIL: QueryDefinition<IssueDetailArgs, Context, Issue, Option<Issue>> =
+    define_query("issueDetail", |a, auth| {
         apply_issue_permissions(
             where_named(zql::issue(), a.id_field.column(), a.id.json())
                 .related(Issue::PROJECT, |p| p)
@@ -361,51 +267,41 @@ pub const ISSUE_DETAIL: NamedQuery<IssueDetailArgs, Issue, Option<Issue>> = Name
                 .one(),
             role(auth),
         )
-    },
-    encode: one_arg,
-};
+    });
 
-pub const ISSUE_LIST_V2: NamedQuery<IssueListV2Args, Issue> = NamedQuery {
-    name: "issueListV2",
-    build: |a, auth| {
+pub const ISSUE_LIST_V2: QueryDefinition<IssueListV2Args, Context, Issue> =
+    define_query("issueListV2", |a, auth| {
         build_list_query(ListQueryArgs {
             list_context: Some(&a.list_context),
-            user_id: auth.map(|a| a.sub.as_str()),
+            user_id: auth.as_ref().map(|a| a.sub.as_str()),
             role: role(auth),
             limit: a.limit,
             start: a.start.as_ref(),
             dir: a.dir,
             inclusive: a.inclusive.unwrap_or(false),
         })
-    },
-    encode: one_arg,
-};
+    });
 
 /// The number of issues in the list: the same filters and permissions as
 /// `issueListV2`, reduced to a `count()`.
-pub const ISSUE_LIST_COUNT: NamedQuery<IssueListCountArgs, Issue, i64> = NamedQuery {
-    name: "issueListCount",
-    build: |a, auth| filter_list_query(zql::issue(), &a.list_context, role(auth)).count(),
-    encode: one_arg,
-};
+pub const ISSUE_LIST_COUNT: QueryDefinition<IssueListCountArgs, Context, Issue, i64> =
+    define_query("issueListCount", |a, auth| {
+        filter_list_query(zql::issue(), &a.list_context, role(auth)).count()
+    });
 
 /// One issue, for the order to start a list at.
-pub const LIST_ISSUE_BY_ID: NamedQuery<ListIssueByIdArgs, Issue, Option<Issue>> = NamedQuery {
-    name: "listIssueByID",
-    build: |a, auth| {
+pub const LIST_ISSUE_BY_ID: QueryDefinition<ListIssueByIdArgs, Context, Issue, Option<Issue>> =
+    define_query("listIssueByID", |a, auth| {
         let q = build_list_query(ListQueryArgs {
             list_context: Some(&a.list_context),
             role: role(auth),
             ..ListQueryArgs::default()
         });
         where_named(q, a.id_field.column(), a.id_value.json()).one()
-    },
-    encode: one_arg,
-};
+    });
 
-pub const EMOJI_CHANGE: NamedQuery<String, Emoji> = NamedQuery {
-    name: "emojiChange",
-    build: |subject_id, auth| {
+pub const EMOJI_CHANGE: QueryDefinition<String, Context, Emoji> =
+    define_query("emojiChange", |subject_id, auth| {
         let role = role(auth);
         let mut q = zql::emoji().where_eq(Emoji::SUBJECT_ID, subject_id.clone());
         if role != Some(UserRole::Crew) {
@@ -422,14 +318,11 @@ pub const EMOJI_CHANGE: NamedQuery<String, Emoji> = NamedQuery {
             });
         }
         q.related(Emoji::CREATOR, |u| u.one())
-    },
-    encode: one_arg,
-};
+    });
 
 /// Deprecated in zbugs.
-pub const PREV_NEXT: NamedQuery<PrevNextArgs, Issue, Option<Issue>> = NamedQuery {
-    name: "prevNext",
-    build: |a, auth| {
+pub const PREV_NEXT: QueryDefinition<PrevNextArgs, Context, Issue, Option<Issue>> =
+    define_query("prevNext", |a, auth| {
         build_list_query(ListQueryArgs {
             list_context: a.list_context.as_ref(),
             role: role(auth),
@@ -441,29 +334,23 @@ pub const PREV_NEXT: NamedQuery<PrevNextArgs, Issue, Option<Issue>> = NamedQuery
             ..ListQueryArgs::default()
         })
         .one()
-    },
-    encode: one_arg,
-};
+    });
 
 /// Deprecated in zbugs.
-pub const ISSUE_LIST: NamedQuery<IssueListArgs, Issue> = NamedQuery {
-    name: "issueList",
-    build: |a, auth| {
+pub const ISSUE_LIST: QueryDefinition<IssueListArgs, Context, Issue> =
+    define_query("issueList", |a, auth| {
         build_list_query(ListQueryArgs {
             list_context: Some(&a.list_context),
-            user_id: auth.map(|a| a.sub.as_str()),
+            user_id: auth.as_ref().map(|a| a.sub.as_str()),
             role: role(auth),
             limit: Some(a.limit),
             ..ListQueryArgs::default()
         })
-    },
-    encode: one_arg,
-};
+    });
 
 /// Deprecated in zbugs.
-pub const USER_PICKER: NamedQuery<UserPickerArgs, User> = NamedQuery {
-    name: "userPicker",
-    build: |a, _| {
+pub const USER_PICKER: QueryDefinition<UserPickerArgs, Context, User> =
+    define_query("userPicker", |a, _| {
         let q = zql::user();
         if let (true, Some(login)) = (a.disabled, truthy(a.login.as_deref())) {
             return q.where_eq(User::LOGIN, login.to_owned());
@@ -475,33 +362,31 @@ pub const USER_PICKER: NamedQuery<UserPickerArgs, User> = NamedQuery {
             }
             None => q,
         }
-    },
-    encode: one_arg,
-};
+    });
 
 /// Every query, for the drift test.
-pub fn all() -> Vec<AnyNamedQuery> {
+pub fn all() -> Vec<Box<dyn NamedQuery<Context>>> {
     vec![
-        erase(ALL_LABELS, decode_none),
-        erase(ALL_USERS, decode_none),
-        erase(ALL_PROJECTS, decode_none),
-        erase(USER, decode_one),
-        erase(CREW_USER, decode_one),
-        erase(LABELS, decode_one),
-        erase(LABELS_ORDER_BY_NAME, decode_one),
-        erase(ISSUE_PRELOAD_V2, decode_one),
-        erase(USER_PREF, decode_one),
-        erase(USERS_FOR_PROJECT, decode_one),
-        erase(COMMENTS_PAGE, decode_one),
-        erase(COMMENT, decode_one),
-        erase(ISSUE_DETAIL, decode_one),
-        erase(ISSUE_LIST_V2, decode_one),
-        erase(ISSUE_LIST_COUNT, decode_one),
-        erase(LIST_ISSUE_BY_ID, decode_one),
-        erase(EMOJI_CHANGE, decode_one),
-        erase(PREV_NEXT, decode_one),
-        erase(ISSUE_LIST, decode_one),
-        erase(USER_PICKER, decode_one),
+        Box::new(ALL_LABELS),
+        Box::new(ALL_USERS),
+        Box::new(ALL_PROJECTS),
+        Box::new(USER),
+        Box::new(CREW_USER),
+        Box::new(LABELS),
+        Box::new(LABELS_ORDER_BY_NAME),
+        Box::new(ISSUE_PRELOAD_V2),
+        Box::new(USER_PREF),
+        Box::new(USERS_FOR_PROJECT),
+        Box::new(COMMENTS_PAGE),
+        Box::new(COMMENT),
+        Box::new(ISSUE_DETAIL),
+        Box::new(ISSUE_LIST_V2),
+        Box::new(ISSUE_LIST_COUNT),
+        Box::new(LIST_ISSUE_BY_ID),
+        Box::new(EMOJI_CHANGE),
+        Box::new(PREV_NEXT),
+        Box::new(ISSUE_LIST),
+        Box::new(USER_PICKER),
     ]
 }
 

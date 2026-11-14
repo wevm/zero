@@ -130,12 +130,11 @@ impl Session {
         let project = ProjectArgs {
             project_name: ZERO_PROJECT_NAME.into(),
         };
-        let a = auth.as_ref();
         let preloads = vec![
-            zero.preload(ISSUE_PRELOAD_V2.call(&project, a).any(), &ttl),
-            zero.preload(ALL_USERS.call(&(), a).any(), &ttl),
-            zero.preload(ALL_LABELS.call(&(), a).any(), &ttl),
-            zero.preload(ALL_PROJECTS.call(&(), a).any(), &ttl),
+            zero.preload(&ISSUE_PRELOAD_V2.with(project), &ttl),
+            zero.preload(&ALL_USERS.with(()), &ttl),
+            zero.preload(&ALL_LABELS.with(()), &ttl),
+            zero.preload(&ALL_PROJECTS.with(()), &ttl),
         ];
         Session {
             zero: Rc::new(zero),

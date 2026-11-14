@@ -30,10 +30,10 @@ use zbugs_model::mutators::{
     REMOVE_LABEL, SET_USER_PREF, SET_VIEW_STATE, UPDATE_ISSUE, UPDATE_NOTIFICATION,
 };
 use zbugs_model::schema::{Comment, Emoji, Issue, IssueVisibility, Label, Project, User, UserPref};
-use zbugs_model::{AuthData, Context, MutateRequest, ZERO_PROJECT_NAME, make_id, queries};
-use zero_client::client::ConnectionState;
+use zbugs_model::{AuthData, Context, ZERO_PROJECT_NAME, make_id, queries};
+use zero_client::client::{ConnectionState, MutateRequest};
 use zero_client::ivm::ResultType;
-use zero_client::query::AnyQuery;
+use zero_client::query::ZeroQuery;
 
 /// Rows the issue list asks for at a time: as it nears the end, it asks for
 /// this many more.
@@ -225,16 +225,15 @@ fn now_ms() -> f64 {
         .map_or(0.0, |d| d.as_millis() as f64)
 }
 
-fn preload(auth: &Context) -> Vec<AnyQuery> {
+fn preload() -> Vec<Box<dyn ZeroQuery<Context>>> {
     let project = ProjectArgs {
         project_name: ZERO_PROJECT_NAME.to_owned(),
     };
-    let auth = auth.as_ref();
     vec![
-        queries::ISSUE_PRELOAD_V2.call(&project, auth).into_any(),
-        queries::ALL_USERS.call(&(), auth).into_any(),
-        queries::ALL_LABELS.call(&(), auth).into_any(),
-        queries::ALL_PROJECTS.call(&(), auth).into_any(),
+        Box::new(queries::ISSUE_PRELOAD_V2.with(project)),
+        Box::new(queries::ALL_USERS.with(())),
+        Box::new(queries::ALL_LABELS.with(())),
+        Box::new(queries::ALL_PROJECTS.with(())),
     ]
 }
 
@@ -361,19 +360,16 @@ impl App {
         });
         self.sync.watch(
             "projects",
-            |auth: &Context| queries::ALL_PROJECTS.call(&(), auth.as_ref()),
+            queries::ALL_PROJECTS.with(()),
             |s, rows, _, _| s.projects = rows,
         );
         self.watch_project();
         if let Some(sub) = self.auth.as_ref().map(|a| a.sub.clone()) {
-            self.sync.watch(
-                "me",
-                move |auth: &Context| queries::USER.call(&sub, auth.as_ref()),
-                |s, me, _, _| s.me = me,
-            );
+            self.sync
+                .watch("me", queries::USER.with(sub), |s, me, _, _| s.me = me);
             self.sync.watch(
                 "skin-tone",
-                |auth: &Context| queries::USER_PREF.call(&SKIN_TONE_PREF.to_owned(), auth.as_ref()),
+                queries::USER_PREF.with(SKIN_TONE_PREF.to_owned()),
                 |s, pref: Option<UserPref>, _, _| {
                     s.skin_tone = pref.and_then(|p| p.value.parse().ok()).unwrap_or(0);
                 },
@@ -400,7 +396,7 @@ impl App {
         let crew = users(UsersFilter::Crew);
         self.sync.watch(
             "crew",
-            move |auth: &Context| queries::USERS_FOR_PROJECT.call(&crew, auth.as_ref()),
+            queries::USERS_FOR_PROJECT.with(crew),
             |s, mut rows: Vec<User>, _, _| {
                 by_login(&mut rows);
                 s.crew = rows;
@@ -409,7 +405,7 @@ impl App {
         let creators = users(UsersFilter::Creators);
         self.sync.watch(
             "creators",
-            move |auth: &Context| queries::USERS_FOR_PROJECT.call(&creators, auth.as_ref()),
+            queries::USERS_FOR_PROJECT.with(creators),
             |s, mut rows: Vec<User>, _, _| {
                 by_login(&mut rows);
                 s.creators = rows;
@@ -418,7 +414,7 @@ impl App {
         let assignees = users(UsersFilter::Assignees);
         self.sync.watch(
             "assignees",
-            move |auth: &Context| queries::USERS_FOR_PROJECT.call(&assignees, auth.as_ref()),
+            queries::USERS_FOR_PROJECT.with(assignees),
             |s, mut rows: Vec<User>, _, _| {
                 by_login(&mut rows);
                 s.assignees = rows;
@@ -430,7 +426,7 @@ impl App {
         };
         self.sync.watch(
             "project-labels",
-            move |auth: &Context| queries::LABELS_ORDER_BY_NAME.call(&labels, auth.as_ref()),
+            queries::LABELS_ORDER_BY_NAME.with(labels),
             |s, rows, _, _| s.project_labels = rows,
         );
     }
@@ -519,15 +515,12 @@ impl App {
             dir: PageDirection::Forward,
             inclusive: None,
         };
-        self.sync.watch(
-            "issues",
-            move |auth: &Context| queries::ISSUE_LIST_V2.call(&args, auth.as_ref()),
-            apply_issues,
-        );
+        self.sync
+            .watch("issues", queries::ISSUE_LIST_V2.with(args), apply_issues);
         let count = IssueListCountArgs { list_context };
         self.sync.watch(
             "count",
-            move |auth: &Context| queries::ISSUE_LIST_COUNT.call(&count, auth.as_ref()),
+            queries::ISSUE_LIST_COUNT.with(count),
             |s, n, _, _| s.count = Some(n),
         );
     }
@@ -582,7 +575,7 @@ impl App {
         };
         self.sync.watch(
             "detail",
-            move |auth: &Context| queries::ISSUE_DETAIL.call(&args, auth.as_ref()),
+            queries::ISSUE_DETAIL.with(args),
             |s, issue: Option<Issue>, result_type, _| {
                 if let Some(project) = issue.as_ref().and_then(|i| i.project.as_ref()) {
                     s.watch_labels(&project.name);
@@ -607,7 +600,7 @@ impl App {
         };
         self.sync.watch(
             "labels",
-            move |auth: &Context| queries::LABELS_ORDER_BY_NAME.call(&args, auth.as_ref()),
+            queries::LABELS_ORDER_BY_NAME.with(args),
             |s, rows, _, _| s.labels = rows,
         );
     }
@@ -623,7 +616,7 @@ impl App {
         };
         self.sync.watch(
             "comments",
-            move |auth: &Context| queries::COMMENTS_PAGE.call(&args, auth.as_ref()),
+            queries::COMMENTS_PAGE.with(args),
             |s, rows, _, _| s.comments = rows,
         );
     }
@@ -641,7 +634,7 @@ impl App {
 
     fn mutate(&mut self, request: MutateRequest) {
         self.sync.mutate(
-            move |zero| request.run(zero),
+            move |zero| zero.mutate_request(request),
             |s, message| {
                 s.error = Some(message);
             },
@@ -723,7 +716,7 @@ impl App {
         };
         let body = self.comment_edit.text.trim().to_owned();
         if !body.is_empty() {
-            self.mutate(EDIT_COMMENT.with(&EditCommentArgs { id, body }));
+            self.mutate(EDIT_COMMENT.with(EditCommentArgs { id, body }));
         }
     }
 
@@ -731,7 +724,7 @@ impl App {
     pub fn confirmed(&mut self) {
         match self.confirm.take() {
             Some(Confirm::DeleteIssue(id)) => {
-                self.mutate(DELETE_ISSUE.with(&id));
+                self.mutate(DELETE_ISSUE.with(id.clone()));
                 if self.selected.as_ref() == Some(&id) {
                     self.deselect();
                 }
@@ -740,14 +733,14 @@ impl App {
                 if self.selected.as_ref().is_some_and(|id| ids.contains(id)) {
                     self.deselect();
                 }
-                self.mutate(DELETE_ISSUES.with(&ids));
+                self.mutate(DELETE_ISSUES.with(ids));
                 self.toggle_select_mode();
             }
             Some(Confirm::DeleteComment(id)) => {
                 if self.editing_comment.as_ref() == Some(&id) {
                     self.editing_comment = None;
                 }
-                self.mutate(REMOVE_COMMENT.with(&id));
+                self.mutate(REMOVE_COMMENT.with(id));
             }
             None => {}
         }
@@ -767,7 +760,7 @@ impl App {
             return;
         }
         let Some(issue) = &self.detail else { return };
-        self.mutate(CREATE_AND_ADD_LABEL.with(&CreateAndAddLabelArgs {
+        self.mutate(CREATE_AND_ADD_LABEL.with(CreateAndAddLabelArgs {
             issue_id: issue.id.clone(),
             label_id: make_id(),
             label_name: name,
@@ -783,7 +776,7 @@ impl App {
             open: Some(!issue.open),
             ..UpdateIssueArgs::new(issue.id.clone(), now_ms())
         };
-        self.mutate(UPDATE_ISSUE.with(&args));
+        self.mutate(UPDATE_ISSUE.with(args));
     }
 
     /// Opens `picker`, or closes it when it's open.
@@ -825,7 +818,7 @@ impl App {
                             // server's clock says.
                             viewed: now_ms().max(issue.modified),
                         };
-                        s.mutate(SET_VIEW_STATE.with(&args));
+                        s.mutate(SET_VIEW_STATE.with(args));
                     }
                 });
             });
@@ -847,7 +840,7 @@ impl App {
             visibility: Some(visibility),
             ..UpdateIssueArgs::new(issue.id.clone(), now_ms())
         };
-        self.mutate(UPDATE_ISSUE.with(&args));
+        self.mutate(UPDATE_ISSUE.with(args));
     }
 
     /// Whether the user gets notifications about the issue.
@@ -873,7 +866,7 @@ impl App {
             },
             created: now_ms(),
         };
-        self.mutate(UPDATE_NOTIFICATION.with(&args));
+        self.mutate(UPDATE_NOTIFICATION.with(args));
     }
 
     /// Shows emoji in this skin tone (0 to 5, light to dark after the
@@ -884,7 +877,7 @@ impl App {
             key: SKIN_TONE_PREF.to_owned(),
             value: tone.to_string(),
         };
-        self.mutate(SET_USER_PREF.with(&args));
+        self.mutate(SET_USER_PREF.with(args));
     }
 
     pub fn toggle_picker(&mut self, picker: Picker) {
@@ -911,7 +904,7 @@ impl App {
             assignee_id: Some(assignee.map(|u| u.id.clone())),
             ..UpdateIssueArgs::new(issue.id.clone(), now_ms())
         };
-        self.mutate(UPDATE_ISSUE.with(&args));
+        self.mutate(UPDATE_ISSUE.with(args));
     }
 
     /// Adds the label to the issue, or removes it. The menu stays open for
@@ -921,9 +914,9 @@ impl App {
         let has = issue.labels.iter().flatten().any(|l| l.id == label_id);
         let (issue_id, label_id) = (issue.id.clone(), label_id.to_owned());
         self.mutate(if has {
-            REMOVE_LABEL.with(&RemoveLabelArgs { issue_id, label_id })
+            REMOVE_LABEL.with(RemoveLabelArgs { issue_id, label_id })
         } else {
-            ADD_LABEL.with(&IssueLabelArgs {
+            ADD_LABEL.with(IssueLabelArgs {
                 issue_id,
                 label_id,
                 project_id: None,
@@ -956,7 +949,7 @@ impl App {
             .find(|e| e.creator_id == sub && e.value == value);
         if let Some(e) = mine {
             let id = e.id.clone();
-            self.mutate(REMOVE_EMOJI.with(&id));
+            self.mutate(REMOVE_EMOJI.with(id));
             return;
         }
         // Its CLDR name, as the web picker sends it.
@@ -977,9 +970,9 @@ impl App {
             created: now_ms(),
         };
         self.mutate(if on_issue {
-            ADD_EMOJI_TO_ISSUE.with(&args)
+            ADD_EMOJI_TO_ISSUE.with(args)
         } else {
-            ADD_EMOJI_TO_COMMENT.with(&args)
+            ADD_EMOJI_TO_COMMENT.with(args)
         });
     }
 
@@ -990,7 +983,7 @@ impl App {
         if body.is_empty() {
             return;
         }
-        self.mutate(ADD_COMMENT.with(&AddCommentArgs {
+        self.mutate(ADD_COMMENT.with(AddCommentArgs {
             id: make_id(),
             issue_id: id,
             body,
@@ -1038,14 +1031,14 @@ impl App {
                 description: Some(description),
                 ..UpdateIssueArgs::new(issue.id.clone(), now)
             };
-            self.mutate(UPDATE_ISSUE.with(&args));
+            self.mutate(UPDATE_ISSUE.with(args));
         } else {
             let Some(project) = self.project() else {
                 self.sheet_error = Some("The project hasn't synced yet.".into());
                 return;
             };
             let id = make_id();
-            self.mutate(CREATE_ISSUE.with(&CreateIssueArgs {
+            self.mutate(CREATE_ISSUE.with(CreateIssueArgs {
                 id: id.clone(),
                 title,
                 description: Some(description),
