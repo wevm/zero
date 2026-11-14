@@ -222,7 +222,8 @@ impl<C: 'static> Zero<C> {
     }
 
     /// Keeps the query's rows synced without a view, until `cleanup`.
-    /// Preloading an unnamed query does nothing.
+    /// Preloading an unnamed query does nothing. JS's default `ttl` for a
+    /// preload is [`Ttl::DEFAULT_PRELOAD`], not `Ttl::default()`.
     pub fn preload(&self, query: &AnyQuery, ttl: &Ttl) -> Preload {
         let e = self.engine();
         let preload = e.event_loop.call(|| e.context.preload(query, ttl));

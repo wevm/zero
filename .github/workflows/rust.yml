@@ -196,7 +196,9 @@ jobs:
       - name: Install cargo-semver-checks
         if: steps.baseline.outputs.released == 'true'
         run: rustup show active-toolchain || rustup toolchain install && cargo install cargo-semver-checks --locked
-      # The largest bump the pending zero-rust changesets declare.
+      # The largest bump the pending zero-rust changesets declare. Before 1.0,
+      # a changeset minor (0.1.3 to 0.2.0) is what Cargo counts as a breaking
+      # release, so it is checked as cargo-semver-checks' major.
       - name: API breaks
         if: steps.baseline.outputs.released == 'true'
         run: |
@@ -205,4 +207,6 @@ jobs:
           type=patch
           echo "$bumps" | grep -q minor && type=minor
           echo "$bumps" | grep -q major && type=major
+          version="$(sed -nE '/^\[workspace\.package\]/,/^\[/ s/^version = "(.*)"/\1/p' Cargo.toml)"
+          case "$version" in 0.*) [ "$type" = minor ] && type=major ;; esac
           cargo semver-checks -p zero-client --release-type "$type"

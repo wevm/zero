@@ -211,6 +211,16 @@ pub struct ZeroOptions {
     ///
     /// [`Zero::set_visible`]: crate::client::Zero::set_visible
     pub hidden_disconnect_delay_ms: f64,
+    /// A W3C `traceparent` for each query change and push the client sends
+    /// (`getTraceparent`), so zero-cache and the API server can join the
+    /// app's trace. Called once per message; `None` sends none.
+    pub get_traceparent: Option<Rc<dyn Fn() -> Option<String>>>,
+    /// Wraps every update of the views (`batchViewUpdates`), for a UI that
+    /// renders a batch of state changes at once: each new view's creation,
+    /// and each change that updates the views (a poke, a mutation, the
+    /// first hydration), with its listener calls. It must call the function
+    /// it is given, once, before it returns.
+    pub batch_view_updates: Option<BatchViewUpdates>,
 }
 
 impl Default for ZeroOptions {
@@ -235,6 +245,8 @@ impl Default for ZeroOptions {
             log_level: LogLevel::Warn,
             log_sink: None,
             hidden_disconnect_delay_ms: 0.0,
+            get_traceparent: None,
+            batch_view_updates: None,
         }
     }
 }
@@ -244,6 +256,10 @@ pub type StorageFailureHandler = Rc<dyn Fn(&StorageFailure)>;
 
 /// Called when the server needs a newer client (`onUpdateNeeded`).
 pub type UpdateNeededHandler = Rc<dyn Fn(&UpdateNeededReason)>;
+
+/// [`ZeroOptions::batch_view_updates`]: called with the function that
+/// updates the views.
+pub type BatchViewUpdates = Rc<dyn Fn(&mut dyn FnMut())>;
 
 /// Why the client must be updated (`UpdateNeededReason`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -815,6 +831,7 @@ impl Engine {
                         _ => None,
                     }),
                     true,
+                    options.batch_view_updates.clone(),
                 )
             };
             let query_manager = {
@@ -823,8 +840,9 @@ impl Engine {
                     client_id.clone(),
                     scheduler.clone(),
                     options.query_change_throttle_ms,
-                    Box::new(move |body| {
+                    Box::new(move |mut body| {
                         if let Some(e) = s.upgrade() {
+                            body.traceparent = e.traceparent();
                             e.send_if_connected(Upstream::ChangeDesiredQueries(body));
                         }
                     }),
@@ -1078,6 +1096,11 @@ impl Engine {
     }
 
     // MARK: Sending
+
+    /// The app's traceparent for a message about to be sent.
+    fn traceparent(&self) -> Option<String> {
+        self.options.get_traceparent.as_ref().and_then(|f| f())
+    }
 
     fn send_if_connected(&self, message: Upstream) {
         if self.status_is(ConnectionStatus::Connected) {
@@ -2082,7 +2105,7 @@ impl Engine {
             Some(_) if !patch.is_empty() => {
                 self.send(Upstream::ChangeDesiredQueries(ChangeDesiredQueriesBody {
                     desired_queries_patch: patch_ops,
-                    traceparent: None,
+                    traceparent: self.traceparent(),
                 }));
             }
             Some(_) => {}
@@ -2102,7 +2125,7 @@ impl Engine {
                     user_query_url: self.options.query_url.clone(),
                     user_query_headers: self.options.query_headers.clone(),
                     active_clients: None,
-                    traceparent: None,
+                    traceparent: self.traceparent(),
                 }));
             }
         }
@@ -2825,7 +2848,7 @@ impl Engine {
                 timestamp: now,
                 request_id: request_id.clone(),
                 auth: None,
-                traceparent: None,
+                traceparent: self.traceparent(),
             }));
             self.last_mutation_ids_sent
                 .borrow_mut()

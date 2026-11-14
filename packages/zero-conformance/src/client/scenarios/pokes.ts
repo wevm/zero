@@ -51,6 +51,32 @@ const cafeAt = cafeParts.indexOf('é');
 
 export const pokeScenarios: Scenario[] = [
   {
+    name: 'batchViewUpdates: wraps each new view, and each poke and mutation over every view',
+    options: {batchViewUpdates: true},
+    steps: [
+      viewAll,
+      {op: 'materialize', view: 'o', query: 'issues.open'},
+      connected,
+      ...syncPoke(
+        'p1',
+        null,
+        '01',
+        [allHash, openHash],
+        [
+          put('issues', issue('i1')),
+          put('issues', issue('i2', {closed: true})),
+        ],
+      ),
+      {op: 'listen', view: 'v', listener: 'l'},
+      mutate('m1', 'issue.create', {id: 'i3', title: 'new'}),
+      ...poke('p2', '01', '02', {
+        lastMutationIDChanges: {$clientID: 1},
+        rowsPatch: [put('issues', issue('i3', {title: 'new'}))],
+      }),
+      {op: 'materialize', view: 'w', query: 'issues.all'},
+    ],
+  },
+  {
     name: 'poke: rows and a got query make a view complete',
     steps: [
       viewAll,

@@ -39,6 +39,11 @@ impl Ttl {
     /// The default TTL as a string.
     pub const DEFAULT: &str = "5m";
 
+    /// The TTL JS's `preload` uses when it isn't given one: the query
+    /// stops being synced as soon as its preload is cleaned up.
+    /// [`Ttl::default`] is the default of views and `run`.
+    pub const DEFAULT_PRELOAD: Ttl = Ttl::None;
+
     /// `n` seconds.
     pub fn seconds(n: f64) -> Ttl {
         Ttl::String(number::format(n) + "s")
