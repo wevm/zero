@@ -13,14 +13,14 @@ import ZeroTesting
 @MainActor
 struct BugHuntTests {
   /// The random client scenarios, all of them: reports the first mismatches.
-  @Test(.enabled(if: Vectors.generatedAvailable)) func clientFuzzOnMemory() throws {
-    try Self.runFuzz(storage: .memory)
+  @Test(.enabled(if: Vectors.generatedAvailable)) func clientFuzzOnMemory() async throws {
+    try await Self.runFuzz(storage: .memory)
   }
 
-  @Test(.enabled(if: Vectors.generatedAvailable)) func clientFuzzOnSQLite() throws {
+  @Test(.enabled(if: Vectors.generatedAvailable)) func clientFuzzOnSQLite() async throws {
     let directory = NSTemporaryDirectory() + "zero-bughunt-" + UUID().uuidString
     defer { try? FileManager.default.removeItem(atPath: directory) }
-    try Self.runFuzz(storage: .sqlite(directory: directory))
+    try await Self.runFuzz(storage: .sqlite(directory: directory))
   }
 
   nonisolated static let ivmNames: [String] =
@@ -44,37 +44,37 @@ struct BugHuntTests {
     .compactMap { $0["name"]?.stringValue }
 
   /// One targeted client scenario (`vectors/bughunt-client.json`).
-  @Test(arguments: clientNames) func clientOnMemory(_ name: String) throws {
-    try Self.runClient(name, storage: .memory)
+  @Test(arguments: clientNames) func clientOnMemory(_ name: String) async throws {
+    try await Self.runClient(name, storage: .memory)
   }
 
-  @Test(arguments: clientNames) func clientOnSQLite(_ name: String) throws {
+  @Test(arguments: clientNames) func clientOnSQLite(_ name: String) async throws {
     let directory = NSTemporaryDirectory() + "zero-bughunt-" + UUID().uuidString
     defer { try? FileManager.default.removeItem(atPath: directory) }
-    try Self.runClient(name, storage: .sqlite(directory: directory))
+    try await Self.runClient(name, storage: .sqlite(directory: directory))
   }
 
-  static func runClient(_ name: String, storage: ZeroStorage) throws {
+  static func runClient(_ name: String, storage: ZeroStorage) async throws {
     let file = try Vectors.file("bughunt-client")
     let startTime = file["shared"]?["startTime"]?.numberValue ?? 0
     let scenario = try #require(
       file["cases"]?.arrayValue?.first { $0["name"]?.stringValue == name })
     let runner = try ScenarioRunner(scenario, startTime: startTime, storage: storage)
     if let mismatch = ClientConformanceTests.firstMismatch(
-      scenario, scenario["expect"]?.arrayValue ?? [], runner.run())
+      scenario, scenario["expect"]?.arrayValue ?? [], await runner.run())
     {
       Issue.record(Comment(rawValue: "\(name)\n\(mismatch)"))
     }
   }
 
-  static func runFuzz(storage: ZeroStorage) throws {
+  static func runFuzz(storage: ZeroStorage) async throws {
     let file = try Vectors.generatedFile("client-aggregates-fuzz")
     let startTime = file["shared"]?["startTime"]?.numberValue ?? 0
     var failed: [String] = []
     for scenario in file["cases"]?.arrayValue ?? [] {
       let name = scenario["name"]?.stringValue ?? "?"
       let runner = try ScenarioRunner(scenario, startTime: startTime, storage: storage)
-      let actual = runner.run()
+      let actual = await runner.run()
       if let mismatch = ClientConformanceTests.firstMismatch(
         scenario, scenario["expect"]?.arrayValue ?? [], actual)
       {

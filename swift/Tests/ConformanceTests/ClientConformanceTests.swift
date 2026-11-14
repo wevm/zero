@@ -34,7 +34,7 @@ struct ClientConformanceTests {
       if let only, !name.contains(only) { continue }
       let expected = scenario["expect"]?.arrayValue ?? []
       let runner = try ScenarioRunner(scenario, startTime: startTime, storage: storage)
-      let actual = runner.run()
+      let actual = await runner.run()
       if let mismatch = Self.firstMismatch(scenario, expected, actual) {
         failed += 1
         Issue.record(Comment(rawValue: "\(name)\n\(mismatch)"))
@@ -117,6 +117,16 @@ final class ScenarioRunner {
   var restarts = 0
   /// The IDs placeholders in downstream messages stand for.
   var ids: [String: String] = [:]
+  /// The current client's log, and how much of it was reported.
+  var log = RecordingLogSink()
+  var logsSeen = 0
+  /// The `inspect` calls, how many are still running, and how many
+  /// inspector requests were sent.
+  var inspectCalls: [(String, Settled)] = []
+  var inspectRunning = 0
+  var inspectCount = 0
+  /// The IDs the runner gives inspector requests, so that runs repeat.
+  var inspectIDs = 0
 
   init(_ scenario: JSONValue, startTime: Double, storage: ZeroStorage) throws {
     self.scenario = scenario
@@ -131,7 +141,15 @@ final class ScenarioRunner {
 
   func makeZero(_ o: JSONValue, mutators registered: JSONValue? = nil) throws -> Zero<Void> {
     var options = ZeroOptions()
-    options.logSink = RecordingLogSink()
+    log = RecordingLogSink()
+    options.logSink = log
+    options.logLevel =
+      switch o["logLevel"]?.stringValue {
+      case "debug": .debug
+      case "info": .info
+      case "error": .error
+      default: .warn
+      }
     switch o["cacheURL"] {
     case .null?: options.cacheURL = nil
     case .string(let s)?: options.cacheURL = s
@@ -177,9 +195,14 @@ final class ScenarioRunner {
     let mutators =
       registered?.stringValue == "issues"
       ? ClientApp.mutators.filter { $0.name.hasPrefix("issue.") } : ClientApp.mutators
-    return try Zero(
+    let zero = try Zero(
       schema: ClientApp.schema, mutators: mutators, options: options, scheduler: scheduler,
       socketFactory: factory)
+    zero.engine.inspectRPCs.makeID = { [unowned self] in
+      inspectIDs += 1
+      return "inspect-request-\(inspectIDs)"
+    }
+    return zero
   }
 
   /// Closes the client and starts a new one on the same storage
@@ -206,6 +229,8 @@ final class ScenarioRunner {
     mutations = []
     runs = []
     preloads = []
+    inspectCalls = []
+    logsSeen = 0
   }
 
   func normalize(_ v: JSONValue, key: String? = nil) -> JSONValue {
@@ -402,10 +427,168 @@ final class ScenarioRunner {
     case "unlisten":
       let name = step["listener"]!.stringValue!
       listeners.first { $0.0 == name }?.1.remove()
+    case "inspect":
+      try inspect(step)
     default:
       throw ClientApp.Failure("Unknown op \(op)")
     }
   }
+
+  /// An `inspect` step: calls `zero.inspector` and records how its result
+  /// settles (`inspect` in `harness.ts`). The calls are async, so each runs
+  /// in a task that `settle` lets run.
+  func inspect(_ step: JSONValue) throws {
+    let call = step["call"]!.stringValue!
+    let entry = Settled()
+    if let i = inspectCalls.firstIndex(where: { $0.0 == call }) {
+      inspectCalls[i].1 = entry
+    } else {
+      inspectCalls.append((call, entry))
+    }
+    let inspector = zero.inspector
+    let options = step["options"].map { o in
+      AnalyzeQueryOptions(
+        vendedRows: o["vendedRows"]?.boolValue, syncedRows: o["syncedRows"]?.boolValue,
+        joinPlans: o["joinPlans"]?.boolValue)
+    }
+    func record<T>(_ body: @escaping () async throws -> T, _ convert: @escaping (T) -> JSONValue) {
+      inspectRunning += 1
+      Task { @MainActor [self] in
+        do {
+          entry.value = ["resolved": convert(try await body())]
+        } catch {
+          entry.value = ["rejected": .string(Self.inspectError(error))]
+        }
+        inspectRunning -= 1
+      }
+    }
+    let clients = { [self] (clients: [InspectorClient]) -> JSONValue in
+      let out = clients.map { c -> (String, JSONValue) in
+        let id = placeholders[c.id] ?? c.id
+        return (id, ["id": .string(id), "clientGroupID": normalize(.string(c.clientGroup.id))])
+      }
+      return .array(out.sorted { StringCompare.utf16($0.0, $1.0) < 0 }.map(\.1))
+    }
+    let queries = { (queries: [InspectorQuery]) -> JSONValue in .array(queries.map(Self.queryJSON))
+    }
+    switch step["method"]?.stringValue {
+    case "metrics": record({ try await inspector.metrics() }, Self.metricsJSON)
+    case "serverVersion": record({ try await inspector.serverVersion() }) { .string($0) }
+    case "clients": record({ try await inspector.clients() }, clients)
+    case "clientsWithQueries": record({ try await inspector.clientsWithQueries() }, clients)
+    case "clientQueries": record({ try await inspector.client.queries() }, queries)
+    case "clientMap":
+      // Swift's map is a dictionary; JS's iterates in the store's key order.
+      record({ try await inspector.client.map() }) { [self] map in
+        .array(
+          map.sorted { StringCompare.utf8($0.key, $1.key) < 0 }.map { k, v in
+            var k = k
+            for (id, placeholder) in placeholders {
+              k = k.replacingOccurrences(of: id, with: placeholder)
+            }
+            return [.string(k), v]
+          })
+      }
+    case "clientRows":
+      let table = step["table"]?.stringValue ?? ""
+      record({ try await inspector.client.rows(table) }) { .array($0.map { .object($0.object) }) }
+    case "clientGroupClients": record({ try await inspector.clientGroup.clients() }, clients)
+    case "clientGroupClientsWithQueries":
+      record({ try await inspector.clientGroup.clientsWithQueries() }, clients)
+    case "clientGroupQueries": record({ try await inspector.clientGroup.queries() }, queries)
+    case "analyzeQuery":
+      let query = try ClientApp.request(step["query"]?.stringValue ?? "", step["args"])
+      record({ try await inspector.analyzeQuery(query, options: options) }, \.json)
+    case "analyzeServerAST":
+      let ast = try AST(json: step["ast"] ?? .null)
+      record({ try await inspector.analyzeServerAST(ast, options: options) }, \.json)
+    case "analyzeNamedQuery":
+      let name = step["name"]?.stringValue ?? ""
+      let args = step["queryArgs"]?.arrayValue ?? []
+      record(
+        { try await inspector.analyzeNamedQuery(name: name, args: args, options: options) }, \.json)
+    case "authenticate":
+      let password = step["password"]?.stringValue ?? ""
+      record({ try await inspector.authenticate(password: password) }) { .bool($0) }
+    case "formatPlannerEvents":
+      entry.value = [
+        "resolved": .string(inspector.formatPlannerEvents(step["events"]?.arrayValue ?? []))
+      ]
+    case let method:
+      throw ClientApp.Failure("Unknown inspector method \(method ?? "")")
+    }
+  }
+
+  /// JS's message for an inspector error (`errorMessage` in `harness.ts`).
+  /// Where zero-cache refuses an unauthenticated request, JS prompts for
+  /// the password, and without one fails with `Authentication failed`;
+  /// Swift fails with `InspectorError.authenticationRequired`, whose
+  /// message says to call `authenticate(password:)`.
+  static func inspectError(_ error: any Error) -> String {
+    switch error {
+    case InspectorError.authenticationRequired: "Authentication failed"
+    case InspectorError.server(let message): message
+    case let e as InspectorError: e.description
+    default: errorMessage(error)
+    }
+  }
+
+  /// Digests as their JSON, by their JS names (`metricsJSON`).
+  static func metricsJSON(_ metrics: Metrics) -> JSONValue {
+    var o: JSONObject = [:]
+    for name in Metrics.names {
+      o[name] = .array((metrics[name]?.toJSON() ?? []).map(JSONValue.number))
+    }
+    return .object(o)
+  }
+
+  /// A query's fields (`queriesJSON`).
+  static func queryJSON(_ q: InspectorQuery) -> JSONValue {
+    // `JSON.stringify` writes NaN and the infinities as null.
+    func number(_ n: Double?) -> JSONValue {
+      n.flatMap { $0.isFinite ? .number($0) : nil } ?? .null
+    }
+    func string(_ s: String?) -> JSONValue { s.map(JSONValue.string) ?? .null }
+    return [
+      "name": string(q.name), "args": q.args.map(JSONValue.array) ?? .null, "got": .bool(q.got),
+      "ttl": q.ttl.json, "inactivatedAt": number(q.inactivatedAt),
+      "rowCount": .number(q.rowCount), "deleted": .bool(q.deleted), "id": .string(q.id),
+      "clientID": .string(q.clientID), "metrics": metricsJSON(q.metrics),
+      "clientZQL": string(q.clientZQL), "serverZQL": string(q.serverZQL),
+      "hydrateClient": number(q.hydrateClient), "hydrateServer": number(q.hydrateServer),
+      "hydrateTotal": number(q.hydrateTotal), "updateClientP50": number(q.updateClientP50),
+      "updateClientP95": number(q.updateClientP95), "updateServerP50": number(q.updateServerP50),
+      "updateServerP95": number(q.updateServerP95),
+    ]
+  }
+
+  /// The materialization messages logged since the last step, as JS logs
+  /// them: the level, and the message, query ID, AST, and ms. Swift logs
+  /// one line, `<message> <queryID> <AST JSON> <ms>`.
+  func materializationLogs() -> [JSONValue] {
+    let entries = log.entries
+    defer { logsSeen = entries.count }
+    return entries[min(logsSeen, entries.count)...].compactMap { e -> JSONValue? in
+      guard
+        let message = Self.materializationMessages.first(where: { e.message.hasPrefix($0 + " ") })
+      else { return nil }
+      let rest = e.message.dropFirst(message.count + 1)
+      guard let space = rest.firstIndex(of: " "), let last = rest.lastIndex(of: " "), space < last,
+        let ast = try? JSONParser.parse(Array(rest[rest.index(after: space)..<last].utf8)),
+        let ms = try? JSONParser.parse(Array(rest[rest.index(after: last)...].utf8))
+      else { return nil }
+      return normalize([
+        "level": .string(e.level.description),
+        "args": [.string(message), .string(String(rest[..<space])), ast, ms],
+      ])
+    }
+  }
+
+  /// The messages of `addMetric`'s materialization logs.
+  static let materializationMessages = [
+    "Slow query materialization (including server/network)",
+    "Materialized query (including server/network)",
+  ]
 
   static func settled<T>(_ r: Result<T, any Error>) -> JSONValue {
     switch r {
@@ -421,7 +604,18 @@ final class ScenarioRunner {
     scheduler.runDueTimers()
   }
 
-  func run() -> [JSONValue] {
+  /// `settle`, and while inspector calls are running, lets their tasks run
+  /// and settles the work they queue, as `settle` in `harness.ts` lets
+  /// promises settle.
+  func settleWithInspector() async {
+    settle()
+    for _ in 0..<20 where inspectRunning > 0 {
+      await Task.yield()
+      settle()
+    }
+  }
+
+  func run() async -> [JSONValue] {
     var results: [JSONValue] = []
     for step in scenario["steps"]?.arrayValue ?? [] {
       let sockets = factory.sockets
@@ -433,7 +627,7 @@ final class ScenarioRunner {
       } catch {
         result["threw"] = .string(errorMessage(error))
       }
-      settle()
+      await settleWithInspector()
 
       let now = factory.sockets
       let opened = now[sockets.count...].map { s -> JSONValue in
@@ -447,7 +641,15 @@ final class ScenarioRunner {
       for (i, s) in now.enumerated() {
         let from = i < sentCounts.count ? sentCounts[i] : 0
         for m in s.messages[from...] {
-          sent.append(normalize((try? JSONParser.parse(Array(m.utf8))) ?? .string(m)))
+          let message = (try? JSONParser.parse(Array(m.utf8))) ?? .string(m)
+          if message[0] == "inspect", let id = message[1]?["id"]?.stringValue,
+            placeholders[id] == nil
+          {
+            placeholders[id] = "$inspect.\(inspectCount)"
+            ids["$inspect.\(inspectCount)"] = id
+            inspectCount += 1
+          }
+          sent.append(normalize(message))
         }
       }
       if !sent.isEmpty { result["sent"] = .array(sent) }
@@ -488,6 +690,13 @@ final class ScenarioRunner {
         result["events"] = .array(events)
         events = []
       }
+      if !inspectCalls.isEmpty {
+        var o: JSONObject = [:]
+        for (name, c) in inspectCalls { o[name] = c.value }
+        result["inspector"] = normalize(.object(o))
+      }
+      let logs = materializationLogs()
+      if !logs.isEmpty { result["logs"] = .array(logs) }
       if !listeners.isEmpty {
         var o: JSONObject = [:]
         for (name, l) in listeners {
