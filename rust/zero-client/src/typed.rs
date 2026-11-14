@@ -1018,6 +1018,12 @@ impl<R: ZeroRow, T> Query<R, T> {
     }
 }
 
+impl<C, R, T> crate::query::ZeroQuery<C> for Query<R, T> {
+    fn any_query(&self, _: &C) -> std::borrow::Cow<'_, AnyQuery> {
+        std::borrow::Cow::Borrowed(&self.any)
+    }
+}
+
 impl<R, T: QueryValue> Query<R, T> {
     /// Reads a view of this query as its result.
     pub fn read(&self, view: &ViewValue) -> Result<T, ZeroValueError> {

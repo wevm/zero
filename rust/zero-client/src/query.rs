@@ -14,8 +14,23 @@ use crate::format::Format;
 use crate::hash::query::hash_of_query_internals;
 use crate::json::{self, Object, Value};
 use crate::schema::{Cardinality, Relationship, RelationshipHop, Schema, ValueType};
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::sync::Arc;
+
+/// A query a `Zero` materializes, runs, and preloads: an [`AnyQuery`], a
+/// typed `Query`, or (with the `serde` feature) a `QueryRequest` of a
+/// `define_query` definition, which is built with the client's context.
+pub trait ZeroQuery<C> {
+    /// The query, as `context` sees it.
+    fn any_query(&self, context: &C) -> Cow<'_, AnyQuery>;
+}
+
+impl<C> ZeroQuery<C> for AnyQuery {
+    fn any_query(&self, _: &C) -> Cow<'_, AnyQuery> {
+        Cow::Borrowed(self)
+    }
+}
 
 /// The prefix of the aliases the builder gives `exists` subqueries
 /// (`SUBQ_PREFIX` in `packages/zero-protocol/src/ast.ts`).

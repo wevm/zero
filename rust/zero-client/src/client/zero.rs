@@ -10,7 +10,7 @@ use super::transaction::Transaction;
 use super::{ApplicationError, Deferred, Error, Scheduler, SocketFactory};
 use crate::ivm::ViewValue;
 use crate::json::Value;
-use crate::query::AnyQuery;
+use crate::query::{AnyQuery, ZeroQuery};
 use crate::schema::Schema;
 use crate::ttl::Ttl;
 use std::cell::{Cell, RefCell};
@@ -53,6 +53,28 @@ impl<C> Mutator<C> {
         Mutator {
             name: name.into(),
             body: Rc::new(body),
+        }
+    }
+}
+
+/// A mutator applied to its arguments, ready for [`Zero::mutate_request`]
+/// (`MutateRequest` in JS and Swift). A `define_mutator` definition makes
+/// one with `with`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MutateRequest {
+    /// The mutator's name.
+    pub name: String,
+    /// Its arguments as sent: `None` when it takes none (JS `undefined`).
+    pub args: Option<Value>,
+}
+
+impl MutateRequest {
+    /// A request with arguments already in their JSON form, for example to
+    /// replay a mutation by name. Prefer a definition's `with`.
+    pub fn new(name: impl Into<String>, args: Option<Value>) -> Self {
+        MutateRequest {
+            name: name.into(),
+            args,
         }
     }
 }
@@ -196,12 +218,17 @@ impl<C: 'static> Zero<C> {
 
     /// A view of the query's rows that stays current. Named queries are
     /// synced from the server; an unnamed one only sees local data.
-    pub fn materialize(&self, query: &AnyQuery, ttl: &Ttl) -> Result<MaterializedView, Error> {
+    pub fn materialize(
+        &self,
+        query: &(impl ZeroQuery<C> + ?Sized),
+        ttl: &Ttl,
+    ) -> Result<MaterializedView, Error> {
+        let query = query.any_query(self.context());
         let e = self.engine();
-        let view = e.event_loop.call(|| e.context.materialize(query, ttl))?;
+        let view = e.event_loop.call(|| e.context.materialize(&query, ttl))?;
         let mut views = self.core.views.borrow_mut();
         views.retain(|(v, _, _)| v.upgrade().is_some_and(|v| !v.is_destroyed()));
-        views.push((view.downgrade(), query.clone(), ttl.clone()));
+        views.push((view.downgrade(), query.into_owned(), ttl.clone()));
         Ok(view)
     }
 
@@ -213,22 +240,24 @@ impl<C: 'static> Zero<C> {
     /// it, so waiting for `Complete` or `Cached` never settles.
     pub fn run(
         &self,
-        query: &AnyQuery,
+        query: &(impl ZeroQuery<C> + ?Sized),
         run_type: RunType,
         ttl: Option<&Ttl>,
     ) -> Deferred<ViewValue> {
+        let query = query.any_query(self.context());
         let e = self.engine();
-        e.event_loop.call(|| e.context.run(query, run_type, ttl))
+        e.event_loop.call(|| e.context.run(&query, run_type, ttl))
     }
 
     /// Keeps the query's rows synced without a view, until `cleanup`.
     /// Preloading an unnamed query does nothing. JS's default `ttl` for a
     /// preload is [`Ttl::DEFAULT_PRELOAD`], not `Ttl::default()`.
-    pub fn preload(&self, query: &AnyQuery, ttl: &Ttl) -> Preload {
+    pub fn preload(&self, query: &(impl ZeroQuery<C> + ?Sized), ttl: &Ttl) -> Preload {
+        let query = query.any_query(self.context());
         let e = self.engine();
-        let preload = e.event_loop.call(|| e.context.preload(query, ttl));
+        let preload = e.event_loop.call(|| e.context.preload(&query, ttl));
         let record = Rc::new(PreloadRecord {
-            query: query.clone(),
+            query: query.into_owned(),
             ttl: ttl.clone(),
             cleanup: RefCell::new(preload.cleanup),
             active: Cell::new(true),
@@ -253,6 +282,13 @@ impl<C: 'static> Zero<C> {
     pub fn mutate(&self, name: &str, args: Option<Value>) -> MutatorResult {
         let e = self.engine();
         e.event_loop.call(|| e.mutate(name, args))
+    }
+
+    /// [`mutate`](Zero::mutate) of a request, such as a `define_mutator`
+    /// definition applied to its arguments: JS's and Swift's
+    /// `zero.mutate(request)`.
+    pub fn mutate_request(&self, request: MutateRequest) -> MutatorResult {
+        self.mutate(&request.name, request.args)
     }
 
     /// The app was shown, or hidden. Hidden for

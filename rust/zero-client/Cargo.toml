@@ -27,12 +27,18 @@ sqlite = ["dep:rusqlite"]
 # SQLite storage with SQLite compiled in, for platforms without a
 # `libsqlite3`.
 sqlite-bundled = ["sqlite", "rusqlite/bundled"]
+# Typed named queries and mutators (`define`), whose arguments are serde
+# types, and serde for `json::Value`.
+serde = ["dep:serde"]
 
 [dependencies]
 futures-util = { version = "0.3", default-features = false, features = [
   "sink",
 ], optional = true }
 rusqlite = { version = "0.40", default-features = false, optional = true }
+serde = { version = "1", default-features = false, features = [
+  "std",
+], optional = true }
 rustls = { version = "0.23", default-features = false, features = [
   "ring",
   "std",
@@ -53,6 +59,7 @@ all-features = true
 
 # The end-to-end tests' WebSocket client and server.
 [dev-dependencies]
+serde = { version = "1", features = ["derive"] }
 futures-util = { version = "0.3", default-features = false, features = [
   "sink",
 ] }
@@ -79,3 +86,7 @@ required-features = ["tokio-transport"]
 
 [lints]
 workspace = true
+
+[[test]]
+name = "define"
+required-features = ["serde"]

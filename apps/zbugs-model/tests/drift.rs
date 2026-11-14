@@ -48,10 +48,8 @@ fn matches_the_ts_queries_and_mutators() {
 
     let qs = queries::all();
     let ms = mutators::all();
-    let rust_queries: HashMap<&str, &queries::AnyNamedQuery> =
-        qs.iter().map(|q| (q.name, q)).collect();
-    let rust_mutators: HashMap<&str, &mutators::AnyMutator> =
-        ms.iter().map(|m| (m.name, m)).collect();
+    let rust_queries: HashMap<&str, _> = qs.iter().map(|q| (q.name(), q)).collect();
+    let rust_mutators: HashMap<&str, _> = ms.iter().map(|m| (m.name(), m)).collect();
     let (ts_queries, ts_mutators) = (names(&v, "queries"), names(&v, "mutators"));
     for n in &ts_queries {
         if !rust_queries.contains_key(n.as_str()) {
@@ -91,7 +89,7 @@ fn matches_the_ts_queries_and_mutators() {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        match (q.build)(&args, context(sample).as_ref()) {
+        match q.query_from_json(&args, &context(sample)) {
             Err(e) => failures.push(format!("{label}: {e}")),
             Ok((query, sent)) => {
                 if sent != args {
@@ -101,7 +99,7 @@ fn matches_the_ts_queries_and_mutators() {
                         json::stringify(&Value::Array(args))
                     ));
                 }
-                let any = query.any();
+                let any = &query;
                 if let Some(e) = any.invalid() {
                     failures.push(format!("{label}: invalid query: {e}"));
                 }
@@ -134,19 +132,19 @@ fn check_mutator(label: &str, sample: &Value) -> Vec<String> {
     let name = sample.get("name").and_then(Value::as_str).unwrap();
     let args = sample.get("args");
     let all = mutators::all();
-    let def = all.iter().find(|m| m.name == name).unwrap();
-    match (def.reencode)(args) {
-        Ok(sent) if Some(&sent) == args => {}
+    let def = all.iter().find(|m| m.name() == name).unwrap();
+    match def.reencode(args) {
+        Ok(sent) if sent.as_ref() == args => {}
         Ok(sent) => failures.push(format!(
             "{label}: the arguments encode as {}, not {}",
-            json::stringify(&sent),
+            sent.as_ref().map_or("undefined".into(), json::stringify),
             args.map_or("undefined".into(), json::stringify)
         )),
         Err(e) => failures.push(format!("{label}: the arguments don't read: {e}")),
     }
 
     let schema = schema::schema();
-    let mut ms: Vec<Mutator<mutators::Context>> = all.into_iter().map(|m| m.mutator).collect();
+    let mut ms: Vec<Mutator<mutators::Context>> = all.iter().map(|m| m.mutator()).collect();
     // Puts the sample's rows (`{table: [row]}`) before the mutator runs.
     ms.push(Mutator::new("__drift.seed", |tx, args, _| {
         for (table, rows) in args.and_then(Value::as_object).into_iter().flatten() {
