@@ -211,11 +211,18 @@ registered throws in JS; in Rust both outcomes are a `ZeroError` saying so, and 
 
 ### React and SolidJS
 
-No UI bindings: `useQuery` is a `MaterializedView` and its listener.
-`apps/zbugs-rune` shows how a Rune app binds views to its UI, on the
-shared zbugs model (`apps/zbugs-model`), whose queries and mutators are
-`define_query` and `define_mutator` definitions; `apps/zbugs-gpui` is a
-GPUI app on the same model.
+No UI bindings. `useQuery`'s typed equivalent is `LiveView`, after the
+Swift client's `LiveQuery`: `Zero::live` takes a typed `Query` or a named
+query's `QueryRequest` and keeps its value read as the query's Rust type,
+reading only the rows whose entries changed, with its result type and an
+error that is the server's query error or a row that didn't read (which
+keeps the last value). It follows the client when the client replaces
+itself, and has listeners a UI wakes itself from; the untyped equivalent is
+a `MaterializedView` and its listener. `apps/zbugs-rune` shows how a Rune
+app binds live views to its UI, on the shared zbugs model
+(`apps/zbugs-model`), whose queries and mutators are `define_query` and
+`define_mutator` definitions; `apps/zbugs-gpui` is a GPUI app on the same
+model.
 
 ## How some vectors are compared
 

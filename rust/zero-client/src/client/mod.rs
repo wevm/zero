@@ -12,6 +12,7 @@ mod error;
 mod event_loop;
 mod inspector;
 mod ivm_branch;
+mod live_view;
 mod log;
 mod measure_push;
 mod mutation_tracker;
@@ -38,6 +39,7 @@ pub use inspector::{
     AnalyzeQueryOptions, AnalyzeQueryResult, Inspector, InspectorClient, InspectorClientGroup,
     InspectorQuery, Metrics, PlanDebugEvent, RowCountsBySource, RowsByQuery, RowsBySource,
 };
+pub use live_view::{LiveError, LiveView};
 pub use log::{LogLevel, LogSink, StderrLogSink};
 pub use query_context::{MaterializedView, Preload, RunType, ViewListener};
 pub use scheduler::*;

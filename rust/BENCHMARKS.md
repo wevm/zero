@@ -26,11 +26,12 @@ The JS sides:
 | `memory`, `hydration`, `mutations`    | `pnpm --filter zero-conformance bench` (`src/bench/client.bench.ts`)              |
 | `pokes`, `first sync`, the round trip | none: the JS client applies pokes on the next frame, so a JS timing measures that |
 
-Two of Swift's aren't ported: `btree-set.bench.ts` (the memory sources'
+One of Swift's isn't ported: `btree-set.bench.ts` (the memory sources'
 B+ tree is internal to the crate; the benchmarks time it through views and
-mutations) and the optimistic update with a live query of structs (there is
-no typed live query; an app reads a view's rows as structs, which
-`hydration` times).
+mutations). The optimistic update with a live query of structs times a
+`LiveView`, and `mutations` also times the same update with the view's rows
+read as structs by hand on every change, as an app did before `LiveView`;
+`hydration` times making a `LiveView` next to materializing as structs.
 
 The benchmarks don't run in CI; numbers from shared runners vary too much to
 gate on. CI builds them with the workspace (`cargo clippy --all-targets`,
@@ -166,6 +167,18 @@ timed from the poke's frames arriving to the view being flushed.
   a round trip from 43.2, 75.6, and 721 µs to 42.5, 47.1, and 76.7 µs.
   Materializing and memory didn't move (20.4 and 20.5 ms for 100,000
   rows; 82.8 and 81.5 MB).
+
+- **A view read as structs read every row on every change.** An app
+  kept a view's rows as structs by reading them all in its listener, so
+  an optimistic update with a view of 100,000 rows cost 13.1 ms where the
+  view itself took 18 µs. A `LiveView` reads only the rows whose entries
+  changed, as Swift's `LiveQuery` does, and lets the view change its rows
+  in place rather than copy them. In turns (three runs, `--time 1`), the
+  update with a view of 1,000, 10,000, and 100,000 rows read as structs
+  went from 82.8, 759, and 13,130 µs to 19.1, 61.6, and 521 µs; it still
+  compares every entry, about 5 ns each. Making a live view costs what
+  materializing and reading the rows did (116 µs and 119 µs at 1,000
+  rows, 1.46 and 1.45 ms at 10,000).
 
 Where Rust is still behind:
 
