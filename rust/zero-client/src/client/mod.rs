@@ -27,8 +27,8 @@ mod zero;
 
 pub use connection_manager::{ConnectionState, ConnectionStatus, NeedsAuthReason};
 pub use engine::{
-    MutationOutcome, MutatorResult, StorageFailureHandler, UpdateNeededHandler, UpdateNeededReason,
-    ZeroOptions,
+    BatchViewUpdates, MutationOutcome, MutatorResult, StorageFailureHandler, UpdateNeededHandler,
+    UpdateNeededReason, ZeroOptions,
 };
 pub use error::*;
 pub use log::{LogLevel, LogSink, StderrLogSink};
@@ -37,4 +37,4 @@ pub use scheduler::*;
 pub use socket::{SocketConnection, SocketEvents, SocketFactory, SocketMessage};
 pub use storage::*;
 pub use transaction::{Reason, TableMutator, Transaction};
-pub use zero::{Connection, Mutator, Zero};
+pub use zero::{Connection, MutateRequest, Mutator, Zero};

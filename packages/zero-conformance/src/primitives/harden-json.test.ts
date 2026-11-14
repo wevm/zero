@@ -20,6 +20,7 @@ import {emitGeneratedVectors, emitVectors} from '../vectors.ts';
 // Seeds: change one to get a new corpus.
 const JSON_SEED = 0x4a50e;
 const JSON_FUZZ_SEED = 0x4a50f;
+const JSON_DEEP_SEED = 0x4a510;
 const DOWNSTREAM_SEED = 0xd0e7;
 const POKE_SEED = 0xc4c7;
 
@@ -200,10 +201,15 @@ function jsonCorpus(r: Random, count: number): JSONCase[] {
   return cases;
 }
 
-/** Nesting at the Swift parser's limit of 1,500, then mutated. */
-function deepCases(r: Random): JSONCase[] {
+/**
+ * Deep nesting, then mutated: at 1,500, Swift's and Rust's limit before,
+ * and at 4,000, near the deepest zero-cache writes (Node's `JSON.stringify`
+ * overflows its stack past about 4,170 levels, and past about 4,090 in a
+ * test).
+ */
+function deepCases(r: Random, depths: number[]): JSONCase[] {
   const cases: JSONCase[] = [];
-  for (const depth of [1499, 1500]) {
+  for (const depth of depths) {
     const arrays = '['.repeat(depth) + ']'.repeat(depth);
     const objects = '{"a":'.repeat(depth - 1) + '{}' + '}'.repeat(depth - 1);
     cases.push(jsonCase(arrays), jsonCase(objects));
@@ -228,7 +234,11 @@ test('harden-json', () => {
     'harden-json',
     'sweep-json',
     'Random and randomly edited JSON texts. `ok` is whether `JSON.parse` accepts the text; `stringify` is `JSON.stringify` of what it parsed.',
-    [...deepCases(r), ...jsonCorpus(r, 1500)],
+    [
+      ...deepCases(r, [1499, 1500]),
+      ...deepCases(new Random(JSON_DEEP_SEED), [3999, 4000]),
+      ...jsonCorpus(r, 1500),
+    ],
     undefined,
     {compact: true},
   );

@@ -120,9 +120,6 @@ final class ScreenshotTests: XCTestCase {
     guard expect(app, rows.firstMatch, "an issue in the list", timeout: 120) else { return }
 
     // Status: All.
-    if isPhone {
-      back(app)
-    }
     #if os(macOS)
       let status = app.popUpButtons.matching(NSPredicate(format: "value == 'Open'")).firstMatch
       let all = app.menuItems["All"]
@@ -131,6 +128,14 @@ final class ScreenshotTests: XCTestCase {
         .firstMatch
       let all = app.buttons["All"]
     #endif
+    // A tap while the app is still taking in its first sync can highlight
+    // the back button and not go back (CI's iPhone did twice), so tap it
+    // again if the filters haven't appeared and the list is still there.
+    if isPhone {
+      back(app)
+      let backButton = app.navigationBars.buttons["BackButton"]
+      if !status.waitForExistence(timeout: 10), backButton.exists { press(backButton) }
+    }
     guard expect(app, status, "the Status picker") else { return }
     press(status)
     guard expect(app, all, "the All status") else { return }

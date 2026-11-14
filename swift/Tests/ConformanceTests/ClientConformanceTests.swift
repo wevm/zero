@@ -79,6 +79,8 @@ final class ScenarioRunner {
   let factory = MockSocketFactory()
   var zero: Zero<Void>!
   var events: [JSONValue] = []
+  /// View and `listen` listener calls so far, for `batchViewUpdates`.
+  var listenerCalls = 0
   var placeholders: [String: String] = [:]
 
   final class ViewEntryState {
@@ -145,6 +147,7 @@ final class ScenarioRunner {
     if let v = o["disconnectTimeoutMs"]?.numberValue { options.disconnectTimeoutMs = v }
     if let v = o["queryChangeThrottleMs"]?.numberValue { options.queryChangeThrottleMs = v }
     if let v = o["maxHeaderLength"]?.numberValue { options.maxHeaderLength = Int(v) }
+    if let v = o["slowMaterializeThreshold"]?.numberValue { options.slowMaterializeThreshold = v }
     options.hiddenDisconnectDelayMs = o["hiddenTabDisconnectDelay"]?.numberValue ?? 300_000
     options.mutateURL = o["mutateURL"]?.stringValue
     options.mutateHeaders = o["mutateHeaders"]?.objectValue?.dictionary.compactMapValues(
@@ -152,6 +155,17 @@ final class ScenarioRunner {
     options.queryURL = o["queryURL"]?.stringValue
     options.queryHeaders = o["queryHeaders"]?.objectValue?.dictionary.compactMapValues(
       \.stringValue)
+    if o["batchViewUpdates"]?.boolValue == true {
+      options.batchViewUpdates = { [weak self] apply in
+        let before = self?.listenerCalls ?? 0
+        apply()
+        guard let self, self.listenerCalls > before else { return }
+        self.events.append(["batchViewUpdates": .number(Double(self.listenerCalls - before))])
+      }
+    }
+    if let traceparent = o["traceparent"]?.stringValue {
+      options.getTraceparent = { traceparent }
+    }
     options.storageKey = "\(o["storageKey"]?.stringValue ?? "")#scenario-\(scenarioKey)"
     options.storage = storage
     options.onUpdateNeeded = { [weak self] reason in
@@ -255,10 +269,11 @@ final class ScenarioRunner {
       retired += views.filter { $0.0 == name }.map(\.1)
       views.removeAll { $0.0 == name }
       views.append((name, entry))
-      _ = view.addListener { data, resultType, _ in
+      _ = view.addListener { [unowned self] data, resultType, _ in
         entry.data = data.json ?? .null
         entry.resultType = resultType.rawValue
         entry.notifications += 1
+        self.listenerCalls += 1
       }
     case "destroy":
       let name = step["view"]!.stringValue!
@@ -373,6 +388,7 @@ final class ScenarioRunner {
       var count = 0
       entry.remove = view.addListener { [unowned self] data, resultType, _ in
         entry.calls.append(["data": data.json ?? .null, "resultType": .string(resultType.rawValue)])
+        self.listenerCalls += 1
         count += 1
         if count > after, let actions = pending {
           pending = nil

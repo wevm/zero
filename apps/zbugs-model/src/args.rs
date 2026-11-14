@@ -6,55 +6,9 @@
 //! what the TS side was given.
 
 use crate::schema::IssueVisibility;
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use zero_client::json::{Object, Value};
+use zero_client::json::Value;
 use zero_client::typed::{Direction, ZeroValue};
-
-/// `value` as JSON.
-pub fn to_value<T: Serialize>(value: &T) -> Value {
-    from_serde(serde_json::to_value(value).expect("arguments encode as JSON"))
-}
-
-/// `value` read as `T`.
-pub fn from_value<T: DeserializeOwned>(value: &Value) -> Result<T, String> {
-    serde_json::from_value(to_serde(value)).map_err(|e| e.to_string())
-}
-
-fn from_serde(value: serde_json::Value) -> Value {
-    match value {
-        serde_json::Value::Null => Value::Null,
-        serde_json::Value::Bool(b) => Value::from(b),
-        serde_json::Value::Number(n) => Value::from(n.as_f64().unwrap_or(f64::NAN)),
-        serde_json::Value::String(s) => Value::from(s),
-        serde_json::Value::Array(a) => Value::Array(a.into_iter().map(from_serde).collect()),
-        serde_json::Value::Object(o) => Value::Object(
-            o.into_iter()
-                .map(|(k, v)| (k, from_serde(v)))
-                .collect::<Object>(),
-        ),
-    }
-}
-
-fn to_serde(value: &Value) -> serde_json::Value {
-    match value {
-        Value::Null => serde_json::Value::Null,
-        Value::Bool(b) => serde_json::Value::Bool(*b),
-        Value::Number(n) => {
-            // Integers as integers, so they read as `i64` fields.
-            if n.fract() == 0.0 && n.abs() < 9_007_199_254_740_992.0 {
-                serde_json::Value::from(*n as i64)
-            } else {
-                serde_json::Number::from_f64(*n).map_or(serde_json::Value::Null, Into::into)
-            }
-        }
-        Value::String(s) => serde_json::Value::String(s.clone()),
-        Value::Array(a) => serde_json::Value::Array(a.iter().map(to_serde).collect()),
-        Value::Object(o) => {
-            serde_json::Value::Object(o.iter().map(|(k, v)| (k.clone(), to_serde(v))).collect())
-        }
-    }
-}
 
 /// `'asc' | 'desc'`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

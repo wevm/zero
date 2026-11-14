@@ -70,41 +70,35 @@ struct SweepWireTests {
   }
 
   /// A row value nested as deep as the parser accepts: the poke takes 5
-  /// levels, the value the rest of `JSONParser.maxDepth`. Parsing, encoding,
-  /// hashing, and comparing it must not overflow the stack of the thread it
-  /// is on: here one with 512 KB, the size of a test or cooperative thread
-  /// on macOS. One level more is rejected. (zero-cache writes about 4,100
-  /// levels; see JSParity.md.)
+  /// levels, the value the rest of `JSONParser.maxDepth`. Parsing,
+  /// encoding, hashing, comparing, and freeing it must not overflow the
+  /// stack of the thread it is on: here one with 512 KB, the size of a test
+  /// or cooperative thread on macOS. One level more is rejected, and so is
+  /// a message as deep that isn't a poke.
   @Test func deepRowValue() async throws {
     func poke(_ depth: Int) -> String {
       #"["pokePart",{"pokeID":"p","rowsPatch":[{"op":"put","tableName":"t","value":{"id":"x","j":"#
         + String(repeating: "[", count: depth) + String(repeating: "]", count: depth) + "}}]}]"
     }
     let text = poke(JSONParser.maxDepth - 5)
-    #expect(throws: (any Error).self) { try Downstream(text: poke(JSONParser.maxDepth - 4)) }
-    let messages = try await Self.onThread(stackSize: 512 << 10) {
+    let deeper = poke(JSONParser.maxDepth - 4)
+    let deep =
+      String(repeating: "[", count: JSONParser.maxDepth)
+      + String(repeating: "]", count: JSONParser.maxDepth)
+    let results = try await Self.onThread(stackSize: 512 << 10) {
       let message = try Downstream(text: text)
       let encoded = JSONSerializer.stringify(message.json)
       let decoded = try Downstream(text: encoded)
       var hasher = Hasher()
       message.hash(into: &hasher)
       _ = hasher.finalize()
-      return Messages([message, decoded], encodedLength: encoded.utf8.count)
+      return [
+        encoded.utf8.count == text.utf8.count, message == decoded,
+        (try? Downstream(text: deeper)) == nil,
+        (try? Downstream(text: deep)) == nil,
+      ]
     }
-    #expect(messages.encodedLength == text.utf8.count)
-    #expect(messages.all[0] == messages.all[1])
-    // Freeing still recurses, in `Array`'s deinit, and fits as well.
-    try await Self.onThread(stackSize: 512 << 10) { messages.all = [] }
-  }
-
-  final class Messages: @unchecked Sendable {
-    var all: [Downstream]
-    let encodedLength: Int
-
-    init(_ all: [Downstream], encodedLength: Int) {
-      self.all = all
-      self.encodedLength = encodedLength
-    }
+    #expect(results == [true, true, true, true])
   }
 
   /// Runs `body` on a thread with a stack of `stackSize` bytes.

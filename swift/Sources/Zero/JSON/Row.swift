@@ -386,9 +386,15 @@ final class RowStorage: ManagedBuffer<RowHeader, JSONValue?> {
     }
   }
 
+  /// Frees nested values without recursion (`JSONValue.free(_:)`).
   deinit {
+    var pending: [JSONValue] = []
     withUnsafeMutablePointers { header, values in
+      for i in 0..<header.pointee.count where values[i] != nil {
+        JSONValue.takeNested(&values[i]!, into: &pending)
+      }
       _ = values.deinitialize(count: header.pointee.count)
     }
+    JSONValue.free(&pending)
   }
 }

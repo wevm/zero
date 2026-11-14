@@ -15,7 +15,7 @@ pub mod queries;
 pub mod schema;
 
 pub use auth::{AuthData, make_id};
-pub use mutators::{Context, MutateRequest, client_mutators};
+pub use mutators::{Context, client_mutators};
 pub use queries::ZERO_PROJECT_NAME;
 
 /// The zero-cache address as the client takes it. zbugs' backend prints it

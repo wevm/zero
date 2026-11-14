@@ -18,6 +18,11 @@ final class BranchDelegate: BuilderDelegate {
   func aggregateKeyColumns(_ table: String, _ columns: [String]) -> [String] {
     branch.serverColumnNames(table, columns)
   }
+  /// Wraps each source connection of a pipeline, to time its pushes.
+  var decorateSource: ((any SourceInput, String) -> any Input)?
+  func decorateSourceInput(_ input: any SourceInput, queryID: String) -> any Input {
+    decorateSource?(input, queryID) ?? input
+  }
 }
 
 /// Materializes queries over an IVM branch, registers named ones with the
@@ -51,6 +56,10 @@ final class QueryContext {
   private var warnedLocalOnly = Set<String>()
   /// Counts the view notifications under way.
   let notifications = NotificationGate()
+  /// Records a query metric (`addMetric`); nil for a mutator's queries.
+  private let addMetric: ((ClientMetricName, Double, String, AST?) -> Void)?
+  /// The monotonic clock the metrics are timed with.
+  private let monotonicNow: () -> Double
 
   /// Whether listeners are being told about a change. JS mutators are
   /// async, so a mutation made from a listener commits once the
@@ -65,7 +74,9 @@ final class QueryContext {
     microtask: @escaping (@escaping () -> Void) -> Void,
     log: Log? = nil,
     closedReason: @escaping () -> ConnectionError? = { nil },
-    aggregatesFromSource: Bool = true
+    aggregatesFromSource: Bool = true,
+    addMetric: ((ClientMetricName, Double, String, AST?) -> Void)? = nil,
+    monotonicNow: @escaping () -> Double = { 0 }
   ) {
     self.branch = branch
     self.delegate = BranchDelegate(branch, aggregatesFromSource: aggregatesFromSource)
@@ -75,6 +86,15 @@ final class QueryContext {
     self.microtask = microtask
     self.log = log
     self.closedReason = closedReason
+    self.addMetric = addMetric
+    self.monotonicNow = monotonicNow
+    if let addMetric {
+      delegate.decorateSource = { input, queryID in
+        MeasurePush(
+          input, queryID: queryID, sampleRate: Int(updateSampleRate), now: monotonicNow
+        ) { elapsed, queryID in addMetric(.queryUpdateClient, elapsed, queryID, nil) }
+      }
+    }
   }
 
   /// The error of a query waiting for the server on a closed client: the
@@ -225,8 +245,12 @@ final class QueryContext {
     var view: ArrayView?
     var destroyed = false
 
+    let addMetric = self.addMetric
+    let monotonicNow = self.monotonicNow
+    var t0 = 0.0
     let maybeResolveComplete = {
       if attached, got == .yes, case .pending = queryComplete {
+        addMetric?(.queryMaterializationEndToEnd, monotonicNow() - t0, queryID, ast)
         queryComplete = .complete
         settle(.complete)
       }
@@ -253,6 +277,7 @@ final class QueryContext {
 
     var removeCommitObserver: (() -> Void)?
     var removePendingAttach: (() -> Void)?
+    t0 = monotonicNow()
     let removeAddedQuery =
       customQueryID.map { addCustomQuery(ast, $0, ttl, gotCallback) } ?? {}
 
@@ -339,6 +364,7 @@ final class QueryContext {
       removePendingAttach = onPipelinesReady { [weak created] in
         removePendingAttach = nil
         if deferred.destroyed { return {} }
+        let t1 = monotonicNow()
         do {
           created?.holdData()
           try deferred.attach()
@@ -350,14 +376,18 @@ final class QueryContext {
           settle(.failed(e))
           throw error
         }
+        let hydrateMs = monotonicNow() - t1
         return {
           if destroyed { return }
           attached = true
           created?.releaseData()
+          addMetric?(.queryMaterializationClient, hydrateMs, queryID, nil)
           maybeResolveComplete()
           maybeMarkCached()
         }
       }
+    } else {
+      addMetric?(.queryMaterializationClient, monotonicNow() - t0, queryID, nil)
     }
 
     view = created

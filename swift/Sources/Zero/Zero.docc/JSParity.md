@@ -31,7 +31,8 @@ are arguments of
 | `kvStore` (`'idb'` or `'mem'`)                                                                    | `storage`: `.sqlite()` or `.memory`                                                                                              |
 | `hiddenTabDisconnectDelay`                                                                        | none: the client pushes pending mutations and disconnects when the app goes to the background, and reconnects when it comes back |
 | `onOnlineChange` (deprecated)                                                                     | ``Connection/subscribe(_:)``                                                                                                       |
-| `getTraceparent`, `slowMaterializeThreshold`, `batchViewUpdates`, `maxRecentQueries` (deprecated) | not ported                                                                                                                       |
+| `getTraceparent`, `batchViewUpdates`, `slowMaterializeThreshold`                                  | the same                                                                                                                         |
+| `maxRecentQueries` (deprecated)                                                                   | not ported                                                                                                                       |
 
 ## The client
 
@@ -49,7 +50,8 @@ are arguments of
 | `zero.close()`                                                                                                                                                                                    | `zero.close()`; dropping the last reference to a `Zero` closes it too |
 | `zero.mutate.issue.insert(...)` (CRUD mutators)                                                                                                                                                   | not ported: write a mutator                                                                           |
 | `zero.delete()`, `dropAllDatabases()` | `await zero.delete()`, `await dropAllDatabases(_:)`, which return the ``DroppedDatabases`` |
-| `zero.mutateBatch`, `zero.online`, `zero.onOnline`, `zero.inspector`, `zero.server`, `zero.storageKey`, `zero.idbName`, `zero.kvStore`, `zero.schemaVersion` | not ported |
+| `zero.inspector`: `client`, `clientGroup`, `metrics()`, `clients()`, `clientsWithQueries()`, `serverVersion()`, `analyzeQuery`, `analyzeServerAST`, `analyzeNamedQuery`, `authenticate`, `formatPlannerEvents` | `zero.inspector`, an ``Inspector`` with the same members, whose methods are `async throws` (`formatPlannerEvents` isn't); its queries are ``InspectorQuery`` values, and the metrics ``TDigest``s. Where JS asks for the admin password in a dialog, a request throws ``InspectorError/authenticationRequired``: call `authenticate(password:)` first |
+| `zero.mutateBatch`, `zero.online`, `zero.onOnline`, `zero.server`, `zero.storageKey`, `zero.idbName`, `zero.kvStore`, `zero.schemaVersion` | not ported |
 | `zero.version`                                                                                                                                                                                    | ``protocolVersion``, the sync protocol version                                                          |
 
 When the server no longer has the client's state, JS asks the app to
@@ -243,17 +245,19 @@ is written or sent.
   rejected as bad poke data: the client disconnects with a poke error. JS
   takes any number. A stored pending mutation with such an ID is dropped
   when the client opens, and logged as an error.
-- **JSON nesting depth.** JSON nested more than 1,500 arrays and objects
-  deep is rejected ("JSON nested too deeply"); JS accepts whatever fits its
-  stack, and zero-cache writes up to about 4,100 levels. A poke is about 5
-  levels before a row's values, and real data, such as a rich-text document
-  in a JSON column, rarely passes a few hundred, but a row with a JSON
-  column nested deeper than about 1,495 levels makes the client reject the
-  message, disconnect, and fail the same way after it reconnects. Values
-  that deep are parsed, written, compared, and hashed without recursion.
-  Freeing one still recurses: in a release build 1,500 levels fit in a
-  512 KB stack (a macOS test or cooperative thread), but a debug build
-  overflows one when it frees objects nested more than about 1,000 deep.
+- **JSON nesting depth.** JSON nested more than 5,000 arrays and objects
+  deep is rejected ("JSON nested too deeply"), as in the Rust client. JS
+  has no set limit: `JSON.parse` takes any depth, but `downstreamSchema`
+  checks a row's values with `isJSONValue`, which recurses until the stack
+  runs out (in a Node test, past about 3,500 levels of objects or 4,600 of
+  arrays), and zero-cache's `JSON.stringify` overflows past about 4,170
+  levels, so it sends nothing deeper. Values that deep are parsed,
+  written, compared, hashed, and freed without recursion, so they fit in a
+  512 KB stack (a macOS test or cooperative thread), in a debug build too.
+  The exception is an array the app holds on its own, such as a column's
+  value it kept after the row was freed: freeing it recurses through
+  Swift's `Array`, about 240 bytes a level in a release build, so 5,000
+  levels of arrays take about 1.2 MB.
 - **Mutation outcomes after a disconnect (Swift only).** As in JS, when
   the connection drops before the server answers a mutation, its `server`
   settles with `.zeroError` and doesn't settle again after the mutation is

@@ -68,7 +68,18 @@ factory.
 | `pingTimeoutMs`, `disconnectTimeoutMs`, `queryChangeThrottleMs`, `maxHeaderLength` | the same, in snake case                                               |
 | `hiddenTabDisconnectDelay`                                                         | `hidden_disconnect_delay_ms`, with `Zero::set_visible`                |
 | `kvStore` (`'idb'` or `'mem'`)                                                     | `storage`: `ZeroStorage::Memory` (the default), `Sqlite`, or `Custom` |
-| `getTraceparent`, `slowMaterializeThreshold`, `batchViewUpdates`, `onOnlineChange` | not ported                                                            |
+| `getTraceparent`                                                                   | `get_traceparent`                                                     |
+| `onOnlineChange` (deprecated)                                                      | `connection().subscribe(listener)`                                    |
+| `server`, `getQueriesURL` (deprecated)                                             | `cache_url`, `query_url`                                              |
+| `batchViewUpdates`                                                                 | `batch_view_updates`                                                  |
+| `slowMaterializeThreshold`, `maxRecentQueries` (deprecated)                        | not ported                                                            |
+
+Two defaults differ from JS. `storage` is `ZeroStorage::Memory`, since
+SQLite is an opt-in feature, where JS keeps its data in IndexedDB.
+`hidden_disconnect_delay_ms` is 0 where JS waits 5 minutes, as in Swift:
+a native app is suspended soon after it goes to the background, so the
+client disconnects as soon as the app says it is hidden. A desktop app
+whose window can stay hidden for long can set JS's 300,000.
 
 ### The client
 
@@ -79,7 +90,7 @@ factory.
 | `zero.userID`, `zero.schema`, `zero.context`, `zero.closed`                        | `user_id()`, `schema()`, `context()`, `closed()`                                                        |
 | `zero.materialize(query)`                                                          | `materialize(&query, &ttl)?`, a `MaterializedView` with `data`, `add_listener`, `destroy`, `update_ttl` |
 | `zero.run(query, {type})`                                                          | `run(&query, RunType, ttl)`, a `Deferred<ViewValue>` to await or read once settled                      |
-| `zero.preload(query)`                                                              | `preload(&query, &ttl)`, a `Preload` with `cleanup`, `cached`, and `complete`                           |
+| `zero.preload(query)`                                                              | `preload(&query, &Ttl::DEFAULT_PRELOAD)`, a `Preload` with `cleanup`, `cached`, and `complete`          |
 | `zero.mutate(request)`                                                             | `mutate(name, args)`, a `MutatorResult` whose `client` and `server` are `Deferred<MutationOutcome>`     |
 | `zero.connection.state`, `.subscribe`, `.connect({auth})`                          | `connection().state()`, `.subscribe(listener)`, `.connect(auth)`                                        |
 | `zero.close()`, `zero.delete()`, `dropAllDatabases()`                              | `close()`, `delete()`, `client::drop_all_databases(&storage)`, which return the `DroppedDatabases`      |
@@ -101,22 +112,24 @@ the same store, with the views and preloads moved to the new client.
 Generated code (`zero-rust codegen`) has a row struct per table with
 `Column` and `Relationship` constants, and `zql::<table>()` for its typed
 `Query`. `AnyQuery` is the untyped builder, named by strings; a typed
-query wraps one (`any()`, `into_any()`, `Query::from_any`), which is what
-`materialize`, `run`, and `preload` take.
+query wraps one (`any()`, `into_any()`, `Query::from_any`). `materialize`,
+`run`, and `preload` take any `ZeroQuery`: an `AnyQuery`, a typed `Query`,
+or a named query's `QueryRequest`, which they build with the client's
+context.
 
-| JS                                                                  | Rust                                                                                           |
-| ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `defineQueries(...)`, `defineQuery(...)`                            | not ported: name a query with `AnyQuery::name_and_args(name, args)`                            |
-| `.where('open', true)`                                              | `.where_eq(Issue::OPEN, true)`                                                                 |
-| `.where('title', 'LIKE', '%x%')`                                    | `.where_(Issue::TITLE, SimpleOperator::Like, "%x%".into())`                                    |
-| `.where(({cmp, and, or, not, exists}) => ...)`                      | `.where_expr(\|e\| e.and(vec![...]))`, with `RowExpression`                                    |
-| `.where(({cmp, json}) => cmp(json('metadata', 'tags', 0), 'bug'))`  | `.where_expr(\|e\| e.json(User::METADATA, path).eq("bug".into()))`                             |
-| `.whereExists('labels', q => ...)`                                  | `.where_exists(Issue::LABELS, ExistsOptions::default(), \|q\| ...)`                            |
-| `.related('comments', q => q.limit(10))`                            | `.related(Issue::COMMENTS, \|q\| q.limit(10))`                                                 |
-| `.orderBy('created', 'desc')`, `.limit(n)`, `.start(row)`, `.one()` | `.order_by(Issue::CREATED, Direction::Desc)`, `.limit(n)`, `.start(&row, inclusive)`, `.one()` |
-| `.count()`, `.sum`, `.avg`, `.min`, `.max`                          | the same, with `_json` forms for a JSON path; `count` is an `i64`                              |
-| `.related('comments', q => q.count())`                              | `.related(Issue::COMMENTS, \|q\| q.count())`, read as `row.aggregates.count(Issue::COMMENTS)`  |
-| `.distinct(...)`, `.groupBy(...).count()`                           | `.distinct(vec![...])`, `.group_by(vec![...]).count()`                                         |
+| JS                                                                  | Rust                                                                                                                                          |
+| ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `defineQueries(...)`, `defineQuery(...)`                            | `define::define_query(name, \|args, ctx\| query)` (`serde` feature), called as `Q.with(args)`; untyped, `AnyQuery::name_and_args(name, args)` |
+| `.where('open', true)`                                              | `.where_eq(Issue::OPEN, true)`                                                                                                                |
+| `.where('title', 'LIKE', '%x%')`                                    | `.where_(Issue::TITLE, SimpleOperator::Like, "%x%".into())`                                                                                   |
+| `.where(({cmp, and, or, not, exists}) => ...)`                      | `.where_expr(\|e\| e.and(vec![...]))`, with `RowExpression`                                                                                   |
+| `.where(({cmp, json}) => cmp(json('metadata', 'tags', 0), 'bug'))`  | `.where_expr(\|e\| e.json(User::METADATA, path).eq("bug".into()))`                                                                            |
+| `.whereExists('labels', q => ...)`                                  | `.where_exists(Issue::LABELS, ExistsOptions::default(), \|q\| ...)`                                                                           |
+| `.related('comments', q => q.limit(10))`                            | `.related(Issue::COMMENTS, \|q\| q.limit(10))`                                                                                                |
+| `.orderBy('created', 'desc')`, `.limit(n)`, `.start(row)`, `.one()` | `.order_by(Issue::CREATED, Direction::Desc)`, `.limit(n)`, `.start(&row, inclusive)`, `.one()`                                                |
+| `.count()`, `.sum`, `.avg`, `.min`, `.max`                          | the same, with `_json` forms for a JSON path; `count` is an `i64`                                                                             |
+| `.related('comments', q => q.count())`                              | `.related(Issue::COMMENTS, \|q\| q.count())`, read as `row.aggregates.count(Issue::COMMENTS)`                                                 |
+| `.distinct(...)`, `.groupBy(...).count()`                           | `.distinct(vec![...])`, `.group_by(vec![...]).count()`                                                                                        |
 
 A view's data is a `ViewValue`; a typed query reads it as its rows with
 `query.read(&view.data())` (or `Vec::<Issue>::from_view`). An unnamed
@@ -126,24 +139,30 @@ never settles, and preloading it does nothing.
 
 ### Mutators
 
-| JS                                                                     | Rust                                                                                   |
-| ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `defineMutator(async ({tx, args, ctx}) => ...)`                        | `Mutator::new(name, \|tx, args, ctx\| ...)`, a synchronous closure over JSON arguments |
-| `await tx.mutate.issue.insert(row)`, `.upsert`, `.update`, `.delete`   | `mutate::issue(tx).insert(&row)?` (generated), or `tx.table("issue").insert(&object)?` |
-| `await tx.run(query)`                                                  | `tx.run(&query)?`                                                                      |
-| `tx.location`, `tx.reason`, `tx.clientID`, `tx.mutationID`, `tx.token` | `location()`, `reason()`, `client_id()`, `mutation_id()`, `token()`                    |
-| `throw new ApplicationError(message, {details})`                       | `Err(ApplicationError { message, details }.into())`                                    |
+| JS                                                                     | Rust                                                                                                                                                                                 |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `defineMutator(async ({tx, args, ctx}) => ...)`                        | `define::define_mutator(name, \|tx, args, ctx\| ...)` (`serde` feature), a synchronous function over typed arguments; untyped, `Mutator::new(name, \|tx, args, ctx\| ...)` over JSON |
+| `zero.mutate(mutators.issue.create(args))`                             | `zero.mutate_request(CREATE_ISSUE.with(args))`, or `zero.mutate(name, args)` with JSON arguments                                                                                     |
+| `await tx.mutate.issue.insert(row)`, `.upsert`, `.update`, `.delete`   | `mutate::issue(tx).insert(&row)?` (generated), or `tx.table("issue").insert(&object)?`                                                                                               |
+| `await tx.run(query)`                                                  | `tx.run(&query)?`                                                                                                                                                                    |
+| `tx.location`, `tx.reason`, `tx.clientID`, `tx.mutationID`, `tx.token` | `location()`, `reason()`, `client_id()`, `mutation_id()`, `token()`                                                                                                                  |
+| `throw new ApplicationError(message, {details})`                       | `Err(ApplicationError { message, details }.into())`                                                                                                                                  |
 
 A mutator runs once optimistically and again on every rebase while it is
 pending, so it must depend only on the transaction, its arguments, and the
-context. Calling a mutator that isn't registered throws in JS; in Rust
-both outcomes are a `ZeroError` saying so, and nothing is written or sent.
+context. A definition is registered with its `mutator()` in `Zero::new`;
+its arguments are read back as its type before the body runs, and
+arguments that don't read fail it with an `ApplicationError`, where JS
+validates them with the definition's schema. Calling a mutator that isn't
+registered throws in JS; in Rust both outcomes are a `ZeroError` saying so, and nothing is written or sent.
 
 ### React and SolidJS
 
 No UI bindings: `useQuery` is a `MaterializedView` and its listener.
 `apps/zbugs-rune` shows how a Rune app binds views to its UI, on the
-shared zbugs model (`apps/zbugs-model`); a GPUI app is in progress.
+shared zbugs model (`apps/zbugs-model`), whose queries and mutators are
+`define_query` and `define_mutator` definitions; `apps/zbugs-gpui` is a
+GPUI app on the same model.
 
 ## How some vectors are compared
 
@@ -206,6 +225,4 @@ JSON nesting is no longer a difference. JSON nested up to `json::MAX_DEPTH`
 parsed, cloned, compared, written, and dropped within a 2 MB thread stack,
 even in a debug build, so the client takes any value the server sends.
 Deeper text is rejected ("JSON nested too deeply"), where JS takes whatever
-fits its stack. The Swift client rejects past 1,500 levels, so a row with a
-JSON column nested deeper than that makes it disconnect after every
-reconnect. Formatting a value with `Debug` still recurses.
+fits its stack. The Swift client has the same limit. Formatting a value with `Debug` still recurses.

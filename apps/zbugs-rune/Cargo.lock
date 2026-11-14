@@ -4772,7 +4772,6 @@ version = "0.0.0"
 dependencies = [
  "getrandom 0.4.3",
  "serde",
- "serde_json",
  "zero-client",
 ]
 
@@ -4920,6 +4919,7 @@ dependencies = [
  "futures-util",
  "rusqlite",
  "rustls",
+ "serde",
  "tokio",
  "tokio-tungstenite",
 ]
