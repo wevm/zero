@@ -11,12 +11,12 @@ package struct JSONParser {
 
   /// Nesting deeper than this is rejected with "JSON nested too deeply".
   ///
-  /// Parsing, writing, comparing, and hashing don't recurse, but freeing a
-  /// value does (in `Array`'s and `JSONObject`'s storage), so the limit
-  /// keeps freeing within a 512 KB stack (a macOS test or cooperative
-  /// thread) in a release build. JS has no limit short of its own stack
-  /// (zero-cache writes about 4,100 levels); see JSParity.md.
-  package static let maxDepth = 1_500
+  /// `JSON.parse` has no limit, but zero-cache can't write JSON nested
+  /// deeper than its `JSON.stringify` takes, about 4,170 levels in Node, so
+  /// this is above anything it sends. The Rust client's limit is the same.
+  /// Parsing, writing, comparing, hashing, and freeing don't recurse
+  /// (except freeing an array that only the app holds; see JSParity.md).
+  package static let maxDepth = 5_000
 
   package static func parse(_ text: String) throws(Error) -> JSONValue {
     var text = text
@@ -36,9 +36,12 @@ package struct JSONParser {
   package static func parse(_ buffer: UnsafeBufferPointer<UInt8>) throws(Error) -> JSONValue {
     var p = JSONParser(buffer)
     p.skipWhitespace()
-    let value = try p.parseValue()
+    var value = try p.parseValue()
     p.skipWhitespace()
-    if p.i != p.end { throw p.error("Unexpected non-whitespace character after JSON") }
+    if p.i != p.end {
+      JSONValue.discard(&value)
+      throw p.error("Unexpected non-whitespace character after JSON")
+    }
     return value
   }
 
@@ -80,6 +83,25 @@ package struct JSONParser {
     var array: [JSONValue]?
     var object: JSONObject?
     var key = ""
+    // After an error, frees what was parsed without recursion. After a
+    // value, there's nothing left.
+    defer {
+      if let a = array.take() {
+        parents.append(.array(a))
+      } else if let o = object.take() {
+        parents.append(.object(o, key: key))
+      }
+      var pending: [JSONValue] = []
+      while let parent = parents.popLast() {
+        var value: JSONValue
+        switch consume parent {
+        case .array(let a): value = .array(consume a)
+        case .object(let o, _): value = .object(consume o)
+        }
+        JSONValue.takeNested(&value, into: &pending)
+      }
+      JSONValue.free(&pending)
+    }
     while true {
       guard i < end else { throw error("Unexpected end of JSON input") }
       var value: JSONValue

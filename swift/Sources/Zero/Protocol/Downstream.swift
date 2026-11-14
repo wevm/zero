@@ -68,7 +68,9 @@ package enum Downstream: Sendable, Hashable, JSONCodable {
 
   /// Parses message text, as the client receives it.
   package init(text: String) throws(DecodingError) {
-    try self.init(json: try JSONValue.parseMessage(text))
+    var json = try JSONValue.parseMessage(text)
+    defer { JSONValue.discard(&json) }
+    try self.init(json: json)
   }
 
   package var json: JSONValue {

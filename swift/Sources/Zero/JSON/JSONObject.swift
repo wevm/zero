@@ -212,6 +212,16 @@ public struct JSONObject: @unchecked Sendable {
     storage.insert(key, value, at: count, isInteger: Self.arrayIndex(key) != nil)
   }
 
+  /// Whether no other object shares this one's storage.
+  mutating func isUniquelyReferenced() -> Bool { isKnownUniquelyReferenced(&storage) }
+
+  /// `JSONValue.takeNested(_:into:)` for each value, of an object that
+  /// alone holds its storage.
+  mutating func takeNested(into pending: inout [JSONValue]) {
+    guard isKnownUniquelyReferenced(&storage) else { return }
+    storage.takeNested(into: &pending)
+  }
+
   /// Makes the storage this object's alone, with room for `capacity` keys.
   private mutating func makeUnique(capacity: Int) {
     let unique = isKnownUniquelyReferenced(&storage)
@@ -372,10 +382,22 @@ final class JSONObjectStorage: ManagedBuffer<JSONObjectHeader, JSONObjectEntry> 
     header.pointee.index = index
   }
 
+  func takeNested(into pending: inout [JSONValue]) {
+    withUnsafeMutablePointers { header, entries in
+      for i in 0..<header.pointee.count {
+        JSONValue.takeNested(&entries[i].value, into: &pending)
+      }
+    }
+  }
+
+  /// Frees nested values without recursion (`JSONValue.free(_:)`).
   deinit {
+    var pending: [JSONValue] = []
+    takeNested(into: &pending)
     withUnsafeMutablePointers { header, entries in
       _ = entries.deinitialize(count: header.pointee.count)
     }
+    JSONValue.free(&pending)
   }
 }
 

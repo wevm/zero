@@ -225,6 +225,4 @@ JSON nesting is no longer a difference. JSON nested up to `json::MAX_DEPTH`
 parsed, cloned, compared, written, and dropped within a 2 MB thread stack,
 even in a debug build, so the client takes any value the server sends.
 Deeper text is rejected ("JSON nested too deeply"), where JS takes whatever
-fits its stack. The Swift client rejects past 1,500 levels, so a row with a
-JSON column nested deeper than that makes it disconnect after every
-reconnect. Formatting a value with `Debug` still recurses.
+fits its stack. The Swift client has the same limit. Formatting a value with `Debug` still recurses.
