@@ -1690,6 +1690,29 @@ const deepUpstream: JSONValue[] = [
   put(nestedRelated(51)),
 ];
 
+// A poke whose row has a JSON column nested so that the message is 3,000
+// levels deep, twice what Swift and Rust took before: arrays, and objects
+// and arrays by turns. The message, its body, `rowsPatch`, the op, and the
+// row are the first 5 levels. Not much deeper: `downstreamSchema` checks a
+// row's values with `isJSONValue`, which recurses, and overflows the stack
+// of a Node test past about 3,500 levels of objects.
+const deepDownstream: JSONValue[] = [
+  '['.repeat(2995) + ']'.repeat(2995),
+  '[{"a":'.repeat(1497) + '[]' + '}]'.repeat(1497),
+].map(column => [
+  'pokePart',
+  {
+    pokeID: 'p',
+    rowsPatch: [
+      {
+        op: 'put',
+        tableName: 't',
+        value: {id: 1, j: JSON.parse(column) as JSONValue},
+      },
+    ],
+  },
+]);
+
 type TextCase = {messageText: string; ok: boolean; outputText?: string};
 
 function asText(c: MessageCase): TextCase {
@@ -1966,8 +1989,11 @@ test('protocol-downstream', () => {
   emitVectors(
     'protocol-downstream',
     'protocol-downstream',
-    'Downstream messages (`downstreamSchema`). `ok` is whether valita accepts the message in `passthrough` mode; `output` is its `strip` output, with each mutation result as the client reads it (`{error, message?, details?}` if it has an `error` key, else `{data?}`).',
-    corpus(r, handDownstream, downstreamMessage, downstreamCase, 50, 100),
+    'Downstream messages (`downstreamSchema`). `ok` is whether valita accepts the message in `passthrough` mode; `output` is its `strip` output, with each mutation result as the client reads it (`{error, message?, details?}` if it has an `error` key, else `{data?}`). Deeply nested messages are given as JSON text, in `messageText` and `outputText`.',
+    [
+      ...deepDownstream.map(m => asText(downstreamCase(m))),
+      ...corpus(r, handDownstream, downstreamMessage, downstreamCase, 50, 100),
+    ],
   );
   emitGeneratedVectors(
     'protocol-downstream-fuzz',

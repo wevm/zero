@@ -215,6 +215,8 @@ package enum PokeChunk {
     guard let text = String(validating: payload, as: UTF8.self) else {
       throw DecodingError("The encoded data was not valid for encoding utf-8")
     }
-    return try JSONDecode.array(try JSONValue.parseMessage(text), PokePartBody.init(json:))
+    var json = try JSONValue.parseMessage(text)
+    defer { JSONValue.discard(&json) }
+    return try JSONDecode.array(json, PokePartBody.init(json:))
   }
 }
