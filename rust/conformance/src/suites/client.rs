@@ -1,5 +1,5 @@
 //! Client scenarios: `client/client.test.ts`, `client/harden-*.test.ts`,
-//! `harden-queries`, and `client/bughunt.test.ts` with its seeded
+//! `harden-queries`, `client/inspector.test.ts`, and `client/bughunt.test.ts` with its seeded
 //! aggregate scenarios (`generated/client-aggregates-fuzz`).
 //!
 //! Each case is a scenario of steps an app and a server take
@@ -17,9 +17,11 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
+use zero_client::ast::Ast;
 use zero_client::ast::{Direction, JsonPathSegment, SimpleOperator, System};
 use zero_client::client::{
-    ApplicationError, Error, MaterializedView, Mutator, RunType, SocketMessage, Transaction, Zero,
+    AnalyzeQueryOptions, ApplicationError, Deferred, Error, InspectorClient, InspectorQuery,
+    LogLevel, MaterializedView, Mutator, PlanDebugEvent, RunType, SocketMessage, Transaction, Zero,
     ZeroOptions, ZeroStorage,
 };
 use zero_client::decode::JsonCodable;
@@ -37,6 +39,7 @@ pub fn suites() -> Vec<Suite> {
         "client-harden-mutations",
         "harden-queries",
         "bughunt-client",
+        "client-inspector",
     ]
     .into_iter()
     .map(|file| Suite {
@@ -556,6 +559,97 @@ struct Runner {
     /// The scenario's own storage, as `#scenario-<n>` in `harness.ts`.
     scenario_key: u64,
     restarts: Cell<u32>,
+    /// The current client's log, and how much of it was reported.
+    log: RefCell<Rc<RecordingLogSink>>,
+    logs_seen: Cell<usize>,
+    /// The `inspect` calls, and how many inspector requests were sent.
+    inspect_calls: RefCell<Vec<(String, Settled)>>,
+    inspect_count: Cell<u32>,
+}
+
+/// The messages of `addMetric`'s materialization logs.
+const MATERIALIZATION_LOGS: [&str; 2] = [
+    "Slow query materialization (including server/network)",
+    "Materialized query (including server/network)",
+];
+
+/// A materialization log line, `<message> <queryID> <AST JSON> <ms>`, as
+/// the arguments JS logs.
+fn materialization_log(level: LogLevel, line: &str) -> Option<Value> {
+    let message = MATERIALIZATION_LOGS
+        .into_iter()
+        .find(|m| line.starts_with(&format!("{m} ")))?;
+    let rest = &line[message.len() + 1..];
+    let (id, rest) = rest.split_once(' ')?;
+    let (ast, ms) = rest.rsplit_once(' ')?;
+    let mut o = Object::new();
+    o.insert("level", s(level.as_str()));
+    o.insert(
+        "args",
+        Value::Array(vec![
+            s(message),
+            s(id),
+            json::parse(ast).ok()?,
+            json::parse(ms).ok()?,
+        ]),
+    );
+    Some(Value::Object(o))
+}
+
+/// What JS's `errorMessage` gives for an inspector error. Where zero-cache
+/// refuses an unauthenticated request JS prompts for the password, and its
+/// error without one is `Authentication failed`; the Rust error goes on to
+/// say to call `authenticate(password)` (rust/PARITY.md).
+fn inspect_error(e: &Error) -> String {
+    let m = e.message();
+    match m.strip_prefix("Authentication failed:") {
+        Some(_) => "Authentication failed".into(),
+        None => m,
+    }
+}
+
+fn opt_num(n: Option<f64>) -> Value {
+    n.map_or(Value::Null, Value::Number)
+}
+
+/// A query's fields as `queriesJSON` in `harness.ts` gives them.
+fn query_json(q: &InspectorQuery) -> Value {
+    let mut o = Object::new();
+    o.insert("name", q.name.clone().map_or(Value::Null, Value::String));
+    o.insert("args", q.args.clone().map_or(Value::Null, Value::Array));
+    o.insert("got", Value::Bool(q.got));
+    o.insert("ttl", q.ttl.to_json());
+    o.insert("inactivatedAt", opt_num(q.inactivated_at));
+    o.insert("rowCount", Value::Number(q.row_count));
+    o.insert("deleted", Value::Bool(q.deleted));
+    o.insert("id", s(&q.id));
+    o.insert("clientID", s(&q.client_id));
+    o.insert("metrics", q.metrics.to_json());
+    o.insert(
+        "clientZQL",
+        q.client_zql.clone().map_or(Value::Null, Value::String),
+    );
+    o.insert(
+        "serverZQL",
+        q.server_zql.clone().map_or(Value::Null, Value::String),
+    );
+    o.insert("hydrateClient", opt_num(q.hydrate_client));
+    o.insert("hydrateServer", opt_num(q.hydrate_server));
+    o.insert("hydrateTotal", opt_num(q.hydrate_total));
+    o.insert("updateClientP50", opt_num(q.update_client_p50));
+    o.insert("updateClientP95", opt_num(q.update_client_p95));
+    o.insert("updateServerP50", opt_num(q.update_server_p50));
+    o.insert("updateServerP95", opt_num(q.update_server_p95));
+    Value::Object(o)
+}
+
+fn analyze_options(v: Option<&Value>) -> AnalyzeQueryOptions {
+    let flag = |k: &str| v.and_then(|o| o.get(k)).and_then(Value::as_bool);
+    AnalyzeQueryOptions {
+        vended_rows: flag("vendedRows"),
+        synced_rows: flag("syncedRows"),
+        join_plans: flag("joinPlans"),
+    }
 }
 
 thread_local! {
@@ -613,7 +707,7 @@ impl Runner {
         let factory = MockSocketFactory::new();
         let events: Rc<RefCell<Vec<Value>>> = Rc::default();
         let options = scenario.get("options").cloned().unwrap_or_default();
-        let zero = Self::make_zero(
+        let (zero, log) = Self::make_zero(
             &schema,
             &options,
             None,
@@ -645,6 +739,10 @@ impl Runner {
             listeners: RefCell::default(),
             scenario_key,
             restarts: Cell::new(0),
+            log: RefCell::new(log),
+            logs_seen: Cell::new(0),
+            inspect_calls: RefCell::default(),
+            inspect_count: Cell::new(0),
         }))
     }
 
@@ -656,10 +754,11 @@ impl Runner {
         factory: &Rc<MockSocketFactory>,
         events: &Rc<RefCell<Vec<Value>>>,
         scenario_key: u64,
-    ) -> Result<Zero, String> {
+    ) -> Result<(Zero, Rc<RecordingLogSink>), String> {
         let get = |k: &str| o.get(k);
+        let log = Rc::new(RecordingLogSink::default());
         let mut options = ZeroOptions {
-            log_sink: Some(Rc::new(RecordingLogSink::default())),
+            log_sink: Some(log.clone()),
             storage: STORAGE.with(|s| s.borrow().clone()),
             ..ZeroOptions::default()
         };
@@ -685,6 +784,17 @@ impl Runner {
         }
         if let Some(v) = get("maxHeaderLength").and_then(Value::as_f64) {
             options.max_header_length = v as usize;
+        }
+        if let Some(v) = get("slowMaterializeThreshold").and_then(Value::as_f64) {
+            options.slow_materialize_threshold_ms = v;
+        }
+        if let Some(l) = get("logLevel").and_then(Value::as_str) {
+            options.log_level = match l {
+                "debug" => LogLevel::Debug,
+                "info" => LogLevel::Info,
+                "error" => LogLevel::Error,
+                _ => LogLevel::Warn,
+            };
         }
         options.hidden_disconnect_delay_ms = get("hiddenTabDisconnectDelay")
             .and_then(Value::as_f64)
@@ -740,6 +850,7 @@ impl Runner {
             scheduler.clone(),
             Some(factory.clone()),
         )
+        .map(|z| (z, log))
         .map_err(|e| e.to_string())
     }
 
@@ -763,7 +874,7 @@ impl Runner {
             .or_else(|| self.scenario.get("options"))
             .cloned()
             .unwrap_or_default();
-        let new = Self::make_zero(
+        let (new, log) = Self::make_zero(
             &self.schema,
             &options,
             step.get("mutators"),
@@ -785,6 +896,9 @@ impl Runner {
             ids.insert("$clientID".into(), new.client_id());
         }
         *self.zero.borrow_mut() = Rc::new(new);
+        *self.log.borrow_mut() = log;
+        self.logs_seen.set(0);
+        self.inspect_calls.borrow_mut().clear();
         self.views.borrow_mut().clear();
         self.listeners.borrow_mut().clear();
         self.retired.borrow_mut().clear();
@@ -1068,6 +1182,7 @@ impl Runner {
                 .connect(step.get("auth").and_then(Value::as_str).map(str::to_owned)),
             "close" => self.zero().close(),
             "restart" => self.restart(step)?,
+            "inspect" => self.inspect(step)?,
             "listen" => {
                 let name = string("view")?;
                 let view = self
@@ -1135,6 +1250,135 @@ impl Runner {
         Ok(())
     }
 
+    /// An `inspect` step: calls the inspector and records how its result
+    /// settles (`inspect` in `harness.ts`).
+    fn inspect(&self, step: &Value) -> Result<(), String> {
+        let call = step.str("call")?.to_owned();
+        let entry = pending();
+        {
+            let mut calls = self.inspect_calls.borrow_mut();
+            calls.retain(|(n, _)| *n != call);
+            calls.push((call, entry.clone()));
+        }
+        fn record<T: Clone + 'static>(
+            entry: Settled,
+            d: Deferred<T>,
+            convert: impl Fn(&T) -> Value + 'static,
+        ) {
+            d.on_settle(move |r| {
+                let mut o = Object::new();
+                match r {
+                    Ok(v) => o.insert("resolved", convert(v)),
+                    Err(e) => o.insert("rejected", Value::String(inspect_error(e))),
+                };
+                *entry.borrow_mut() = Value::Object(o);
+            });
+        }
+        let placeholders = self.placeholders.borrow().clone();
+        let clients = move |clients: &Vec<InspectorClient>| {
+            let mut out: Vec<(String, Value)> = clients
+                .iter()
+                .map(|c| {
+                    let id = placeholders
+                        .get(c.id())
+                        .cloned()
+                        .unwrap_or_else(|| c.id().to_owned());
+                    let mut o = Object::new();
+                    o.insert("id", Value::String(id.clone()));
+                    o.insert("clientGroupID", s(c.client_group().id()));
+                    (id, Value::Object(o))
+                })
+                .collect();
+            out.sort_by(|a, b| a.0.cmp(&b.0));
+            Value::Array(out.into_iter().map(|(_, v)| v).collect())
+        };
+        let queries = |q: &Vec<InspectorQuery>| Value::Array(q.iter().map(query_json).collect());
+        let zero = self.zero();
+        let inspector = zero.inspector();
+        let options = analyze_options(step.get("options"));
+        match step.str("method")? {
+            "metrics" => record(entry, inspector.metrics(), |m| m.to_json()),
+            "serverVersion" => record(entry, inspector.server_version(), |v| s(v)),
+            "clients" => record(entry, inspector.clients(), clients),
+            "clientsWithQueries" => record(entry, inspector.clients_with_queries(), clients),
+            "clientQueries" => record(entry, inspector.client().queries(), queries),
+            "clientMap" => {
+                let placeholders = self.placeholders.borrow().clone();
+                record(entry, inspector.client().map(), move |m| {
+                    Value::Array(
+                        m.iter()
+                            .map(|(k, v)| {
+                                let mut k = k.clone();
+                                for (id, placeholder) in &placeholders {
+                                    k = k.replace(id.as_str(), placeholder);
+                                }
+                                Value::Array(vec![Value::String(k), v.clone()])
+                            })
+                            .collect(),
+                    )
+                })
+            }
+            "clientRows" => {
+                let table = step.get("table").and_then(Value::as_str).unwrap_or("");
+                record(entry, inspector.client().rows(table), |rows| {
+                    Value::Array(rows.iter().cloned().map(Value::Object).collect())
+                })
+            }
+            "clientGroupClients" => record(entry, inspector.client_group().clients(), clients),
+            "clientGroupClientsWithQueries" => record(
+                entry,
+                inspector.client_group().clients_with_queries(),
+                clients,
+            ),
+            "clientGroupQueries" => record(entry, inspector.client_group().queries(), queries),
+            "analyzeQuery" => {
+                let q = request(
+                    step.get("query").and_then(Value::as_str).unwrap_or(""),
+                    step.get("args"),
+                )?;
+                record(entry, inspector.analyze_query(&q, options), |r| r.to_json())
+            }
+            "analyzeServerAST" => {
+                let ast = Ast::from_json(step.field("ast")?).map_err(|e| e.to_string())?;
+                record(entry, inspector.analyze_server_ast(&ast, options), |r| {
+                    r.to_json()
+                })
+            }
+            "analyzeNamedQuery" => {
+                let name = step.get("name").and_then(Value::as_str).unwrap_or("");
+                let args = step
+                    .get("queryArgs")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                record(
+                    entry,
+                    inspector.analyze_named_query(name, args, options),
+                    |r| r.to_json(),
+                )
+            }
+            "authenticate" => {
+                let password = step.get("password").and_then(Value::as_str).unwrap_or("");
+                record(entry, inspector.authenticate(password), |b| Value::Bool(*b))
+            }
+            "formatPlannerEvents" => {
+                let events: Vec<PlanDebugEvent> = step
+                    .get("events")
+                    .and_then(Value::as_array)
+                    .map(|a| a.iter().cloned().map(PlanDebugEvent).collect())
+                    .unwrap_or_default();
+                let mut o = Object::new();
+                o.insert(
+                    "resolved",
+                    Value::String(inspector.format_planner_events(&events)),
+                );
+                *entry.borrow_mut() = Value::Object(o);
+            }
+            m => return Err(format!("Unknown inspector method {m}")),
+        }
+        Ok(())
+    }
+
     /// Settles the work due now (`settle` in `harness.ts`).
     fn settle(&self) {
         self.zero().dispatch(|| {});
@@ -1182,6 +1426,18 @@ impl Runner {
                 let from = sent_counts.get(i).copied().unwrap_or(0);
                 for m in &s.messages()[from..] {
                     let v = json::parse(m).unwrap_or_else(|_| Value::String(m.clone()));
+                    if v.at(0).and_then(Value::as_str) == Some("inspect")
+                        && let Some(id) = v.at(1).and_then(|b| b.get("id")).and_then(Value::as_str)
+                        && !self.placeholders.borrow().contains_key(id)
+                    {
+                        let n = self.inspect_count.get();
+                        self.inspect_count.set(n + 1);
+                        let placeholder = format!("$inspect.{n}");
+                        self.placeholders
+                            .borrow_mut()
+                            .insert(id.to_owned(), placeholder.clone());
+                        self.ids.borrow_mut().insert(placeholder, id.to_owned());
+                    }
                     sent.push(self.normalize(&v, None));
                 }
             }
@@ -1246,6 +1502,25 @@ impl Runner {
             let events = std::mem::take(&mut *self.events.borrow_mut());
             if !events.is_empty() {
                 result.insert("events", Value::Array(events));
+            }
+            if !self.inspect_calls.borrow().is_empty() {
+                let mut o = Object::new();
+                for (name, v) in self.inspect_calls.borrow().iter() {
+                    o.insert(name.clone(), v.borrow().clone());
+                }
+                result.insert("inspector", self.normalize(&Value::Object(o), None));
+            }
+            let logs: Vec<Value> = {
+                let entries = self.log.borrow().entries();
+                let seen = self.logs_seen.replace(entries.len());
+                entries[seen..]
+                    .iter()
+                    .filter_map(|(level, line)| materialization_log(*level, line))
+                    .map(|l| self.normalize(&l, None))
+                    .collect()
+            };
+            if !logs.is_empty() {
+                result.insert("logs", Value::Array(logs));
             }
             if !self.listeners.borrow().is_empty() {
                 let mut o = Object::new();

@@ -710,4 +710,8 @@ impl Output for ArrayView {
             s.dirty = true;
         }
     }
+
+    fn has_reconcile(&self) -> bool {
+        false
+    }
 }

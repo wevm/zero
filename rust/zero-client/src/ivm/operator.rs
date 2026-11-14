@@ -112,6 +112,12 @@ pub trait Output {
     fn push(&self, change: Change, pusher: &dyn InputBase);
     /// Phase two. Sinks can ignore it; operators must forward it.
     fn reconcile(&self, _pusher: &dyn InputBase) {}
+    /// Whether the output has a phase two: false for a sink whose JS
+    /// counterpart has no `reconcile`, such as a view, which pushes timed
+    /// for the inspector skip (`MeasurePushOperator`).
+    fn has_reconcile(&self) -> bool {
+        true
+    }
 }
 
 /// An operator in a pipeline: an input to the next and an output of the
