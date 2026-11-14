@@ -10,9 +10,6 @@ use zero_client::json::{self, Value, number};
 pub const LONE_SURROGATE: &str =
     "lone surrogate: a Rust String can't hold one, so `\\ud800` parses as U+FFFD";
 
-/// The exception for JSON nested deeper than `json::MAX_DEPTH`.
-pub const TOO_DEEP: &str = "nesting: JSON deeper than json::MAX_DEPTH is rejected";
-
 pub fn suites() -> Vec<Suite> {
     vec![
         Suite {
@@ -95,7 +92,6 @@ fn parse_and_stringify(c: &Value, _: &Value) -> Result<Outcome, String> {
     let ok = c.bool("ok")?;
     let value = match json::parse(input) {
         Ok(value) => value,
-        Err(e) if ok && e.message == json::TOO_DEEP => return Ok(Outcome::Exception(TOO_DEEP)),
         Err(e) => {
             ensure(!ok, || format!("rejected {}: {e}", quote(input)))?;
             return Ok(Outcome::Pass);

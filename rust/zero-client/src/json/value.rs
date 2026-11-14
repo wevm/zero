@@ -11,7 +11,12 @@ use std::sync::{Arc, LazyLock};
 /// Rust strings compare by code point, which for valid strings is the same
 /// as comparing by UTF-16 code unit, as JS `===` does. A Rust `String` can't
 /// hold a lone surrogate, which a JS string can (see `rust/PARITY.md`).
-#[derive(Clone, Debug, PartialEq, Default)]
+///
+/// Cloning, comparing, writing, and dropping a value as deep as the parser
+/// allows ([`MAX_DEPTH`](super::MAX_DEPTH)) fit in a 2 MB thread stack:
+/// the first three go on over a heap stack past a hundred or so levels.
+/// `Debug` formatting still recurses.
+#[derive(Debug, Default)]
 pub enum Value {
     #[default]
     Null,
@@ -82,6 +87,116 @@ impl Value {
             Value::Array(_) => "array",
             Value::Object(_) => "object",
         }
+    }
+}
+
+/// How many levels deep cloning, comparing, and writing a value recurse
+/// before they go on over a heap stack. Values nest a few levels in
+/// practice, and these keep the recursive versions' speed for them.
+pub(crate) const RECURSION_DEPTH: usize = 128;
+
+impl Clone for Value {
+    fn clone(&self) -> Value {
+        match self {
+            Value::Null => Value::Null,
+            Value::Bool(b) => Value::Bool(*b),
+            Value::Number(n) => Value::Number(*n),
+            Value::String(s) => Value::String(s.clone()),
+            Value::Array(a) => Value::Array(clone_array(a, RECURSION_DEPTH)),
+            // An object's values are shared, so this doesn't recurse.
+            Value::Object(o) => Value::Object(o.clone()),
+        }
+    }
+}
+
+/// Clones an array, recursing into nested arrays `depth` levels deep.
+fn clone_array(array: &[Value], depth: usize) -> Vec<Value> {
+    if depth == 0 {
+        return clone_array_iteratively(array);
+    }
+    array
+        .iter()
+        .map(|v| match v {
+            Value::Array(a) => Value::Array(clone_array(a, depth - 1)),
+            v => v.clone(),
+        })
+        .collect()
+}
+
+fn clone_array_iteratively(array: &[Value]) -> Vec<Value> {
+    // The arrays being copied, each with what it has of its copy so far.
+    let mut stack = vec![(array.iter(), Vec::with_capacity(array.len()))];
+    loop {
+        let (rest, copy) = stack
+            .last_mut()
+            .expect("the outermost array is on the stack");
+        match rest.next() {
+            Some(Value::Array(a)) => stack.push((a.iter(), Vec::with_capacity(a.len()))),
+            Some(v) => copy.push(v.clone()),
+            None => {
+                let (_, done) = stack.pop().expect("checked above");
+                match stack.last_mut() {
+                    Some((_, parent)) => parent.push(Value::Array(done)),
+                    None => return done,
+                }
+            }
+        }
+    }
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Value) -> bool {
+        eq_within(self, other, RECURSION_DEPTH)
+    }
+}
+
+/// Compares two values, recursing `depth` levels deep.
+fn eq_within(a: &Value, b: &Value, depth: usize) -> bool {
+    match (a, b) {
+        (Value::Array(x), Value::Array(y)) if depth > 0 => {
+            x.len() == y.len() && x.iter().zip(y).all(|(x, y)| eq_within(x, y, depth - 1))
+        }
+        (Value::Object(x), Value::Object(y)) if depth > 0 => {
+            x.eq_by(y, |x, y| eq_within(x, y, depth - 1))
+        }
+        (Value::Array(_), Value::Array(_)) | (Value::Object(_), Value::Object(_)) => {
+            eq_iteratively(a, b)
+        }
+        _ => eq_scalar(a, b),
+    }
+}
+
+fn eq_iteratively<'a>(a: &'a Value, b: &'a Value) -> bool {
+    let mut pairs = vec![(a, b)];
+    while let Some((a, b)) = pairs.pop() {
+        let same = match (a, b) {
+            (Value::Array(x), Value::Array(y)) => {
+                x.len() == y.len() && {
+                    pairs.extend(x.iter().zip(y));
+                    true
+                }
+            }
+            (Value::Object(x), Value::Object(y)) => x.eq_by(y, |x, y| {
+                pairs.push((x, y));
+                true
+            }),
+            _ => eq_scalar(a, b),
+        };
+        if !same {
+            return false;
+        }
+    }
+    true
+}
+
+/// Whether two values that aren't both arrays or both objects are equal.
+fn eq_scalar(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Null, Value::Null) => true,
+        (Value::Bool(x), Value::Bool(y)) => x == y,
+        (Value::Number(x), Value::Number(y)) => x == y,
+        (Value::String(x), Value::String(y)) => x == y,
+        _ => false,
     }
 }
 
@@ -445,12 +560,32 @@ impl Object {
     }
 }
 
+impl Object {
+    /// Whether the two have the same keys and `eq` holds for each key's
+    /// two values.
+    fn eq_by<'a>(
+        &'a self,
+        other: &'a Object,
+        mut eq: impl FnMut(&'a Value, &'a Value) -> bool,
+    ) -> bool {
+        if Arc::ptr_eq(&self.keys, &other.keys) {
+            return Arc::ptr_eq(&self.values, &other.values)
+                || self
+                    .values
+                    .iter()
+                    .zip(other.values.iter())
+                    .all(|(a, b)| eq(a, b));
+        }
+        self.len() == other.len()
+            && self
+                .iter()
+                .all(|(k, v)| other.get(k).is_some_and(|w| eq(v, w)))
+    }
+}
+
 impl PartialEq for Object {
     fn eq(&self, other: &Self) -> bool {
-        if Arc::ptr_eq(&self.keys, &other.keys) {
-            return Arc::ptr_eq(&self.values, &other.values) || self.values == other.values;
-        }
-        self.len() == other.len() && self.iter().all(|(k, v)| other.get(k) == Some(v))
+        self.eq_by(other, |a, b| a == b)
     }
 }
 
@@ -610,5 +745,50 @@ mod tests {
                 ]
             );
         }
+    }
+
+    /// JSON as deep as the parser takes, its levels alternating between
+    /// arrays and objects with elements before and after the nested one
+    /// (the innermost level's are one level deeper).
+    fn deepest(innermost: &str) -> String {
+        let depth = crate::json::MAX_DEPTH - 1;
+        let mut text = String::new();
+        for level in 0..depth {
+            text.push_str(if level % 2 == 0 {
+                "[1,"
+            } else {
+                r#"{"a":"x","b":"#
+            });
+        }
+        text.push_str(innermost);
+        for level in (0..depth).rev() {
+            text.push_str(if level % 2 == 0 {
+                r#",{"z":null}]"#
+            } else {
+                r#","c":[true]}"#
+            });
+        }
+        text
+    }
+
+    #[test]
+    fn values_as_deep_as_the_parser_takes_fit_in_a_thread_stack() {
+        // The default stack of a spawned thread; a debug build overflows it
+        // by a few thousand levels of recursion.
+        std::thread::Builder::new()
+            .stack_size(2 << 20)
+            .spawn(|| {
+                let text = deepest("0");
+                let value = crate::json::parse(&text).unwrap();
+                assert_eq!(crate::json::stringify(&value), text);
+                let copy = value.clone();
+                assert!(copy == value);
+                let other = crate::json::parse(&deepest("1")).unwrap();
+                assert!(other != value);
+                assert!(crate::json::parse(&format!("[{text}]")).is_err());
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }
