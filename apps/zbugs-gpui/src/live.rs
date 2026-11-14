@@ -1,36 +1,28 @@
-//! A typed Zero query kept current in a GPUI view: the view's rows are read
-//! when the client's view changes, and the GPUI view is notified then.
+//! A typed Zero query kept current in a GPUI view: a `LiveView`, whose
+//! updates notify the GPUI view.
 //!
 //! The client calls a view's listeners while it applies a change, which may
-//! be inside a GPUI update of the same view, so a listener only stores the
-//! rows and sends a wakeup; a foreground task notifies the view afterwards.
+//! be inside a GPUI update of the same view, so a listener only sends a
+//! wakeup; a foreground task notifies the view afterwards.
 
 use futures::StreamExt;
 use futures::channel::mpsc;
 use gpui_kit::{Context, Task};
-use std::cell::RefCell;
 use std::rc::Rc;
 use zbugs_model::Context as Auth;
-use zero_client::client::{MaterializedView, Zero};
+use zero_client::client::{Error, LiveView, Zero};
 use zero_client::define::QueryRequest;
 use zero_client::ivm::ResultType;
 use zero_client::ttl::Ttl;
 use zero_client::typed::QueryValue;
 
 pub struct Live<T> {
-    value: Rc<RefCell<Snapshot<T>>>,
-    view: MaterializedView,
-    remove: Box<dyn Fn()>,
+    /// None when the query's rows didn't read at first.
+    live: Option<LiveView<T>>,
     _notify: Task<()>,
 }
 
-pub struct Snapshot<T> {
-    pub value: Option<T>,
-    pub result_type: ResultType,
-    pub error: Option<String>,
-}
-
-impl<T: QueryValue + 'static> Live<T> {
+impl<T: QueryValue + Default + 'static> Live<T> {
     /// Materializes `query` and notifies the view `cx` is for whenever its
     /// rows change, until dropped.
     pub fn new<R: 'static, V: 'static>(
@@ -39,28 +31,23 @@ impl<T: QueryValue + 'static> Live<T> {
         ttl: &Ttl,
         cx: &mut Context<V>,
     ) -> Live<T> {
-        let value = Rc::new(RefCell::new(Snapshot {
-            value: None,
-            result_type: ResultType::Unknown,
-            error: None,
-        }));
         let (wake, mut woken) = mpsc::unbounded::<()>();
-        let view = zero
-            .materialize(&query, ttl)
-            .expect("a query of the app's schema materializes");
-        let v = value.clone();
-        let remove = view.add_listener(move |data, result_type, _| {
-            let mut s = v.borrow_mut();
-            match query.read(data) {
-                Ok(t) => {
-                    s.value = Some(t);
-                    s.error = None;
-                }
-                Err(e) => s.error = Some(e.0),
+        let live = match zero.live(&query, ttl) {
+            Ok(live) => {
+                // Removed when the live view drops.
+                let _ = live.add_listener(move |_, _| {
+                    let _ = wake.unbounded_send(());
+                });
+                Some(live)
             }
-            s.result_type = result_type;
-            let _ = wake.unbounded_send(());
-        });
+            // Rows the generated types can't read are a bug of the port:
+            // say so, and show none until they read.
+            Err(Error::Message(e)) => {
+                eprintln!("zbugs-gpui: {}: {e}", query.name());
+                None
+            }
+            Err(_) => panic!("a query of the app's schema materializes"),
+        };
         let notify = cx.spawn(async move |this, cx| {
             while woken.next().await.is_some() {
                 // Several changes at once notify once.
@@ -71,30 +58,21 @@ impl<T: QueryValue + 'static> Live<T> {
             }
         });
         Live {
-            value,
-            view,
-            remove,
+            live,
             _notify: notify,
         }
     }
 
-    pub fn snapshot(&self) -> std::cell::Ref<'_, Snapshot<T>> {
-        self.value.borrow()
+    /// The rows last read; none if they never could be.
+    pub fn value(&self) -> Rc<T> {
+        self.live.as_ref().map_or_else(Rc::default, LiveView::value)
     }
 
     /// The server has confirmed the rows, on this connection or an earlier
     /// one.
     pub fn is_synced(&self) -> bool {
-        matches!(
-            self.value.borrow().result_type,
-            ResultType::Complete | ResultType::Cached
-        )
-    }
-}
-
-impl<T> Drop for Live<T> {
-    fn drop(&mut self) {
-        (self.remove)();
-        self.view.destroy();
+        self.live
+            .as_ref()
+            .is_some_and(|l| matches!(l.result_type(), ResultType::Complete | ResultType::Cached))
     }
 }

@@ -729,10 +729,8 @@ impl ZbugsApp {
         }
         let exists = self
             .labels
-            .snapshot()
-            .value
+            .value()
             .iter()
-            .flatten()
             .any(|l| l.name.eq_ignore_ascii_case(&name));
         if exists {
             self.error = Some(format!("There's already a label called {name}."));
@@ -784,7 +782,7 @@ impl ZbugsApp {
         let login = self
             .me
             .as_ref()
-            .and_then(|me| me.snapshot().value.clone().flatten())
+            .and_then(|me| (*me.value()).clone())
             .map(|u| u.login);
         let logged_in = self.session.auth.is_some();
         let app = cx.entity().downgrade();
@@ -835,8 +833,7 @@ impl ZbugsApp {
     /// just edited) doesn't drag the list. At the top, the list stays at
     /// the top.
     fn keep_scroll_anchor(&mut self) {
-        let snapshot = self.list.snapshot();
-        let rows = snapshot.value.as_deref().unwrap_or_default();
+        let rows = self.list.value();
         let handle = self.scroll.0.borrow().base_handle.clone();
         let mut offset = handle.offset();
         if offset.y < px(0.) {
@@ -992,7 +989,7 @@ impl ZbugsApp {
     /// Near the end of what's loaded: ask for the next page. The rows
     /// loaded so far stay where they are, so the list doesn't move.
     fn grow(&mut self, cx: &mut Context<Self>) {
-        let loaded = self.list.snapshot().value.as_ref().map_or(0, Vec::len) as i64;
+        let loaded = self.list.value().len() as i64;
         if loaded < self.limit {
             return;
         }
@@ -1042,12 +1039,7 @@ impl ZbugsApp {
         if !self.select_first {
             return;
         }
-        let first = self
-            .list
-            .snapshot()
-            .value
-            .as_ref()
-            .and_then(|rows| Some(rows.first()?.id.clone()));
+        let first = self.list.value().first().map(|row| row.id.clone());
         let Some(id) = first else {
             return;
         };
@@ -1060,8 +1052,7 @@ impl ZbugsApp {
     /// Selects the issue `delta` rows from the selected one, or the first.
     fn move_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
         let next = {
-            let snapshot = self.list.snapshot();
-            let rows = snapshot.value.as_deref().unwrap_or_default();
+            let rows = self.list.value();
             if rows.is_empty() {
                 return;
             }
@@ -1265,11 +1256,12 @@ impl ZbugsApp {
 
     /// Checks or unchecks the selected issue, for space on the list.
     fn toggle_selected_checked(&mut self, cx: &mut Context<Self>) {
-        let issue = self.list.snapshot().value.as_ref().and_then(|rows| {
-            rows.iter()
-                .find(|r| Some(&r.id) == self.selected.as_ref())
-                .cloned()
-        });
+        let issue = self
+            .list
+            .value()
+            .iter()
+            .find(|r| Some(&r.id) == self.selected.as_ref())
+            .cloned();
         if let Some(issue) = issue {
             self.toggle_checked(&issue, cx);
         }
@@ -1331,8 +1323,8 @@ impl ZbugsApp {
         let Some(detail) = self.detail.as_ref().filter(|d| d.is_synced()) else {
             return;
         };
-        let snapshot = detail.snapshot();
-        let Some(issue) = snapshot.value.as_ref().and_then(Option::as_ref) else {
+        let issue = detail.value();
+        let Some(issue) = issue.as_ref() else {
             return;
         };
         let comments = issue.comments.as_deref().unwrap_or_default();
@@ -1374,10 +1366,7 @@ impl ZbugsApp {
     /// "Zero Bugs → " and the shown issue's title, or the list's, as
     /// zbugs' issue and list pages title themselves.
     fn window_title(&self) -> String {
-        let issue = self
-            .detail
-            .as_ref()
-            .and_then(|d| d.snapshot().value.clone().flatten());
+        let issue = self.detail.as_ref().and_then(|d| (*d.value()).clone());
         let f = &self.filters;
         let shown = match issue {
             Some(issue) => issue.title,
@@ -1407,8 +1396,8 @@ impl ZbugsApp {
             .as_ref()
             .and(self.detail.as_ref())
             .and_then(|d| {
-                let snapshot = d.snapshot();
-                let issue = snapshot.value.as_ref()?.as_ref()?;
+                let issue = d.value();
+                let issue = issue.as_ref().as_ref()?;
                 is_unread(issue).then(|| issue.id.clone())
             });
         let Some(id) = unread else {
@@ -1442,7 +1431,7 @@ impl ZbugsApp {
                 let modified = this
                     .detail
                     .as_ref()
-                    .and_then(|d| d.snapshot().value.clone().flatten())
+                    .and_then(|d| (*d.value()).clone())
                     .filter(|issue| issue.id == id)
                     .map(|issue| issue.modified);
                 if let Some(modified) = modified {
@@ -1497,7 +1486,7 @@ impl ZbugsApp {
         let pref = self
             .skin_tone
             .as_ref()
-            .and_then(|live| live.snapshot().value.clone().flatten());
+            .and_then(|live| (*live.value()).clone());
         pref.and_then(|p| p.value.parse().ok())
             .filter(|tone| *tone < SKIN_TONES.len() as u32)
             .unwrap_or(0)
@@ -1618,10 +1607,8 @@ impl ZbugsApp {
     fn project_id(&self) -> Option<String> {
         let name = self.filters.project.to_lowercase();
         self.projects
-            .snapshot()
-            .value
+            .value()
             .iter()
-            .flatten()
             .find(|p| p.lower_case_name == name)
             .map(|p| p.id.clone())
     }
@@ -1801,7 +1788,7 @@ impl ZbugsApp {
     fn render_sidebar(&self, lights: Pixels, cx: &mut Context<Self>) -> impl IntoElement {
         let f = &self.filters;
         let current = f.project.to_lowercase();
-        let mut projects = self.projects.snapshot().value.clone().unwrap_or_default();
+        let mut projects = (*self.projects.value()).clone();
         projects.sort_by(|a, b| a.lower_case_name.cmp(&b.lower_case_name));
         let project = self.picker(
             Button::new("project")
@@ -1889,7 +1876,7 @@ impl ZbugsApp {
         let login = self
             .me
             .as_ref()
-            .and_then(|me| me.snapshot().value.clone().flatten())
+            .and_then(|me| (*me.value()).clone())
             .map(|u| u.login);
         let mine = |id: &'static str, on: bool, assigned: bool, cx: &mut Context<Self>| {
             let login = login.clone();
@@ -1937,10 +1924,8 @@ impl ZbugsApp {
         );
         let mut names = self
             .labels
-            .snapshot()
-            .value
+            .value()
             .iter()
-            .flatten()
             .map(|l| l.name.clone())
             .collect::<Vec<_>>();
         names.sort_by_key(|n| n.to_lowercase());
@@ -2035,11 +2020,13 @@ impl ZbugsApp {
     /// and log in or out.
     fn render_list_toolbar(&self, lights: Pixels, cx: &mut Context<Self>) -> impl IntoElement {
         let count = {
-            let s = self.count.snapshot();
-            match (s.value, self.list.snapshot().value.as_ref()) {
-                (Some(n), _) if self.count.is_synced() || n > 0 => format!("{n}"),
-                (_, Some(rows)) if !rows.is_empty() => format!("{}+", rows.len()),
-                _ => String::new(),
+            let (n, rows) = (*self.count.value(), self.list.value());
+            if self.count.is_synced() || n > 0 {
+                format!("{n}")
+            } else if !rows.is_empty() {
+                format!("{}+", rows.len())
+            } else {
+                String::new()
             }
         };
         let logged_in = self.session.auth.is_some();
@@ -2167,7 +2154,7 @@ impl ZbugsApp {
             value: None,
             checked: current.is_none(),
         }];
-        let mut users = users.snapshot().value.clone().unwrap_or_default();
+        let mut users = (*users.value()).clone();
         users.sort_by_key(|u| u.login.to_lowercase());
         choices.extend(users.into_iter().map(|u| Choice {
             avatar: Some(avatar_url(&u)),
@@ -2250,7 +2237,7 @@ impl ZbugsApp {
     }
 
     fn render_list(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let rows = self.list.snapshot().value.clone().unwrap_or_default();
+        let rows = (*self.list.value()).clone();
         let len = rows.len();
         let rows = Rc::new(rows);
         if len == 0 {
@@ -2624,7 +2611,7 @@ impl ZbugsApp {
         let Some(detail) = &self.detail else {
             return empty("Select an issue", cx);
         };
-        let issue = detail.snapshot().value.clone().flatten();
+        let issue = (*detail.value()).clone();
         let Some(issue) = issue else {
             return empty(
                 if detail.is_synced() {
@@ -2638,10 +2625,7 @@ impl ZbugsApp {
         // The newest comments first; shown oldest first. The page takes
         // over once it has at least what the issue brought.
         let mut comments: Vec<Comment> = issue.comments.clone().unwrap_or_default();
-        if let Some(page) = self
-            .comment_page
-            .as_ref()
-            .and_then(|p| p.snapshot().value.clone())
+        if let Some(page) = self.comment_page.as_ref().map(|p| (*p.value()).clone())
             && page.len() >= comments.len()
         {
             comments = page;
@@ -2658,7 +2642,7 @@ impl ZbugsApp {
             value: None,
             checked: assignee_id.is_none(),
         }];
-        let mut crew = self.crew.snapshot().value.clone().unwrap_or_default();
+        let mut crew = (*self.crew.value()).clone();
         crew.sort_by_key(|u| u.login.to_lowercase());
         assignee_choices.extend(crew.into_iter().map(|u| Choice {
             avatar: Some(avatar_url(&u)),
@@ -2681,7 +2665,7 @@ impl ZbugsApp {
             Rc::new(move |this, user_id, _, cx| this.set_assignee(id.clone(), user_id, cx)),
             cx,
         );
-        let mut all_labels = self.labels.snapshot().value.clone().unwrap_or_default();
+        let mut all_labels = (*self.labels.value()).clone();
         all_labels.sort_by_key(|l| l.name.to_lowercase());
         let mut label_choices: Vec<Choice> = all_labels
             .into_iter()
@@ -2991,10 +2975,11 @@ impl Render for ZbugsApp {
             window.push_notification(Notification::error(message), cx);
         }
         if self.reveal_selected {
-            let at = self.list.snapshot().value.as_ref().and_then(|rows| {
-                rows.iter()
-                    .position(|r| Some(&r.id) == self.selected.as_ref())
-            });
+            let at = self
+                .list
+                .value()
+                .iter()
+                .position(|r| Some(&r.id) == self.selected.as_ref());
             if let Some(ix) = at {
                 self.scroll.scroll_to_item(ix, ScrollStrategy::Center);
                 self.reveal_selected = false;
@@ -3013,10 +2998,7 @@ impl Render for ZbugsApp {
         } else {
             px(TRAFFIC_LIGHTS)
         };
-        let issue = self
-            .detail
-            .as_ref()
-            .and_then(|d| d.snapshot().value.clone().flatten());
+        let issue = self.detail.as_ref().and_then(|d| (*d.value()).clone());
         h_flex()
             .size_full()
             .bg(cx.theme().background)

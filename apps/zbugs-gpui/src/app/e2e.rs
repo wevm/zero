@@ -123,11 +123,11 @@ async fn settled(app: &Entity<ZbugsApp>, cx: &mut AsyncApp) -> Step {
 }
 
 fn rows(app: &ZbugsApp) -> Vec<Issue> {
-    app.list.snapshot().value.clone().unwrap_or_default()
+    (*app.list.value()).clone()
 }
 
 fn issue(app: &ZbugsApp) -> Option<Issue> {
-    app.detail.as_ref()?.snapshot().value.clone().flatten()
+    (*app.detail.as_ref()?.value()).clone()
 }
 
 async fn online(window: AnyWindowHandle, app: &Entity<ZbugsApp>, cx: &mut AsyncApp) -> Step {
@@ -143,7 +143,7 @@ async fn online(window: AnyWindowHandle, app: &Entity<ZbugsApp>, cx: &mut AsyncA
         app.selected.is_some() && app.selected.as_ref() == rows(app).first().map(|i| &i.id)
     })
     .await?;
-    let open = app.read_with(cx, |app, _| app.count.snapshot().value.unwrap_or(0));
+    let open = app.read_with(cx, |app, _| *app.count.value());
     shot("1-list");
 
     // Issues created and deleted again, one from the issue and two
@@ -206,8 +206,7 @@ async fn online(window: AnyWindowHandle, app: &Entity<ZbugsApp>, cx: &mut AsyncA
     })
     .await?;
     until(app, cx, "the new issue at the top of the list", |app| {
-        rows(app).first().is_some_and(|i| i.id == id)
-            && app.count.snapshot().value == Some(open + 1)
+        rows(app).first().is_some_and(|i| i.id == id) && *app.count.value() == open + 1
     })
     .await?;
 
@@ -312,21 +311,14 @@ async fn online(window: AnyWindowHandle, app: &Entity<ZbugsApp>, cx: &mut AsyncA
 
     // The bug label, and the issue assigned to the user.
     until(app, cx, "the labels", |app| {
-        app.labels
-            .snapshot()
-            .value
-            .iter()
-            .flatten()
-            .any(|l| l.name == "bug")
+        app.labels.value().iter().any(|l| l.name == "bug")
     })
     .await?;
     act(window, app, cx, |app, _, cx| {
         let bug = app
             .labels
-            .snapshot()
-            .value
+            .value()
             .iter()
-            .flatten()
             .find(|l| l.name == "bug")
             .map(|l| l.id.clone());
         let issue = issue(app).expect("the issue is shown");
@@ -397,9 +389,7 @@ async fn online(window: AnyWindowHandle, app: &Entity<ZbugsApp>, cx: &mut AsyncA
     // and All shows it.
     let login = app
         .read_with(cx, |app, _| {
-            app.me
-                .as_ref()
-                .and_then(|me| me.snapshot().value.clone().flatten())
+            app.me.as_ref().and_then(|me| (*me.value()).clone())
         })
         .map(|u| u.login)
         .ok_or("the user's row didn't sync")?;
