@@ -7,6 +7,27 @@ enum Got: Equatable {
 
 typealias GotCallback = (Got, ErroredQuery?) -> Void
 
+/// The client's query metrics (`ClientMetricMap` in
+/// `packages/zql/src/query/metrics-delegate.ts`).
+enum ClientMetricName: String {
+  case queryMaterializationClient = "query-materialization-client"
+  case queryMaterializationEndToEnd = "query-materialization-end-to-end"
+  case queryUpdateClient = "query-update-client"
+}
+
+/// `UPDATE_SAMPLE_RATE`: client query updates are timed for only the first
+/// of every this many pushes to each source connection, and each time is
+/// recorded with this weight.
+let updateSampleRate: Double = 32
+
+/// One query's client metrics (`PerQueryClientMetric`): its materialization
+/// times, recorded once (the last value wins), and its update times.
+final class QueryClientMetrics {
+  var materializationClient: Double?
+  var materializationEndToEnd: Double?
+  let updateClient = TDigest()
+}
+
 /// A dictionary that iterates in insertion order, like a JS `Map`.
 struct OrderedMap<Key: Hashable, Value> {
   private(set) var keys: [Key] = []
@@ -74,15 +95,31 @@ final class QueryManager {
   private var batchTimer: (any ScheduledTimer)?
   private var closedError: ConnectionError?
   private var nextCallbackID = 0
+  private let serverToClient: NameMapper
+  private let log: Log?
+  private let slowMaterializeThreshold: Double
+  /// Every query's materialization and update times (`metrics`).
+  let metrics = (
+    materializationClient: TDigest(), materializationEndToEnd: TDigest(),
+    updateClient: TDigest()
+  )
+  private var queryMetrics: [String: QueryClientMetrics] = [:]
+  /// Hears each query dropped from the client, with its client AST and
+  /// metrics (`setQueryEvictedCallback`).
+  var onQueryEvicted: ((String, AST, QueryClientMetrics) -> Void)?
 
   init(
     clientID: String, schema: ZeroSchema, mutationTracker: MutationTracker,
     scheduler: any Scheduler, queryChangeThrottleMs: Double, recentQueriesMaxSize: Int,
+    slowMaterializeThreshold: Double = 5_000, log: Log? = nil,
     send: @escaping (ChangeDesiredQueriesBody) -> Void,
     onFatalError: @escaping (ConnectionError) -> Void
   ) {
     self.clientID = clientID
     self.clientToServer = NameMapper.clientToServer(schema)
+    self.serverToClient = NameMapper.serverToClient(schema)
+    self.slowMaterializeThreshold = slowMaterializeThreshold
+    self.log = log
     self.mutationTracker = mutationTracker
     self.scheduler = scheduler
     self.queryChangeThrottleMs = queryChangeThrottleMs
@@ -309,9 +346,63 @@ final class QueryManager {
     guard entry.count == 0 else { return }
     recentQueries[hash] = ()
     if recentQueries.count > recentQueriesMaxSize, let lru = recentQueries.keys.first {
+      let evictedAST = clientAST(lru.string)
+      let evictedMetrics = queryMetrics[lru.string] ?? QueryClientMetrics()
       queries[lru] = nil
       recentQueries[lru] = nil
+      queryMetrics[lru.string] = nil
       queueQueryChange(.del(hash: lru.string))
+      if let evictedAST { onQueryEvicted?(lru.string, evictedAST, evictedMetrics) }
+    }
+  }
+
+  // MARK: - Metrics
+
+  /// The client AST of a registered query (`getAST`).
+  func clientAST(_ queryID: String) -> AST? {
+    guard let ast = queries[JSKey(queryID)]?.normalized else { return nil }
+    return (try? serverToClient.map(ast)) ?? ast
+  }
+
+  /// `mapClientASTToServer`.
+  func serverAST(_ ast: AST) -> AST {
+    (try? clientToServer.map(ast)) ?? ast
+  }
+
+  func queryMetrics(_ queryID: String) -> QueryClientMetrics? { queryMetrics[queryID] }
+
+  /// Records a query metric, client-wide and for the query (`addMetric`).
+  /// An end-to-end materialization over `slowMaterializeThreshold` is
+  /// logged as a warning.
+  func addMetric(_ metric: ClientMetricName, _ value: Double, queryID: String, ast: AST?) {
+    let weight = metric == .queryUpdateClient ? updateSampleRate : 1
+    switch metric {
+    case .queryMaterializationClient: metrics.materializationClient.add(value, weight: weight)
+    case .queryMaterializationEndToEnd: metrics.materializationEndToEnd.add(value, weight: weight)
+    case .queryUpdateClient: metrics.updateClient.add(value, weight: weight)
+    }
+    if metric == .queryMaterializationEndToEnd, let log {
+      let details = { () -> String in
+        let astText = ast.map { JSONSerializer.stringify($0.json) } ?? "undefined"
+        return "\(queryID) \(astText) \(JSNumber.format(value))"
+      }
+      if value > slowMaterializeThreshold {
+        log.warn("Slow query materialization (including server/network) \(details())")
+      } else {
+        log.debug("Materialized query (including server/network) \(details())")
+      }
+    }
+    let existing: QueryClientMetrics
+    if let m = queryMetrics[queryID] {
+      existing = m
+    } else {
+      existing = QueryClientMetrics()
+      queryMetrics[queryID] = existing
+    }
+    switch metric {
+    case .queryUpdateClient: existing.updateClient.add(value, weight: weight)
+    case .queryMaterializationClient: existing.materializationClient = value
+    case .queryMaterializationEndToEnd: existing.materializationEndToEnd = value
     }
   }
 }

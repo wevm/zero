@@ -4,6 +4,7 @@
 use super::connection_manager::ConnectionState;
 use super::database::{ReplicaDatabase, replicache_name};
 use super::engine::{Engine, MutatorFn, MutatorResult, UpdateNeededReason, ZeroOptions};
+use super::inspector::{Inspector, InspectorHost};
 use super::query_context::{MaterializedView, Preload, RunType, WeakView};
 use super::storage::DroppedDatabases;
 use super::transaction::Transaction;
@@ -104,6 +105,8 @@ struct Core {
     connection: Connection,
     views: RefCell<Vec<(WeakView, AnyQuery, Ttl)>>,
     preloads: RefCell<Vec<Rc<PreloadRecord>>>,
+    /// What the client's inspectors share, once there is one.
+    inspector: RefCell<Option<Rc<InspectorHost>>>,
 }
 
 /// A preload, which a replacement starts again on the new engine until
@@ -171,6 +174,7 @@ impl<C: 'static> Zero<C> {
             connection,
             views: RefCell::default(),
             preloads: RefCell::default(),
+            inspector: RefCell::default(),
         });
         Core::attach(&core, &engine);
         Ok(Zero { core, context })
@@ -273,6 +277,32 @@ impl<C: 'static> Zero<C> {
             }),
             cached: preload.cached,
             complete: preload.complete,
+        }
+    }
+
+    /// The inspector (`zero.inspector`): the client's queries and metrics
+    /// and what zero-cache knows of them, for debugging and tooling.
+    pub fn inspector(&self) -> Inspector<C> {
+        let host = self
+            .core
+            .inspector
+            .borrow_mut()
+            .get_or_insert_with(|| {
+                let core = Rc::downgrade(&self.core);
+                Rc::new(InspectorHost {
+                    engine: Box::new(move || core.upgrade().map(|c| c.engine())),
+                    schema: self.core.schema.clone(),
+                    admin_password: RefCell::new(None),
+                })
+            })
+            .clone();
+        // Evicted queries are kept for it from now on.
+        self.engine().query_manager.keep_evicted();
+        Inspector {
+            host,
+            context: self.context.clone(),
+            client_id: self.client_id(),
+            client_group_id: self.client_group_id(),
         }
     }
 

@@ -221,6 +221,11 @@ pub struct ZeroOptions {
     /// first hydration), with its listener calls. It must call the function
     /// it is given, once, before it returns.
     pub batch_view_updates: Option<BatchViewUpdates>,
+    /// How long, in ms, a query may take to materialize, including the
+    /// server's and the network's time, before the client logs a warning
+    /// (`slowMaterializeThreshold`). Faster materializations are logged at
+    /// debug level.
+    pub slow_materialize_threshold_ms: f64,
 }
 
 impl Default for ZeroOptions {
@@ -247,6 +252,7 @@ impl Default for ZeroOptions {
             hidden_disconnect_delay_ms: 0.0,
             get_traceparent: None,
             batch_view_updates: None,
+            slow_materialize_threshold_ms: 5_000.0,
         }
     }
 }
@@ -366,6 +372,8 @@ struct ReadyPromise(Rc<RefCell<ReadyState>>);
 #[derive(Default)]
 struct ReadyState {
     settled: Option<bool>,
+    /// Why the connection failed, once it has.
+    error: Option<ConnectionError>,
     waiters: Vec<Box<dyn FnOnce(bool)>>,
 }
 
@@ -505,6 +513,23 @@ impl SocketEvents for SocketHandle {
 
 type VisibilityWaiter = (bool, u64, Box<dyn FnOnce()>);
 
+/// What an inspector request hears: zero-cache's answer, the `inspect`
+/// body, or why there is none.
+pub(crate) type InspectAnswer = Box<dyn FnOnce(Result<Object, Error>)>;
+
+/// An inspector request (`rpcNoAuthTry` in `lazy-inspector.ts`), waiting
+/// for the connection or, once sent, for the answer with its ID.
+struct InspectRequest {
+    id: String,
+    /// What to send, until it is.
+    body: Option<Object>,
+    sent: bool,
+    /// Waiting for the next connection attempt: the last one's socket
+    /// closed before the request went out.
+    parked: bool,
+    done: InspectAnswer,
+}
+
 pub(crate) struct Engine {
     me: Weak<Engine>,
     pub(crate) schema: Arc<Schema>,
@@ -521,14 +546,14 @@ pub(crate) struct Engine {
     mutators: Rc<HashMap<String, MutatorFn>>,
     client_schema: crate::protocol::ClientSchema,
 
-    store: RefCell<ReplicaStore>,
+    pub(crate) store: RefCell<ReplicaStore>,
     pub(crate) database: Rc<ReplicaDatabase>,
     lifecycle_timers: RefCell<Vec<Box<dyn Timer>>>,
     ivm_main: Rc<IvmBranch>,
     pub(crate) context: Rc<QueryContext>,
     pub(crate) connection_manager: Rc<ConnectionManager>,
     mutation_tracker: Rc<MutationTracker>,
-    query_manager: Rc<QueryManager>,
+    pub(crate) query_manager: Rc<QueryManager>,
     poke_handler: RefCell<PokeHandler>,
 
     /// The current token: `options.auth`, then the last one `connect`
@@ -591,6 +616,8 @@ pub(crate) struct Engine {
     /// What `Zero` does when the app must be updated to sync, besides
     /// calling `ZeroOptions::on_update_needed`.
     pub(crate) on_update_needed: RefCell<Option<UpdateNeededHandler>>,
+    /// The inspector's requests, oldest first.
+    inspect_requests: RefCell<Vec<InspectRequest>>,
 }
 
 fn noop() -> Rc<dyn Fn()> {
@@ -808,15 +835,33 @@ impl Engine {
                     }),
                 ))
             };
+            let query_manager = {
+                let (s, p) = (me.clone(), me.clone());
+                QueryManager::new(
+                    client_id.clone(),
+                    scheduler.clone(),
+                    options.query_change_throttle_ms,
+                    Box::new(move |mut body| {
+                        if let Some(e) = s.upgrade() {
+                            body.traceparent = e.traceparent();
+                            e.send_if_connected(Upstream::ChangeDesiredQueries(body));
+                        }
+                    }),
+                    Box::new(move || p.upgrade().map_or(0, |e| e.mutation_tracker.size())),
+                    log.clone(),
+                    options.slow_materialize_threshold_ms,
+                )
+            };
             let context = {
                 let (a, u, c) = (me.clone(), me.clone(), me.clone());
                 let l = event_loop.clone();
                 QueryContext::new(
                     ivm_main.clone(),
-                    Box::new(move |id, ttl, got| match a.upgrade() {
-                        Some(e) => e
-                            .query_manager
-                            .add_custom(&id.name, &id.args, ttl, Some(got)),
+                    Box::new(move |id, ast, ttl, got| match a.upgrade() {
+                        Some(e) => {
+                            e.query_manager
+                                .add_custom(ast, &id.name, &id.args, ttl, Some(got))
+                        }
                         None => Box::new(|| {}),
                     }),
                     Rc::new(move |id, ttl| {
@@ -832,21 +877,7 @@ impl Engine {
                     }),
                     true,
                     options.batch_view_updates.clone(),
-                )
-            };
-            let query_manager = {
-                let (s, p) = (me.clone(), me.clone());
-                QueryManager::new(
-                    client_id.clone(),
-                    scheduler.clone(),
-                    options.query_change_throttle_ms,
-                    Box::new(move |mut body| {
-                        if let Some(e) = s.upgrade() {
-                            body.traceparent = e.traceparent();
-                            e.send_if_connected(Upstream::ChangeDesiredQueries(body));
-                        }
-                    }),
-                    Box::new(move || p.upgrade().map_or(0, |e| e.mutation_tracker.size())),
+                    Some(query_manager.clone()),
                 )
             };
             Engine {
@@ -913,6 +944,7 @@ impl Engine {
                 waiting_for_write_lock: RefCell::default(),
                 on_client_state_not_found: RefCell::new(None),
                 on_update_needed: RefCell::new(None),
+                inspect_requests: RefCell::default(),
             }
         });
 
@@ -1697,7 +1729,8 @@ impl Engine {
             last_mutation_id: self.last_mutation_id_received.get(),
             wsid,
             profile_id: self.profile_id.clone(),
-            debug_perf: false,
+            // JS asks for the server's timings when it logs at debug level.
+            debug_perf: self.options.log_level == LogLevel::Debug,
             additional_params: self
                 .additional_connect_params
                 .borrow()
@@ -1810,7 +1843,19 @@ impl Engine {
             if !attempt.aborted.get() {
                 self.disconnect(error.clone(), None);
             }
+            ready.0.borrow_mut().error.get_or_insert(error.clone());
             ready.settle(false, &self.event_loop);
+            let parked: Vec<InspectRequest> = {
+                let mut requests = self.inspect_requests.borrow_mut();
+                let (parked, rest) = std::mem::take(&mut *requests)
+                    .into_iter()
+                    .partition(|r| r.parked);
+                *requests = rest;
+                parked
+            };
+            for r in parked {
+                (r.done)(Err(error.clone().into()));
+            }
             if self.connection_ready.borrow().is(&ready) {
                 *self.connection_ready.borrow_mut() = ReadyPromise::default();
             }
@@ -1818,6 +1863,19 @@ impl Engine {
             return;
         }
         ready.settle(true, &self.event_loop);
+        let parked: Vec<String> = self
+            .inspect_requests
+            .borrow_mut()
+            .iter_mut()
+            .filter(|r| r.parked)
+            .map(|r| {
+                r.parked = false;
+                r.id.clone()
+            })
+            .collect();
+        for id in parked {
+            self.inspect_when_connected(id);
+        }
         *self.additional_connect_params.borrow_mut() = None;
         match Self::connection_error(&self.connection_manager.state()) {
             Some(error) => self.loop_failed(error),
@@ -1873,6 +1931,22 @@ impl Engine {
                     self.connection_manager.connecting(Some(r));
                 }
             }
+        }
+        // The answers to the inspector's requests would have come on the
+        // socket that closed.
+        let lost: Vec<InspectRequest> = {
+            let mut requests = self.inspect_requests.borrow_mut();
+            let (lost, waiting) = std::mem::take(&mut *requests)
+                .into_iter()
+                .partition(|r| r.sent);
+            *requests = waiting;
+            lost
+        };
+        for r in lost {
+            (r.done)(Err(Error::Message(format!(
+                "The inspector's request got no answer: the connection to zero-cache closed ({})",
+                reason.message()
+            ))));
         }
     }
 
@@ -2082,7 +2156,7 @@ impl Engine {
             Downstream::TransformError(errors) => {
                 self.query_manager.handle_transform_errors(&errors)
             }
-            Downstream::Inspect(_) => {}
+            Downstream::Inspect(body) => self.inspect_answered(body.0),
         }
     }
 
@@ -2377,6 +2451,97 @@ impl Engine {
         self.database.release();
         self.database.remove_failure_listener(&self.client_id);
         self.connection_manager.closed();
+        let requests = std::mem::take(&mut *self.inspect_requests.borrow_mut());
+        for r in requests {
+            (r.done)(Err(ConnectionError::client(
+                ClientErrorKind::ClientClosed,
+                "Zero instance closed by user",
+            )
+            .into()));
+        }
+    }
+
+    // MARK: The inspector
+
+    /// Sends an inspector request (`rpcNoAuthTry`) once connected, with a
+    /// new ID; `done` hears the answer with that ID, or why there is none.
+    pub(crate) fn inspect(&self, body: Object, done: InspectAnswer) {
+        if self.rep_closed.get() {
+            return done(Err(ConnectionError::client(
+                ClientErrorKind::ClientClosed,
+                "Zero instance closed by user",
+            )
+            .into()));
+        }
+        let id = random_id();
+        self.inspect_requests.borrow_mut().push(InspectRequest {
+            id: id.clone(),
+            body: Some(body),
+            sent: false,
+            parked: false,
+            done,
+        });
+        self.inspect_when_connected(id);
+    }
+
+    /// Sends request `id` once the connection is ready (`getSocket`), or
+    /// fails it when connecting fails.
+    fn inspect_when_connected(&self, id: String) {
+        let ready = self.connection_ready.borrow().clone();
+        let w = self.me.clone();
+        let r = ready.clone();
+        ready.on_settle(&self.event_loop, move |connected| {
+            if let Some(e) = w.upgrade() {
+                let error = r.0.borrow().error.clone();
+                e.inspect_ready(id, connected, error);
+            }
+        });
+    }
+
+    fn inspect_ready(&self, id: String, connected: bool, error: Option<ConnectionError>) {
+        let mut requests = self.inspect_requests.borrow_mut();
+        let Some(i) = requests.iter().position(|r| r.id == id && !r.sent) else {
+            return;
+        };
+        if !connected {
+            let r = requests.remove(i);
+            drop(requests);
+            let error = error.unwrap_or_else(|| {
+                ConnectionError::client(ClientErrorKind::Internal, "Not connected to zero-cache")
+            });
+            return (r.done)(Err(error.into()));
+        }
+        let socket = self.socket.borrow().clone();
+        match socket {
+            Some(socket) if self.status_is(ConnectionStatus::Connected) => {
+                let r = &mut requests[i];
+                r.sent = true;
+                let mut body = r.body.take().unwrap_or_default();
+                body.insert("id", Value::from(id.as_str()));
+                let text = Upstream::Inspect(crate::protocol::InspectUpBody(Value::Object(body)))
+                    .to_text();
+                drop(requests);
+                socket.send(&text);
+            }
+            // The connection dropped since: wait for the next attempt.
+            _ => requests[i].parked = true,
+        }
+    }
+
+    /// zero-cache answered an inspector request.
+    fn inspect_answered(&self, body: Value) {
+        let Value::Object(body) = body else { return };
+        let Some(id) = body.get("id").and_then(Value::as_str) else {
+            return;
+        };
+        let request = {
+            let mut requests = self.inspect_requests.borrow_mut();
+            let Some(i) = requests.iter().position(|r| r.sent && r.id == id) else {
+                return;
+            };
+            requests.remove(i)
+        };
+        (request.done)(Ok(body));
     }
 
     // MARK: Storage and the client lifecycle

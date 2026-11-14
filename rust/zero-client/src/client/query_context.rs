@@ -7,13 +7,16 @@
 use super::engine::BatchViewUpdates;
 use super::ivm_branch::IvmBranch;
 use super::log::Log;
-use super::query_manager::{Got, GotCallback, closed_error};
+use super::measure_push::MeasurePush;
+use super::query_manager::{ClientMetric, Got, GotCallback, MetricsDelegate, closed_error};
 use super::replica_store::KvDiff;
 use super::{ConnectionError, Deferred, Error, QueryError};
+use crate::ast::Ast;
 use crate::builder::{BuilderDelegate, OptimisticAggregate, build_pipeline, group_view_input};
 use crate::hash::query::{hash_of_ast, hash_of_name_and_args};
 use crate::ivm::{
-    ArrayView, DeferredInput, Input, PipelineError, ResultType, Row, Source, ViewValue, capture,
+    ArrayView, DeferredInput, Input, PipelineError, ResultType, Row, Source, SourceInput,
+    ViewValue, capture,
 };
 use crate::map::OrderedMap;
 use crate::protocol::ErroredQuery;
@@ -30,6 +33,8 @@ struct BranchDelegate {
     /// The synced client reads aggregates from the rows the server streams;
     /// a mutator's query the server hasn't answered computes them.
     aggregates_from_source: bool,
+    /// Times the pushes of each source connection, for the inspector.
+    metrics: Option<Rc<dyn MetricsDelegate>>,
 }
 
 impl BuilderDelegate for BranchDelegate {
@@ -57,10 +62,18 @@ impl BuilderDelegate for BranchDelegate {
     fn aggregate_key_columns(&self, table: &str, columns: &[String]) -> Vec<String> {
         self.branch.server_column_names(table, columns)
     }
+
+    fn decorate_source_input(&self, input: Rc<dyn SourceInput>, query_id: &str) -> Rc<dyn Input> {
+        match &self.metrics {
+            Some(m) => MeasurePush::new(input, query_id, m.clone()),
+            None => input,
+        }
+    }
 }
 
 /// Registers a named query with the server; returns its unregister.
-pub(crate) type AddCustomQuery = Box<dyn Fn(&CustomQueryId, &Ttl, GotCallback) -> Box<dyn Fn()>>;
+pub(crate) type AddCustomQuery =
+    Box<dyn Fn(&CustomQueryId, &Ast, &Ttl, GotCallback) -> Box<dyn Fn()>>;
 pub(crate) type UpdateCustomQuery = Rc<dyn Fn(&CustomQueryId, &Ttl)>;
 pub(crate) type Microtask = Rc<dyn Fn(Box<dyn FnOnce()>)>;
 /// Builds a deferred pipeline; returns the release to call once every
@@ -101,6 +114,8 @@ pub(crate) struct QueryContext {
     /// Why pushing into the branch failed, once it has (`#advanceError` in
     /// `ivm-branch.ts`): the branch is unusable from then on.
     branch_failure: RefCell<Option<PipelineError>>,
+    /// Where materializations are timed: none for a mutator's queries.
+    metrics: Option<Rc<dyn MetricsDelegate>>,
 }
 
 /// The settled state of a view's query: still waiting, confirmed by the
@@ -121,6 +136,16 @@ struct Track {
     on_resolved: Option<Rc<dyn Fn(Completion)>>,
     view: Weak<ArrayView>,
     destroyed: bool,
+    /// For the end-to-end materialization metric.
+    timing: Option<Rc<ViewTiming>>,
+}
+
+/// When and what a view started materializing, for its metrics.
+struct ViewTiming {
+    metrics: Rc<dyn MetricsDelegate>,
+    t0: f64,
+    query_id: String,
+    ast: Ast,
 }
 
 type TrackRef = Rc<RefCell<Track>>;
@@ -140,15 +165,23 @@ fn settle(track: &TrackRef, r: Completion) {
 }
 
 fn maybe_resolve_complete(track: &TrackRef) {
-    let resolve = {
+    let (resolve, timing) = {
         let mut t = track.borrow_mut();
         let ok = t.attached && t.got == Got::Yes && matches!(t.query_complete, Completion::Pending);
         if ok {
             t.query_complete = Completion::Complete;
         }
-        ok
+        (ok, t.timing.clone())
     };
     if resolve {
+        if let Some(t) = timing {
+            t.metrics.add_metric(
+                ClientMetric::MaterializationEndToEnd,
+                t.metrics.monotonic_now() - t.t0,
+                &t.query_id,
+                Some(&t.ast),
+            );
+        }
         settle(track, Completion::Complete);
     }
 }
@@ -230,12 +263,14 @@ impl QueryContext {
         closed_reason: Box<dyn Fn() -> Option<ConnectionError>>,
         aggregates_from_source: bool,
         batch_view_updates: Option<BatchViewUpdates>,
+        metrics: Option<Rc<dyn MetricsDelegate>>,
     ) -> Rc<Self> {
         Rc::new_cyclic(|me| QueryContext {
             me: me.clone(),
             delegate: Rc::new(BranchDelegate {
                 branch: branch.clone(),
                 aggregates_from_source,
+                metrics: metrics.clone(),
             }),
             branch,
             add_custom_query,
@@ -251,6 +286,7 @@ impl QueryContext {
             notifications: Rc::default(),
             branch_failure: RefCell::new(None),
             batch_view_updates,
+            metrics,
         })
     }
 
@@ -259,12 +295,13 @@ impl QueryContext {
     pub(crate) fn local(branch: Rc<IvmBranch>, aggregates_from_source: bool) -> Rc<Self> {
         let context = QueryContext::new(
             branch,
-            Box::new(|_, _, _| Box::new(|| {})),
+            Box::new(|_, _, _, _| Box::new(|| {})),
             Rc::new(|_, _| {}),
             Rc::new(|f| f()),
             None,
             Box::new(|| None),
             aggregates_from_source,
+            None,
             None,
         );
         context.mark_pipelines_ready();
@@ -452,6 +489,14 @@ impl QueryContext {
             on_resolved: None,
             view: Weak::new(),
             destroyed: false,
+            timing: self.metrics.as_ref().map(|m| {
+                Rc::new(ViewTiming {
+                    metrics: m.clone(),
+                    t0: m.monotonic_now(),
+                    query_id: query_id.clone(),
+                    ast: ast.clone(),
+                })
+            }),
         }));
         let got_callback: GotCallback = {
             let track = track.clone();
@@ -480,7 +525,7 @@ impl QueryContext {
             })
         };
         let remove_added_query: Rc<dyn Fn()> = match &custom_query_id {
-            Some(id) => Rc::from((self.add_custom_query)(id, ttl, got_callback)),
+            Some(id) => Rc::from((self.add_custom_query)(id, &ast, ttl, got_callback)),
             None => Rc::new(|| {}),
         };
         let built = (|| -> Result<BuiltPipeline, PipelineError> {
@@ -539,6 +584,17 @@ impl QueryContext {
                 return Err(e.into());
             }
         };
+        let timing = track.borrow().timing.clone();
+        if deferred.is_none()
+            && let Some(t) = &timing
+        {
+            t.metrics.add_metric(
+                ClientMetric::MaterializationClient,
+                t.metrics.monotonic_now() - t.t0,
+                &query_id,
+                None,
+            );
+        }
         if matches!(complete, Completion::Pending) {
             let weak = Rc::downgrade(&created);
             let microtask = microtask.clone();
@@ -611,6 +667,7 @@ impl QueryContext {
                 if deferred.destroyed() {
                     return Ok(Box::new(|| {}));
                 }
+                let t1 = timing.as_ref().map(|t| t.metrics.monotonic_now());
                 if let Some(v) = weak.upgrade() {
                     v.hold_data();
                 }
@@ -625,6 +682,10 @@ impl QueryContext {
                     settle(&track, Completion::Failed(e));
                     return Err(error);
                 }
+                let hydrate_ms = timing
+                    .as_ref()
+                    .zip(t1)
+                    .map(|(t, t1)| (t.clone(), t.metrics.monotonic_now() - t1));
                 Ok(Box::new(move || {
                     if track.borrow().destroyed {
                         return;
@@ -632,6 +693,14 @@ impl QueryContext {
                     track.borrow_mut().attached = true;
                     if let Some(v) = weak.upgrade() {
                         v.release_data();
+                    }
+                    if let Some((t, ms)) = hydrate_ms {
+                        t.metrics.add_metric(
+                            ClientMetric::MaterializationClient,
+                            ms,
+                            &t.query_id,
+                            None,
+                        );
                     }
                     maybe_resolve_complete(&track);
                     maybe_mark_cached(&track);
@@ -761,6 +830,7 @@ impl QueryContext {
         let (c, p) = (cached.clone(), complete.clone());
         let cleanup = (self.add_custom_query)(
             id,
+            query.ast(),
             ttl,
             Rc::new(move |got, error| {
                 if let Some(error) = error {

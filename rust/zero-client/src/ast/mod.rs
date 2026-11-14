@@ -3,10 +3,12 @@
 mod coding;
 mod normalize;
 pub mod strict;
+mod zql;
 
 pub(crate) use coding::is_homogeneous;
 pub(crate) use normalize::cmp_related;
 pub use normalize::normalize_condition;
+pub use zql::ast_to_zql;
 
 use crate::json::{Object, Value};
 

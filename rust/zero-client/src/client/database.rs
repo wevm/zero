@@ -318,6 +318,20 @@ impl ReplicaDatabase {
         }
     }
 
+    /// The clients that used the database, oldest first.
+    pub(crate) fn clients(&self) -> Vec<ClientRecord> {
+        self.clients.borrow().clone()
+    }
+
+    /// The entries of client group `id`'s stored snapshot with its pending
+    /// mutations applied, if the group is there.
+    pub(crate) fn group_entries(&self, id: &str) -> Option<KvMap> {
+        if !self.groups.borrow().iter().any(|g| g.id == id) {
+            return None;
+        }
+        self.load_group(id).ok().map(|g| g.entries)
+    }
+
     pub(crate) fn deleted_clients(&self) -> Vec<ClientIdPair> {
         self.deleted_clients.borrow().clone()
     }
