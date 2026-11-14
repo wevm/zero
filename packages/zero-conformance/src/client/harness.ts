@@ -13,12 +13,22 @@
  */
 import {vi} from 'vitest';
 import type {ReadonlyJSONValue} from '../../../shared/src/json.ts';
+import type {TDigest} from '../../../shared/src/tdigest.ts';
+import type {Client} from '../../../zero-client/src/client/inspector/client.ts';
+// Loaded now, so the inspector's lazy import of it settles with the step.
+import '../../../zero-client/src/client/inspector/lazy-inspector.ts';
+import type {Metrics} from '../../../zero-client/src/client/inspector/lazy-inspector.ts';
+import type {Query} from '../../../zero-client/src/client/inspector/query.ts';
 import {
   MockSocket,
   TestZero,
 } from '../../../zero-client/src/client/test-utils.ts';
+import type {PlanDebugEventJSON} from '../../../zero-protocol/src/analyze-query-result.ts';
+import type {AST} from '../../../zero-protocol/src/ast.ts';
 import {decodeSecProtocols} from '../../../zero-protocol/src/connect.ts';
+import type {AnalyzeQueryOptions} from '../../../zero-protocol/src/inspect-up.ts';
 import {POKE_CHUNK_MESSAGE_TYPE} from '../../../zero-protocol/src/poke.ts';
+import {addContextToQuery} from '../../../zql/src/query/query-registry.ts';
 import type {TTL} from '../../../zql/src/query/ttl.ts';
 import {issueMutators, mutators, queries, schema} from './app.ts';
 
@@ -50,7 +60,32 @@ export type ScenarioOptions = {
    * wrapped view or `listen` listener calls, with how many.
    */
   batchViewUpdates?: boolean | undefined;
+  /** Defaults to 5000, the JS default. */
+  slowMaterializeThreshold?: number | undefined;
+  /**
+   * Defaults to `warn`. The materialization messages at this level and
+   * above are reported in `logs`.
+   */
+  logLevel?: 'debug' | 'info' | 'warn' | 'error' | undefined;
 };
+
+/** The calls of `zero.inspector` an `inspect` step can make. */
+export type InspectMethod =
+  | 'metrics'
+  | 'serverVersion'
+  | 'clients'
+  | 'clientsWithQueries'
+  | 'clientQueries'
+  | 'clientMap'
+  | 'clientRows'
+  | 'clientGroupClients'
+  | 'clientGroupClientsWithQueries'
+  | 'clientGroupQueries'
+  | 'analyzeQuery'
+  | 'analyzeServerAST'
+  | 'analyzeNamedQuery'
+  | 'authenticate'
+  | 'formatPlannerEvents';
 
 export type Step =
   | {op: 'materialize'; view: string; query: string; args?: Args; ttl?: TTL}
@@ -148,7 +183,32 @@ export type Step =
       actions?: Step[];
     }
   /** Removes a listener added by `listen`. */
-  | {op: 'unlisten'; listener: string};
+  | {op: 'unlisten'; listener: string}
+  /**
+   * Calls `zero.inspector.<method>` (`client` and `clientGroup` methods on
+   * `inspector.client` and `inspector.clientGroup`); its result is reported
+   * in `inspector` under `call`. `query` and `args` name the query of
+   * `analyzeQuery`; `ast` is `analyzeServerAST`'s, `name` and `queryArgs`
+   * are `analyzeNamedQuery`'s, `table` is `clientRows`'s, and `password` is
+   * `authenticate`'s, and `events` is `formatPlannerEvents`'s. The client sends each request with a new ID; the
+   * n-th sent in the scenario is `$inspect.<n>`, which a downstream message
+   * answers. JS's password prompt, where the server refuses an unauthenticated
+   * request, answers nothing: the request fails.
+   */
+  | {
+      op: 'inspect';
+      call: string;
+      method: InspectMethod;
+      query?: string;
+      args?: Args;
+      ast?: AST;
+      name?: string;
+      queryArgs?: ReadonlyJSONValue[];
+      table?: string;
+      options?: AnalyzeQueryOptions;
+      password?: string;
+      events?: PlanDebugEventJSON[];
+    };
 
 type Args = ReadonlyJSONValue | undefined;
 
@@ -207,6 +267,19 @@ export type StepResult = {
   preloads?: Record<string, {cached: Settled; complete: Settled}>;
   /** `onUpdateNeeded`, `onClientStateNotFound`, and `batchViewUpdates` calls. */
   events?: ReadonlyJSONValue[];
+  /**
+   * The `inspect` calls: `pending`, `{resolved}` with the value as JSON
+   * (queries as their fields, digests as their JSON, clients as
+   * `{id, clientGroupID}` sorted by ID, a map as its entries), or
+   * `{rejected}` with the error's message.
+   */
+  inspector?: Record<string, Settled>;
+  /**
+   * The materialization messages logged during the step (`Slow query
+   * materialization ...` and `Materialized query ...`): level, and the
+   * message, query ID, AST, and ms.
+   */
+  logs?: {level: string; args: ReadonlyJSONValue[]}[];
   /**
    * Listeners added by `listen`, in order: the data and result type of
    * each call during the step.
@@ -333,6 +406,8 @@ export async function runScenario(scenario: Scenario): Promise<StepResult[]> {
       queryURL: options.queryURL,
       queryHeaders: options.queryHeaders,
       hiddenTabDisconnectDelay: options.hiddenTabDisconnectDelay,
+      slowMaterializeThreshold: options.slowMaterializeThreshold,
+      logLevel: options.logLevel,
       batchViewUpdates: options.batchViewUpdates
         ? apply => {
             const before = listenerCalls;
@@ -423,6 +498,43 @@ export async function runScenario(scenario: Scenario): Promise<StepResult[]> {
       threw?: string | undefined;
     }
   >();
+
+  const inspectCalls = new Map<string, Settled>();
+  let inspectCount = 0;
+  // JS prompts for the admin password; a native client can't.
+  vi.stubGlobal('prompt', () => null);
+  let logsSeen = 0;
+  const materializationLogs = () => {
+    const messages = z.testLogSink.messages;
+    const out: {level: string; args: ReadonlyJSONValue[]}[] = [];
+    for (const [level, , args] of messages.slice(logsSeen)) {
+      const [message] = args;
+      if (
+        message === 'Slow query materialization (including server/network)' ||
+        message === 'Materialized query (including server/network)'
+      ) {
+        out.push({level, args: args.map(json)});
+      }
+    }
+    logsSeen = messages.length;
+    return out;
+  };
+  const normalizeKey = (k: string) => {
+    for (const [id, placeholder] of placeholders) {
+      k = k.replaceAll(id, placeholder);
+    }
+    return k;
+  };
+  const clientsJSON = async (clients: Client[]) => {
+    const out = [];
+    for (const c of clients) {
+      out.push({
+        id: placeholders.get(c.id) ?? c.id,
+        clientGroupID: normalize(await c.clientGroup.id),
+      });
+    }
+    return out.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  };
 
   const targetSocket = (index: number | undefined) => {
     const socket = index === undefined ? sockets.at(-1) : sockets[index];
@@ -624,6 +736,78 @@ export async function runScenario(scenario: Scenario): Promise<StepResult[]> {
       case 'unlisten':
         listeners.get(step.listener)?.remove();
         return;
+      case 'inspect': {
+        const {inspector} = z;
+        const {call} = step;
+        inspectCalls.set(call, 'pending');
+        const record = <T>(
+          p: Promise<T>,
+          convert: (v: T) => unknown = v => v,
+        ) =>
+          p.then(
+            async v =>
+              inspectCalls.set(call, {resolved: json(await convert(v))}),
+            e => inspectCalls.set(call, {rejected: errorMessage(e)}),
+          );
+        const options = step.options;
+        switch (step.method) {
+          case 'metrics':
+            return void record(inspector.metrics(), metricsJSON);
+          case 'serverVersion':
+            return void record(inspector.serverVersion());
+          case 'clients':
+            return void record(inspector.clients(), clientsJSON);
+          case 'clientsWithQueries':
+            return void record(inspector.clientsWithQueries(), clientsJSON);
+          case 'clientQueries':
+            return void record(inspector.client.queries(), queriesJSON);
+          case 'clientMap':
+            return void record(inspector.client.map(), m =>
+              Array.from(m, ([k, v]) => [normalizeKey(k), v]),
+            );
+          case 'clientRows':
+            return void record(inspector.client.rows(step.table ?? ''));
+          case 'clientGroupClients':
+            return void record(inspector.clientGroup.clients(), clientsJSON);
+          case 'clientGroupClientsWithQueries':
+            return void record(
+              inspector.clientGroup.clientsWithQueries(),
+              clientsJSON,
+            );
+          case 'clientGroupQueries':
+            return void record(inspector.clientGroup.queries(), queriesJSON);
+          case 'analyzeQuery':
+            return void record(
+              inspector.analyzeQuery(
+                addContextToQuery(
+                  request(step.query ?? '', step.args),
+                  z.context,
+                ),
+                options,
+              ),
+            );
+          case 'analyzeServerAST':
+            return void record(
+              inspector.analyzeServerAST(step.ast as AST, options),
+            );
+          case 'analyzeNamedQuery':
+            return void record(
+              inspector.analyzeNamedQuery(
+                step.name ?? '',
+                step.queryArgs ?? [],
+                options,
+              ),
+            );
+          case 'authenticate':
+            return void record(inspector.authenticate(step.password ?? ''));
+          case 'formatPlannerEvents':
+            inspectCalls.set(call, {
+              resolved: inspector.formatPlannerEvents(step.events ?? []),
+            });
+            return;
+        }
+        return;
+      }
       case 'restart': {
         await z.close();
         await settle();
@@ -648,6 +832,8 @@ export async function runScenario(scenario: Scenario): Promise<StepResult[]> {
         mutations.clear();
         runs.clear();
         preloads.clear();
+        inspectCalls.clear();
+        logsSeen = 0;
         return;
       }
     }
@@ -675,9 +861,18 @@ export async function runScenario(scenario: Scenario): Promise<StepResult[]> {
       }));
       if (opened.length > 0) result.opened = opened;
       const sent = sockets.flatMap((s, i) =>
-        s.messages
-          .slice(sentCounts[i] ?? 0)
-          .map(m => normalize(JSON.parse(m) as ReadonlyJSONValue)),
+        s.messages.slice(sentCounts[i] ?? 0).map(m => {
+          const message = JSON.parse(m) as ReadonlyJSONValue;
+          if (Array.isArray(message) && message[0] === 'inspect') {
+            const {id} = message[1] as {id: string};
+            if (!placeholders.has(id)) {
+              const placeholder = `$inspect.${inspectCount++}`;
+              placeholders.set(id, placeholder);
+              ids.set(placeholder, id);
+            }
+          }
+          return normalize(message);
+        }),
       );
       if (sent.length > 0) result.sent = sent;
       const closed = sockets.flatMap((s, i) =>
@@ -710,6 +905,18 @@ export async function runScenario(scenario: Scenario): Promise<StepResult[]> {
       }
       if (events.length > 0) {
         result.events = events.splice(0);
+      }
+      if (inspectCalls.size > 0) {
+        result.inspector = normalize(
+          json(Object.fromEntries(inspectCalls)),
+        ) as Record<string, Settled>;
+      }
+      const logs = materializationLogs();
+      if (logs.length > 0) {
+        result.logs = logs.map(l => ({
+          level: l.level,
+          args: l.args.map(a => normalize(a)),
+        }));
       }
       if (listeners.size > 0) {
         result.listeners = Object.fromEntries(
@@ -757,4 +964,34 @@ function socketURL(
     }
   }
   return {origin: url.origin, path: url.pathname, query};
+}
+
+function metricsJSON(metrics: Metrics): ReadonlyJSONValue {
+  return Object.fromEntries(
+    Object.entries(metrics).map(([k, d]) => [k, (d as TDigest).toJSON()]),
+  );
+}
+
+function queriesJSON(queries: Query[]): ReadonlyJSONValue {
+  return queries.map(q => ({
+    name: q.name,
+    args: q.args,
+    got: q.got,
+    ttl: q.ttl,
+    inactivatedAt: q.inactivatedAt === null ? null : q.inactivatedAt.getTime(),
+    rowCount: q.rowCount,
+    deleted: q.deleted,
+    id: q.id,
+    clientID: q.clientID,
+    metrics: q.metrics === null ? null : metricsJSON(q.metrics),
+    clientZQL: q.clientZQL,
+    serverZQL: q.serverZQL,
+    hydrateClient: q.hydrateClient,
+    hydrateServer: q.hydrateServer,
+    hydrateTotal: q.hydrateTotal,
+    updateClientP50: q.updateClientP50,
+    updateClientP95: q.updateClientP95,
+    updateServerP50: q.updateServerP50,
+    updateServerP95: q.updateServerP95,
+  }));
 }

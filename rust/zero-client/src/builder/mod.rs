@@ -64,6 +64,11 @@ pub trait BuilderDelegate {
     fn aggregate_key_columns(&self, _table: &str, columns: &[String]) -> Vec<String> {
         columns.to_vec()
     }
+    /// Wraps each source connection of query `query_id`'s pipeline
+    /// (`decorateSourceInput`), as the client does to time its pushes.
+    fn decorate_source_input(&self, input: Rc<dyn SourceInput>, _query_id: &str) -> Rc<dyn Input> {
+        input
+    }
 }
 
 /// `OptimisticAggregate`: how a mutation of a child row moves a synced
@@ -189,7 +194,7 @@ impl Builder<'_> {
                 None,
                 None,
             )?;
-            return Ok(conn);
+            return Ok(self.delegate.decorate_source_input(conn, self.query_id));
         }
         if ast_in.group_by.is_some() && self.delegate.aggregates_from_source() {
             return self.group_from_source(ast_in);
@@ -239,7 +244,7 @@ impl Builder<'_> {
         };
         let conn = source.connect(sort, ast.where_.as_ref(), Some(&split_edit_keys))?;
         let fully_applied_filters = conn.fully_applied_filters();
-        let mut end: Rc<dyn Input> = conn;
+        let mut end: Rc<dyn Input> = self.delegate.decorate_source_input(conn, self.query_id);
 
         if let Some(start) = &ast.start {
             end = Skip::new(end, start);
@@ -655,7 +660,9 @@ impl Builder<'_> {
                 direction: Direction::Asc,
             })
             .collect();
-        Ok(source.connect(Some(sort), None, None)?)
+        Ok(self
+            .delegate
+            .decorate_source_input(source.connect(Some(sort), None, None)?, self.query_id))
     }
 
     /// `groupFromSource`: a synced client reads a grouped query's rows from
@@ -709,7 +716,9 @@ impl Builder<'_> {
         ) else {
             return err(format!("Group source not found: {table}"));
         };
-        Ok(source.connect(Some(sort), None, None)?)
+        Ok(self
+            .delegate
+            .decorate_source_input(source.connect(Some(sort), None, None)?, self.query_id))
     }
 
     #[allow(clippy::too_many_arguments)]

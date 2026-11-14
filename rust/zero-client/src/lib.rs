@@ -112,6 +112,8 @@ pub mod schema;
 pub mod sort;
 pub mod strings;
 #[warn(missing_docs)]
+pub mod tdigest;
+#[warn(missing_docs)]
 pub mod testing;
 #[cfg(feature = "tokio-transport")]
 #[warn(missing_docs)]
