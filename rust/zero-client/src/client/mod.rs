@@ -27,8 +27,8 @@ mod zero;
 
 pub use connection_manager::{ConnectionState, ConnectionStatus, NeedsAuthReason};
 pub use engine::{
-    MutationOutcome, MutatorResult, StorageFailureHandler, UpdateNeededHandler, UpdateNeededReason,
-    ZeroOptions,
+    BatchViewUpdates, MutationOutcome, MutatorResult, StorageFailureHandler, UpdateNeededHandler,
+    UpdateNeededReason, ZeroOptions,
 };
 pub use error::*;
 pub use log::{LogLevel, LogSink, StderrLogSink};
