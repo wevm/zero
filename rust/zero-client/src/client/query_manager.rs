@@ -2,10 +2,14 @@
 //! about changes in batches, and reports which ones the server has sent
 //! (`packages/zero-client/src/client/query-manager.ts`).
 
+use super::inspector::{Metrics, QueryClientMetrics};
+use super::log::Log;
 use super::replica_store::{KvDiff, KvDiffOp, KvMap};
 use super::{ConnectionError, Scheduler, Timer};
+use crate::ast::Ast;
+use crate::decode::JsonCodable;
 use crate::hash::query::hash_of_name_and_args;
-use crate::json::{Object, Value};
+use crate::json::{self, Object, Value, number};
 use crate::keys::{DESIRED_QUERIES_PREFIX, GOT_QUERIES_PREFIX};
 use crate::map::OrderedMap;
 use crate::protocol::{
@@ -13,8 +17,34 @@ use crate::protocol::{
 };
 use crate::ttl::Ttl;
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::{Rc, Weak};
+
+/// Client query updates are timed for only the first of every
+/// `UPDATE_SAMPLE_RATE` pushes to each source connection (see
+/// `MeasurePush`), so each `query-update-client` time is recorded with this
+/// weight (`UPDATE_SAMPLE_RATE` in `query-manager.ts`).
+pub(crate) const UPDATE_SAMPLE_RATE: u64 = 32;
+
+/// The metrics the client records (`ClientMetricMap` in
+/// `packages/zql/src/query/metrics-delegate.ts`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ClientMetric {
+    /// `query-materialization-client`: building and hydrating a view.
+    MaterializationClient,
+    /// `query-materialization-end-to-end`: from materializing a query
+    /// until the server has sent its rows.
+    MaterializationEndToEnd,
+    /// `query-update-client`: a push through a query's pipeline.
+    UpdateClient,
+}
+
+/// Where a query context reports its metrics, and the clock it times them
+/// on (`MetricsDelegate`).
+pub(crate) trait MetricsDelegate {
+    fn monotonic_now(&self) -> f64;
+    fn add_metric(&self, metric: ClientMetric, value: f64, query_id: &str, ast: Option<&Ast>);
+}
 
 /// What a query's got callback hears: whether the server has confirmed the
 /// query's rows on this connection (`Yes`), on an earlier one (`Cached`),
@@ -29,6 +59,8 @@ pub(crate) enum Got {
 pub(crate) type GotCallback = Rc<dyn Fn(Got, Option<ErroredQuery>)>;
 
 struct Entry {
+    /// The query's AST, for the inspector.
+    ast: Ast,
     name: String,
     args: Vec<Value>,
     count: usize,
@@ -63,6 +95,25 @@ pub(crate) struct QueryManager {
     recent_queries_max_size: usize,
     state: RefCell<State>,
     next_callback_id: Cell<u64>,
+    log: Log,
+    slow_materialize_threshold_ms: f64,
+    /// Every query's metrics together.
+    metrics: RefCell<Metrics>,
+    query_metrics: RefCell<HashMap<String, QueryClientMetrics>>,
+    /// The ASTs and metrics of the queries evicted since the inspector was
+    /// first asked for: `None` until then (the inspector's
+    /// `setQueryEvictedCallback`).
+    evicted: RefCell<Option<HashMap<String, (Ast, QueryClientMetrics)>>>,
+}
+
+impl MetricsDelegate for QueryManager {
+    fn monotonic_now(&self) -> f64 {
+        self.scheduler.monotonic_now()
+    }
+
+    fn add_metric(&self, metric: ClientMetric, value: f64, query_id: &str, ast: Option<&Ast>) {
+        QueryManager::add_metric(self, metric, value, query_id, ast)
+    }
 }
 
 impl QueryManager {
@@ -72,6 +123,8 @@ impl QueryManager {
         query_change_throttle_ms: f64,
         send: Box<dyn Fn(ChangeDesiredQueriesBody)>,
         pending_mutations: Box<dyn Fn() -> usize>,
+        log: Log,
+        slow_materialize_threshold_ms: f64,
     ) -> Rc<Self> {
         Rc::new_cyclic(|me| QueryManager {
             me: me.clone(),
@@ -86,7 +139,96 @@ impl QueryManager {
                 ..State::default()
             }),
             next_callback_id: Cell::new(0),
+            log,
+            slow_materialize_threshold_ms,
+            metrics: RefCell::default(),
+            query_metrics: RefCell::default(),
+            evicted: RefCell::new(None),
         })
+    }
+
+    /// Every query's client metrics together (`metrics`).
+    pub(crate) fn metrics(&self) -> Metrics {
+        self.metrics.borrow().clone()
+    }
+
+    /// The client metrics of query `id`, if it has any, evicted or not
+    /// (`getQueryMetrics`).
+    pub(crate) fn query_metrics(&self, id: &str) -> Option<QueryClientMetrics> {
+        if let Some(m) = self.query_metrics.borrow().get(id) {
+            return Some(m.clone());
+        }
+        let evicted = self.evicted.borrow();
+        evicted.as_ref()?.get(id).map(|(_, m)| m.clone())
+    }
+
+    /// The AST of query `id`, evicted or not (`getAST`).
+    pub(crate) fn query_ast(&self, id: &str) -> Option<Ast> {
+        if let Some(e) = self.state.borrow().queries.get(id) {
+            return Some(e.borrow().ast.clone());
+        }
+        let evicted = self.evicted.borrow();
+        evicted.as_ref()?.get(id).map(|(a, _)| a.clone())
+    }
+
+    /// Keeps the ASTs and metrics of the queries evicted from now on, as
+    /// JS does once its inspector exists.
+    pub(crate) fn keep_evicted(&self) {
+        self.evicted.borrow_mut().get_or_insert_with(HashMap::new);
+    }
+
+    /// `addMetric`: records a metric of query `query_id`, client-wide and
+    /// for the query, and logs each end-to-end materialization, as a
+    /// warning past `slow_materialize_threshold_ms`.
+    pub(crate) fn add_metric(
+        &self,
+        metric: ClientMetric,
+        value: f64,
+        query_id: &str,
+        ast: Option<&Ast>,
+    ) {
+        let weight = if metric == ClientMetric::UpdateClient {
+            UPDATE_SAMPLE_RATE as f64
+        } else {
+            1.0
+        };
+        {
+            let mut m = self.metrics.borrow_mut();
+            let digest = match metric {
+                ClientMetric::MaterializationClient => &mut m.query_materialization_client,
+                ClientMetric::MaterializationEndToEnd => &mut m.query_materialization_end_to_end,
+                ClientMetric::UpdateClient => &mut m.query_update_client,
+            };
+            digest.add(value, weight);
+        }
+        if metric == ClientMetric::MaterializationEndToEnd {
+            let message = |m: &str| {
+                let ast = ast.map_or("undefined".to_owned(), |a| json::stringify(&a.to_json()));
+                format!("{m} {query_id} {ast} {}", number::format(value))
+            };
+            if value > self.slow_materialize_threshold_ms {
+                self.log
+                    .warn(|| message("Slow query materialization (including server/network)"));
+            } else {
+                self.log
+                    .debug(|| message("Materialized query (including server/network)"));
+            }
+        }
+        let mut per_query = self.query_metrics.borrow_mut();
+        let existing = match per_query.get_mut(query_id) {
+            Some(e) => e,
+            None => per_query.entry(query_id.to_owned()).or_default(),
+        };
+        match metric {
+            ClientMetric::UpdateClient => existing.query_update_client.add(value, weight),
+            // Recorded once per query: the last value wins.
+            ClientMetric::MaterializationClient => {
+                existing.query_materialization_client = Some(value)
+            }
+            ClientMetric::MaterializationEndToEnd => {
+                existing.query_materialization_end_to_end = Some(value)
+            }
+        }
     }
 
     /// Every mutation the server had to confirm is confirmed: the removals
@@ -259,6 +401,7 @@ impl QueryManager {
     /// Registers a named query. Returns the function that unregisters it.
     pub(crate) fn add_custom(
         &self,
+        ast: &Ast,
         name: &str,
         args: &[Value],
         ttl: &Ttl,
@@ -288,6 +431,7 @@ impl QueryManager {
                 }
                 None => {
                     let entry = Rc::new(RefCell::new(Entry {
+                        ast: ast.clone(),
                         name: name.to_owned(),
                         args: args.to_vec(),
                         count: 1,
@@ -415,8 +559,15 @@ impl QueryManager {
             if s.recent_queries.len() > self.recent_queries_max_size {
                 let lru = s.recent_queries.get_index(0).map(|(k, _)| k.clone());
                 if let Some(lru) = &lru {
-                    s.queries.remove(lru);
+                    let evicted = s.queries.remove(lru);
                     s.recent_queries.remove(lru);
+                    let metrics = self.query_metrics.borrow_mut().remove(lru);
+                    if let (Some(kept), Some(e)) = (self.evicted.borrow_mut().as_mut(), evicted) {
+                        kept.insert(
+                            lru.clone(),
+                            (e.borrow().ast.clone(), metrics.unwrap_or_default()),
+                        );
+                    }
                 }
                 lru
             } else {

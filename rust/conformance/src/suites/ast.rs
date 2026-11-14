@@ -1,7 +1,8 @@
 //! The AST, its normalization, and query hashes: `primitives/ast.test.ts`,
 //! `primitives/ast-features.test.ts`, `primitives/hash.test.ts` (the query
 //! hashes), and `primitives/sweep-wire.test.ts` (the name-and-args hashes
-//! and the hashes of queries the query builder builds).
+//! and the hashes of queries the query builder builds), and
+//! `primitives/ast-to-zql.test.ts`.
 
 use crate::case::{Case, ensure, quote, same};
 use crate::{Outcome, Source, Suite};
@@ -17,6 +18,12 @@ use zero_client::schema::{NameMapper, Schema};
 
 pub fn suites() -> Vec<Suite> {
     vec![
+        Suite {
+            variant: None,
+            file: "ast-to-zql",
+            source: Source::Checked,
+            check: ast_to_zql,
+        },
         Suite {
             variant: None,
             file: "ast",
@@ -312,4 +319,20 @@ fn expression(eb: &ExpressionBuilder, e: &Value, error: &OpError) -> Condition {
         fail::<()>(error, format!("malformed expression {e}"));
         Condition::And(Vec::new())
     })
+}
+
+fn ast_to_zql(c: &Value, _: &Value) -> Result<Outcome, String> {
+    let ast = Ast::from_json(c.field("ast")?).map_err(|e| e.to_string())?;
+    let what = json::stringify(c.field("ast")?);
+    same(
+        format!("astToZQL({what})"),
+        zero_client::ast::ast_to_zql(&ast, false).as_str(),
+        c.str("zql")?,
+    )?;
+    same(
+        format!("astToZQL({what}, redactLiterals)"),
+        zero_client::ast::ast_to_zql(&ast, true).as_str(),
+        c.str("redacted")?,
+    )?;
+    Ok(Outcome::Pass)
 }

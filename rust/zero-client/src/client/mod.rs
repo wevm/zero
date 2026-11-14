@@ -10,9 +10,12 @@ mod database;
 mod engine;
 mod error;
 mod event_loop;
+mod inspector;
 mod ivm_branch;
 mod log;
+mod measure_push;
 mod mutation_tracker;
+mod planner_debug;
 mod poke_handler;
 mod query_context;
 mod query_manager;
@@ -31,6 +34,10 @@ pub use engine::{
     UpdateNeededReason, ZeroOptions,
 };
 pub use error::*;
+pub use inspector::{
+    AnalyzeQueryOptions, AnalyzeQueryResult, Inspector, InspectorClient, InspectorClientGroup,
+    InspectorQuery, Metrics, PlanDebugEvent, RowCountsBySource, RowsByQuery, RowsBySource,
+};
 pub use log::{LogLevel, LogSink, StderrLogSink};
 pub use query_context::{MaterializedView, Preload, RunType, ViewListener};
 pub use scheduler::*;
