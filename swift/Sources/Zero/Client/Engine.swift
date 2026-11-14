@@ -152,7 +152,7 @@ final class Engine {
   /// The inspector's requests (`zero.inspector`).
   let inspectRPCs = InspectRPCs()
 
-  /// The current token: `options.auth`, then the last one `connect(auth:)` set.
+  /// The current token: `options.auth`, then the last one `connect(_:)` set.
   private(set) var auth: String?
   private var repClosed = false
   private var socket: SocketHandle?
@@ -206,7 +206,7 @@ final class Engine {
     self.schema = schema
     self.options = options
     self.userID = options.userID
-    // Set now, as JS's constructor does, so a token from `connect(auth:)` right after init isn't replaced when the run loop starts.
+    // Set now, as JS's constructor does, so a token from `connect(_:)` right after init isn't replaced when the run loop starts.
     self.auth = options.auth ?? ""
     self.mutators = mutators
     self.socketFactory = socketFactory
@@ -1207,16 +1207,12 @@ final class Engine {
     }
   }
 
-  /// `connection.connect()`: resumes from needs-auth or error.
-  func connect(auth: String??) {
+  /// `connection.connect()`: resumes from needs-auth or error. `auth`, when set, replaces the token
+  /// first (`.some(nil)` clears it).
+  func connect(auth: String??) throws {
     if case .some(let auth) = auth {
       // JS's `#setAuth` throws this, so `connect` rejects before it does anything.
-      do {
-        try Self.checkAuthValid(userID, auth)
-      } catch {
-        log.error("connect(auth:) ignored: \(error)")
-        return
-      }
+      try Self.checkAuthValid(userID, auth)
       setAuth(auth)
     }
     if case .disconnected(let r) = connectionManager.state, r.clientKind == .noSocketOrigin {

@@ -152,7 +152,7 @@ reconnects, so don't retry it as a failure.
 
 ``Connection`` is observable. Its ``ConnectionState`` is `.needsAuth` when
 the server rejects the token: get a new one and call
-``Connection/connect(auth:)``.
+``Connection/connect(_:)`` with `.set(token)`.
 
 ## Develop against a local backend
 

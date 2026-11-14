@@ -382,19 +382,23 @@ final class ScenarioRunner {
     case "onState":
       let name = step["state"]!.stringValue!
       let then = step["then"]!
+      let auth = then["op"] == "close" ? nil : try connectAuth(then)
       var unsubscribe: (() -> Void)?
       unsubscribe = zero.connection.subscribe { [weak self] state in
         guard let self, state.status.rawValue == name else { return }
         unsubscribe?()
         unsubscribe = nil
-        if then["op"] == "close" {
-          self.zero.close()
+        if let auth {
+          // The harness drops the promise (`void`).
+          try? self.zero.connection.connect(auth)
         } else {
-          self.zero.connection.connect(auth: then["auth"]?.stringValue)
+          self.zero.close()
         }
       }
     case "connect":
-      zero.connection.connect(auth: step["auth"]?.stringValue)
+      let auth = try connectAuth(step)
+      // The harness drops the promise (`void`).
+      try? zero.connection.connect(auth)
     case "close":
       zero.close()
     case "restart":
@@ -431,6 +435,17 @@ final class ScenarioRunner {
       try inspect(step)
     default:
       throw ClientApp.Failure("Unknown op \(op)")
+    }
+  }
+
+  /// The harness's `connect(auth === undefined ? undefined : {auth})`: a missing `auth` keeps the
+  /// token, `null` clears it, a string sets it.
+  func connectAuth(_ step: JSONValue) throws -> ConnectAuth {
+    switch step["auth"] {
+    case nil: .keep
+    case .null: .clear
+    case .string(let auth): .set(auth)
+    case let v?: throw ClientApp.Failure("connect auth must be a string or null, not \(v)")
     }
   }
 

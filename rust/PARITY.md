@@ -98,7 +98,7 @@ set 0 to disconnect as soon as it says it is hidden, as Swift does.
 | `zero.run(query, {type})`                                        | `run(&query, RunType, ttl)`, a `Deferred<ViewValue>` to await or read once settled                      |
 | `zero.preload(query)`                                            | `preload(&query, &Ttl::DEFAULT_PRELOAD)`, a `Preload` with `cleanup`, `cached`, and `complete`          |
 | `zero.mutate(request)`                                           | `mutate(name, args)`, a `MutatorResult` whose `client` and `server` are `Deferred<MutationOutcome>`     |
-| `zero.connection.state`, `.subscribe`, `.connect({auth})`        | `connection().state()`, `.subscribe(listener)`, `.connect(auth)`                                        |
+| `zero.connection.state`, `.subscribe`, `.connect({auth})`        | `connection().state()`, `.subscribe(listener)`, `.connect(ConnectAuth)?`; see below                     |
 | `zero.close()`, `zero.delete()`, `dropAllDatabases()`            | `close()`, `delete()`, `client::drop_all_databases(&storage)`, which return the `DroppedDatabases`      |
 | `escapeLike(text)`                                               | `like::escape_like`                                                                                     |
 | `zero.mutate.issue.insert(...)` (CRUD mutators)                  | not ported: write a mutator                                                                             |
@@ -108,6 +108,13 @@ set 0 to disconnect as soon as it says it is hidden, as Swift does.
 Rust adds `reconnect_now` (the network may be back, so skip the backoff),
 `when_pending_settled`, and `flush_storage` (wait for the store's queued
 writes, such as before the app exits).
+
+`connect({auth})` is `connect(ConnectAuth::Keep)` without `auth`,
+`ConnectAuth::Set(token)` with a token, and `ConnectAuth::Clear` with
+`null`. Where JS's promise rejects, such as for a token on a client without
+a `user_id`, it returns the error and changes nothing. It returns before
+the state changes, where JS's promise waits for the next one: `subscribe`
+follows it.
 
 When the server no longer has the client's state, JS asks the app to
 reload. Without `on_client_state_not_found`, Rust replaces the client

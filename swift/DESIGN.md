@@ -149,7 +149,7 @@ In scope for v1 (everything non-deprecated):
 - Named queries and mutators, with CRUD inside mutators (`insert`, `upsert`, `update`, `delete`).
 - The full ZQL builder: `where` (all operators), `whereExists` (including `flip` and `scalar`), `related`, `orderBy`, `limit`, `start`, `one`.
 - `run` with `unknown`, `cached`, and `complete`; `materialize`; `preload`; TTL.
-- Connection state; `connect(auth:)`; the `needs-auth` flow.
+- Connection state; `connect(_:)`; the `needs-auth` flow.
 - `close`, `delete`, `context`.
 - `mutateURL` and `queryURL` with their headers; `getTraceparent`.
 - `onUpdateNeeded`, `onClientStateNotFound`, `onStorageFailure`.
@@ -231,7 +231,7 @@ zql.issue
 
 - `zero.mutate(request)` is `@discardableResult` and returns a handle with `client` and `server` outcomes (`Deferred<MutationOutcome>`), the same split as JS `{client, server}`. An outcome is success with optional data, an application error, or a Zero error, as in JS, rather than a throw.
 - One `ZeroError` enum mirrors the JS kinds: application (with message), input validation, storage failure, transaction closed, rejected while disconnected or closed, and Zero/server errors. The public API uses plain `throws` because mutator bodies can throw arbitrary errors.
-- Auth: an `auth` token option and a `.needsAuth` connection state on 401/403. The app calls `connection.connect(auth:)`, which sends `updateAuth` when already connected. An async token-provider closure is deferred.
+- Auth: an `auth` token option and a `.needsAuth` connection state on 401/403. The app calls `connection.connect(.set(token))`, which sends `updateAuth` when already connected. An async token-provider closure is deferred.
 - Logging: a `LogSink` protocol and a `logLevel` option defaulting to `.warn` (what the JS code does). The default sink is `os.Logger` (subsystem `zero`) on Apple platforms and stderr on Linux. No telemetry.
 
 ### UI integration

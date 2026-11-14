@@ -259,7 +259,7 @@ import ZeroTesting
     try SecProtocols.decode(#require(socket?.secProtocol))["authToken"]?.stringValue
   }
 
-  /// The client that replaces one the server lost (`replaceClient`, the default `onClientStateNotFound`) connects with the token the app last gave through `connect(auth:)`, not the one in the options: the old token may be the expired one.
+  /// The client that replaces one the server lost (`replaceClient`, the default `onClientStateNotFound`) connects with the token the app last gave through `connect(_:)`, not the one in the options: the old token may be the expired one.
   @Test func aReplacedClientKeepsTheRotatedToken() throws {
     let sockets = MockSocketFactory()
     var options = ZeroOptions(
@@ -270,7 +270,7 @@ import ZeroTesting
       schema: .test, mutators: [Self.create], options: options, scheduler: scheduler,
       socketFactory: sockets)
     let first = try connect(sockets)
-    zero.connection.connect(auth: "t2")
+    try zero.connection.connect(.set("t2"))
     scheduler.runDueTimers()
     #expect(first.messages.contains(#"["updateAuth",{"auth":"t2"}]"#))
     first.receive(
@@ -281,8 +281,8 @@ import ZeroTesting
     zero.close()
   }
 
-  /// A logged-out client can't take a token: JS's `#setAuth` throws `checkAuthValid`'s error, so `connect({auth})` rejects before it resumes. The client stays in needs-auth and never sends the token.
-  @Test func connectWithAuthOnALoggedOutClientIsRejected() throws {
+  /// A logged-out client can't take a token: JS's `#setAuth` throws `checkAuthValid`'s error, so `connect({auth})` rejects before it does anything. Connected, the server gets no `updateAuth`; in needs-auth, the client stays there and never sends the token. `auth: null` clears the token: no `updateAuth`, and the next connection carries none.
+  @Test func connectWithAuthOnALoggedOutClientThrowsAndClearDropsTheToken() throws {
     let sockets = MockSocketFactory()
     var options = ZeroOptions(
       cacheURL: "http://zero.test", storageKey: randomID(), storage: .memory)
@@ -290,23 +290,47 @@ import ZeroTesting
     let zero = try Zero(
       schema: .test, mutators: [Self.create], options: options, scheduler: scheduler,
       socketFactory: sockets)
+    let first = try connect(sockets)
+    let rejection = ConnectionError.client(
+      .internal, message: "ZeroOptions.userID is required when auth is set.")
+    #expect(throws: rejection) { try zero.connection.connect(.set("t")) }
     scheduler.runDueTimers()
-    try #require(sockets.sockets.last).receive(
+    #expect(!first.messages.contains { $0.hasPrefix(#"["updateAuth""#) })
+    first.receive(
       text: #"["error",{"kind":"Unauthorized","message":"no","origin":"zeroCache"}]"#)
     scheduler.runDueTimers()
     #expect(zero.connection.state.status == .needsAuth)
-    zero.connection.connect(auth: "t")
+    #expect(throws: rejection) { try zero.connection.connect(.set("t")) }
     scheduler.runDueTimers()
     #expect(sockets.sockets.count == 1)
     #expect(zero.connection.state.status == .needsAuth)
-    #expect(
-      log.entries.contains { $0.level == .error && $0.message.contains("userID is required") })
-    // Without a token it still resumes.
-    zero.connection.connect()
+    // An empty token is no token, so it still resumes.
+    try zero.connection.connect(.set(""))
     scheduler.runDueTimers()
     #expect(sockets.sockets.count == 2)
     #expect(try authToken(sockets.sockets.last) == nil)
     zero.close()
+
+    let signedIn = MockSocketFactory()
+    let other = try makeZero(signedIn, auth: "t1")
+    let socket = try connect(signedIn)
+    #expect(try authToken(socket) == "t1")
+    try other.connection.connect(.set("t2"))
+    try other.connection.connect(.clear)
+    scheduler.runDueTimers()
+    #expect(
+      socket.messages.filter { $0.hasPrefix(#"["updateAuth""#) } == [
+        #"["updateAuth",{"auth":"t2"}]"#
+      ])
+    socket.receive(
+      text: #"["error",{"kind":"Unauthorized","message":"no","origin":"zeroCache"}]"#)
+    scheduler.runDueTimers()
+    #expect(other.connection.state.status == .needsAuth)
+    try other.connection.connect()
+    scheduler.runDueTimers()
+    #expect(signedIn.sockets.count == 2)
+    #expect(try authToken(signedIn.sockets.last) == nil)
+    other.close()
   }
 
   // MARK: - A message cut off by the connection's end

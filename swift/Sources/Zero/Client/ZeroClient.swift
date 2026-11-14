@@ -443,11 +443,36 @@ public final class Connection {
     return { [weak self] in self?.listeners.removeAll { $0.id == id } }
   }
 
-  /// Resumes connecting from `needsAuth` or `error`. With `auth`, sets the
-  /// token first; when already connected, the server gets the new token.
-  public func connect(auth: String? = nil) {
-    engine.loop.call { engine.connect(auth: auth.map { .some($0) }) }
+  /// Resumes connecting from `needsAuth` or `error` (`connect` in `connection.ts`). From any other
+  /// state it only applies `auth`, and after a disconnect for a missing `cacheURL` it never
+  /// reconnects.
+  ///
+  /// `auth` first sets or clears the token, as `connect({auth})` does; when already connected, the
+  /// server gets a new non-empty token in `updateAuth`. A token on a client without a `userID`
+  /// throws an `Internal` error (JS's rejection), and nothing changes.
+  ///
+  /// It returns once the connection is asked to resume, not once it has: JS's promise waits for the
+  /// next state, which `state` and `subscribe` follow here.
+  public func connect(_ auth: ConnectAuth = .keep) throws {
+    let auth: String?? =
+      switch auth {
+      case .keep: nil
+      case .set(let token): .some(token)
+      case .clear: .some(nil)
+      }
+    try engine.loop.call { try engine.connect(auth: auth) }
   }
+}
+
+/// What `Connection.connect` does with the auth token first: the `auth` of `connect({auth})`
+/// absent, a string, or `null`.
+public enum ConnectAuth: Sendable, Hashable {
+  /// Keeps the token (no `auth`).
+  case keep
+  /// Replaces the token.
+  case set(String)
+  /// Removes the token (`auth: null`).
+  case clear
 }
 
 /// A `Zero` of any context, for code that needs only what doesn't depend
