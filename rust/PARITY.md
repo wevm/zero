@@ -71,7 +71,8 @@ factory.
 | `getTraceparent`                                                                   | `get_traceparent`                                                     |
 | `onOnlineChange` (deprecated)                                                      | `connection().subscribe(listener)`                                    |
 | `server`, `getQueriesURL` (deprecated)                                             | `cache_url`, `query_url`                                              |
-| `slowMaterializeThreshold`, `batchViewUpdates`, `maxRecentQueries` (deprecated)    | not ported                                                            |
+| `batchViewUpdates`                                                                 | `batch_view_updates`                                                  |
+| `slowMaterializeThreshold`, `maxRecentQueries` (deprecated)                        | not ported                                                            |
 
 Two defaults differ from JS. `storage` is `ZeroStorage::Memory`, since
 SQLite is an opt-in feature, where JS keeps its data in IndexedDB.

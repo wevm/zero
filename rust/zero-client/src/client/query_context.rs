@@ -4,6 +4,7 @@
 //! `materializeImpl`, `runImpl`, and `preloadImpl` from
 //! `packages/zql/src/query/query-delegate-base.ts`).
 
+use super::engine::BatchViewUpdates;
 use super::ivm_branch::IvmBranch;
 use super::log::Log;
 use super::query_manager::{Got, GotCallback, closed_error};
@@ -94,6 +95,9 @@ pub(crate) struct QueryContext {
     /// The hashes of the unnamed queries already warned about.
     warned_local_only: RefCell<HashSet<String>>,
     pub(crate) notifications: NotificationGate,
+    /// The app's `batch_view_updates`, which every update of the views
+    /// goes through.
+    batch_view_updates: Option<BatchViewUpdates>,
     /// Why pushing into the branch failed, once it has (`#advanceError` in
     /// `ivm-branch.ts`): the branch is unusable from then on.
     branch_failure: RefCell<Option<PipelineError>>,
@@ -225,6 +229,7 @@ impl QueryContext {
         log: Option<Log>,
         closed_reason: Box<dyn Fn() -> Option<ConnectionError>>,
         aggregates_from_source: bool,
+        batch_view_updates: Option<BatchViewUpdates>,
     ) -> Rc<Self> {
         Rc::new_cyclic(|me| QueryContext {
             me: me.clone(),
@@ -245,6 +250,7 @@ impl QueryContext {
             warned_local_only: RefCell::default(),
             notifications: Rc::default(),
             branch_failure: RefCell::new(None),
+            batch_view_updates,
         })
     }
 
@@ -259,6 +265,7 @@ impl QueryContext {
             None,
             Box::new(|| None),
             aggregates_from_source,
+            None,
         );
         context.mark_pipelines_ready();
         context
@@ -343,6 +350,10 @@ impl QueryContext {
             self.pipelines_ready.set(true);
             return;
         }
+        self.batch(|| self.attach_pending_pipelines());
+    }
+
+    fn attach_pending_pipelines(&self) {
         let mut releases = Vec::new();
         loop {
             let next = {
@@ -375,13 +386,32 @@ impl QueryContext {
         if let Some(f) = self.branch_failure() {
             return Err(f);
         }
-        let result = capture(|| self.branch.apply(diff, rows));
-        self.end_transaction();
+        let result = self.batch(|| {
+            let result = capture(|| self.branch.apply(diff, rows));
+            self.end_transaction();
+            result
+        });
         if let Err(f) = result {
             *self.branch_failure.borrow_mut() = Some(f.clone());
             return Err(f);
         }
         Ok(())
+    }
+
+    /// Runs `apply_view_updates` through the app's `batch_view_updates`
+    /// (`batchViewUpdates` in `context.ts`).
+    fn batch<T>(&self, apply_view_updates: impl FnOnce() -> T) -> T {
+        let Some(batch) = self.batch_view_updates.clone() else {
+            return apply_view_updates();
+        };
+        let mut apply = Some(apply_view_updates);
+        let mut result = None;
+        batch(&mut || {
+            if let Some(apply) = apply.take() {
+                result = Some(apply());
+            }
+        });
+        result.expect("batchViewUpdates must call applyViewUpdates synchronously.")
     }
 
     fn end_transaction(&self) {
@@ -489,12 +519,14 @@ impl QueryContext {
         };
         let complete = track.borrow().query_complete.clone();
         let format = query.format().clone();
-        let hydrated = capture(|| match &complete {
-            Completion::Complete => ArrayView::new(input.clone(), format.clone(), None, true),
-            Completion::Failed(e) => {
-                ArrayView::new(input.clone(), format.clone(), Some(e.clone()), false)
-            }
-            Completion::Pending => ArrayView::new(input.clone(), format.clone(), None, false),
+        let hydrated = self.batch(|| {
+            capture(|| match &complete {
+                Completion::Complete => ArrayView::new(input.clone(), format.clone(), None, true),
+                Completion::Failed(e) => {
+                    ArrayView::new(input.clone(), format.clone(), Some(e.clone()), false)
+                }
+                Completion::Pending => ArrayView::new(input.clone(), format.clone(), None, false),
+            })
         });
         let created = match hydrated {
             Ok(v) => v,

@@ -45,6 +45,11 @@ export type ScenarioOptions = {
   hiddenTabDisconnectDelay?: number | undefined;
   /** What `getTraceparent` returns. Defaults to no `getTraceparent`. */
   traceparent?: string | undefined;
+  /**
+   * Passes a `batchViewUpdates` that reports in `events` each call that
+   * wrapped view or `listen` listener calls, with how many.
+   */
+  batchViewUpdates?: boolean | undefined;
 };
 
 export type Step =
@@ -200,7 +205,7 @@ export type StepResult = {
   mutations?: Record<string, {client: Settled; server: Settled}>;
   runs?: Record<string, Settled>;
   preloads?: Record<string, {cached: Settled; complete: Settled}>;
-  /** `onUpdateNeeded` and `onClientStateNotFound` calls. */
+  /** `onUpdateNeeded`, `onClientStateNotFound`, and `batchViewUpdates` calls. */
   events?: ReadonlyJSONValue[];
   /**
    * Listeners added by `listen`, in order: the data and result type of
@@ -302,6 +307,8 @@ export async function runScenario(scenario: Scenario): Promise<StepResult[]> {
   vi.stubGlobal('document', document);
 
   const events: ReadonlyJSONValue[] = [];
+  // View and `listen` listener calls so far, for `batchViewUpdates`.
+  let listenerCalls = 0;
   const scenarioKey = ++scenarioCount;
   const makeZero = (
     options: ScenarioOptions,
@@ -326,6 +333,17 @@ export async function runScenario(scenario: Scenario): Promise<StepResult[]> {
       queryURL: options.queryURL,
       queryHeaders: options.queryHeaders,
       hiddenTabDisconnectDelay: options.hiddenTabDisconnectDelay,
+      batchViewUpdates: options.batchViewUpdates
+        ? apply => {
+            const before = listenerCalls;
+            apply();
+            // How often JS calls it with nothing to update, such as while
+            // hydrating, isn't part of its contract.
+            if (listenerCalls > before) {
+              events.push({batchViewUpdates: listenerCalls - before});
+            }
+          }
+        : undefined,
       getTraceparent:
         options.traceparent === undefined
           ? undefined
@@ -433,6 +451,7 @@ export async function runScenario(scenario: Scenario): Promise<StepResult[]> {
           entry.data = json(data);
           entry.resultType = resultType;
           entry.notifications++;
+          listenerCalls++;
         });
         return;
       }
@@ -588,6 +607,7 @@ export async function runScenario(scenario: Scenario): Promise<StepResult[]> {
         let count = 0;
         entry.remove = view.addListener((data, resultType) => {
           entry.calls.push({data: json(data), resultType});
+          listenerCalls++;
           if (++count > after && pending) {
             const actions = pending;
             pending = undefined;

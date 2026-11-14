@@ -69,6 +69,12 @@ public struct ZeroOptions: Sendable {
   /// (`getTraceparent`), so zero-cache and the API server can join the
   /// app's trace. Called once per message; nil sends none.
   public var getTraceparent: (@MainActor @Sendable () -> String?)?
+  /// Wraps every update of the views (`batchViewUpdates`), for a UI that
+  /// renders a batch of state changes at once: each new view's creation,
+  /// and each change that updates the views (a poke, a mutation, the first
+  /// hydration), with its listener calls. It must call the function it is
+  /// given, once, before it returns.
+  public var batchViewUpdates: (@MainActor @Sendable (() -> Void) -> Void)?
 
   public init(
     cacheURL: String? = nil, userID: String? = nil, auth: String? = nil,
@@ -291,7 +297,7 @@ final class Engine {
       updateCustomQuery: { [weak self] id, ttl in
         self?.queryManager.updateCustom(name: id.name, args: id.args, ttl: ttl)
       },
-      batchViewUpdates: { $0() },
+      batchViewUpdates: options.batchViewUpdates ?? { $0() },
       microtask: { loop.microtask($0) }, log: log,
       closedReason: { [weak self] in
         guard case .closed(let reason) = self?.connectionManager.state else { return nil }

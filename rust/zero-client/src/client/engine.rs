@@ -215,6 +215,12 @@ pub struct ZeroOptions {
     /// (`getTraceparent`), so zero-cache and the API server can join the
     /// app's trace. Called once per message; `None` sends none.
     pub get_traceparent: Option<Rc<dyn Fn() -> Option<String>>>,
+    /// Wraps every update of the views (`batchViewUpdates`), for a UI that
+    /// renders a batch of state changes at once: each new view's creation,
+    /// and each change that updates the views (a poke, a mutation, the
+    /// first hydration), with its listener calls. It must call the function
+    /// it is given, once, before it returns.
+    pub batch_view_updates: Option<BatchViewUpdates>,
 }
 
 impl Default for ZeroOptions {
@@ -240,6 +246,7 @@ impl Default for ZeroOptions {
             log_sink: None,
             hidden_disconnect_delay_ms: 0.0,
             get_traceparent: None,
+            batch_view_updates: None,
         }
     }
 }
@@ -249,6 +256,10 @@ pub type StorageFailureHandler = Rc<dyn Fn(&StorageFailure)>;
 
 /// Called when the server needs a newer client (`onUpdateNeeded`).
 pub type UpdateNeededHandler = Rc<dyn Fn(&UpdateNeededReason)>;
+
+/// [`ZeroOptions::batch_view_updates`]: called with the function that
+/// updates the views.
+pub type BatchViewUpdates = Rc<dyn Fn(&mut dyn FnMut())>;
 
 /// Why the client must be updated (`UpdateNeededReason`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -820,6 +831,7 @@ impl Engine {
                         _ => None,
                     }),
                     true,
+                    options.batch_view_updates.clone(),
                 )
             };
             let query_manager = {

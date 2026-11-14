@@ -560,6 +560,12 @@ struct Runner {
 
 thread_local! {
     static SCENARIO_COUNT: Cell<u64> = const { Cell::new(0) };
+    /// View and `listen` listener calls so far, for `batchViewUpdates`.
+    static LISTENER_CALLS: Cell<u64> = const { Cell::new(0) };
+}
+
+fn listener_called() {
+    LISTENER_CALLS.with(|c| c.set(c.get() + 1));
 }
 
 fn ttl(v: Option<&Value>) -> Option<Ttl> {
@@ -687,6 +693,19 @@ impl Runner {
         options.mutate_headers = string_record(get("mutateHeaders"));
         options.query_url = get("queryURL").and_then(Value::as_str).map(str::to_owned);
         options.query_headers = string_record(get("queryHeaders"));
+        if get("batchViewUpdates").and_then(Value::as_bool) == Some(true) {
+            let events = events.clone();
+            options.batch_view_updates = Some(Rc::new(move |apply| {
+                let calls = || LISTENER_CALLS.with(Cell::get);
+                let before = calls();
+                apply();
+                if calls() > before {
+                    let mut o = Object::new();
+                    o.insert("batchViewUpdates", Value::from((calls() - before) as f64));
+                    events.borrow_mut().push(Value::Object(o));
+                }
+            }));
+        }
         if let Some(t) = get("traceparent").and_then(Value::as_str) {
             let t = t.to_owned();
             options.get_traceparent = Some(Rc::new(move || Some(t.clone())));
@@ -834,6 +853,7 @@ impl Runner {
                         *entry.data.borrow_mut() = data.to_json().unwrap_or(Value::Null);
                         *entry.result_type.borrow_mut() = result_type.as_str().to_owned();
                         entry.notifications.set(entry.notifications.get() + 1);
+                        listener_called();
                     }
                 });
             }
@@ -1078,6 +1098,7 @@ impl Runner {
                     o.insert("data", data.to_json().unwrap_or(Value::Null));
                     o.insert("resultType", s(result_type.as_str()));
                     entry.calls.borrow_mut().push(Value::Object(o));
+                    listener_called();
                     count.set(count.get() + 1);
                     if count.get() > after {
                         let actions = pending_actions.borrow_mut().take();
