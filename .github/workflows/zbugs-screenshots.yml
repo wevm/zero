@@ -139,16 +139,64 @@ jobs:
             xcrun simctl shutdown all
             xcrun simctl bootstatus "$1" -b
           }
+          # The app launched once on the simulator, outside XCTest, until it
+          # has taken in its first sync and gone quiet. On this runner the
+          # first launch after a boot and the first sync take up to a minute
+          # and a half, and XCTest answers its queries on the app's main
+          # thread, which they keep busy. A test that started on the cold app
+          # had a query time out, a back tap lost, or a screenshot request
+          # time out; the ones that started on a warm app haven't failed.
+          # Best effort, for up to 4 minutes: the tests check the rest.
+          warm() {
+            xcodebuild build-for-testing -project ZBugs.xcodeproj -scheme ZBugsApp \
+              -derivedDataPath "$RUNNER_TEMP/dd" -destination "id=$1" \
+              -skipPackagePluginValidation CODE_SIGNING_ALLOWED=NO -quiet || return 0
+            xcrun simctl install "$1" "$RUNNER_TEMP/dd/Build/Products/Debug-iphonesimulator/ZBugs.app" ||
+              return 0
+            preloads() { grep -c 'queryName=issuePreloadV2' "$RUNNER_TEMP/zbugs.log" || true; }
+            # Seconds of CPU the app has used.
+            cpu() {
+              { ps -o time= -p "$pid" || true; } |
+                awk -F: '{ s = 0; for (i = 1; i <= NF; i++) s = s * 60 + $i; print s }'
+            }
+            before="$(preloads)"
+            start=$SECONDS
+            pid="$(SIMCTL_CHILD_ZBUGS_TOKEN="$TEST_RUNNER_ZBUGS_TOKEN" \
+              xcrun simctl launch "$1" dev.rocicorp.zbugs | awk '{ print $NF }')" || return 0
+            # zero-cache has sent the app its preload...
+            while [ "$(preloads)" -le "$before" ] && [ $((SECONDS - start)) -lt 240 ]; do
+              sleep 2
+            done
+            # ...and the app has taken it in: under 0.2 s of CPU in 3 s, three
+            # times running.
+            quiet=0
+            while [ "$quiet" -lt 3 ] && [ $((SECONDS - start)) -lt 240 ]; do
+              was="$(cpu)"
+              sleep 3
+              if awk -v a="$(cpu)" -v b="$was" 'BEGIN { exit !(a - b < 0.2) }'; then
+                quiet=$((quiet + 1))
+              else
+                quiet=0
+              fi
+            done
+            echo "Warmed up the app in $((SECONDS - start)) s"
+            xcrun simctl terminate "$1" dev.rocicorp.zbugs || true
+          }
           # Every run, even after one fails, so each keeps its screenshots.
           status=0
           screenshots() {
             name="$1"
             shift
             case "$1 $2" in
-              "-destination id="*) boot "${2#id=}" ;;
+              "-destination id="*)
+                boot "${2#id=}"
+                # Offline, the app has no sync to take in.
+                case "$name" in *-offline) ;; *) warm "${2#id=}" ;; esac
+                ;;
               *) xcrun simctl shutdown all ;;
             esac
             xcodebuild test -project ZBugs.xcodeproj -scheme ZBugsApp \
+              -derivedDataPath "$RUNNER_TEMP/dd" \
               -resultBundlePath "$RUNNER_TEMP/results/$name.xcresult" \
               -skipPackagePluginValidation "$@" || status=1
           }
