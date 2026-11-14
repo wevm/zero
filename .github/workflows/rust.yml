@@ -186,7 +186,7 @@ jobs:
       - name: Find the baseline
         id: baseline
         run: |
-          status="$(curl -s -o /dev/null -w '%{http_code}' \
+          status="$(curl -sS --retry 3 --retry-all-errors -o /dev/null -w '%{http_code}' \
             -A 'wevm/zero rust CI (https://github.com/wevm/zero)' https://crates.io/api/v1/crates/zero-client)"
           case "$status" in
             200) echo "released=true" >> "$GITHUB_OUTPUT" ;;

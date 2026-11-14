@@ -93,7 +93,7 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           # Only a 404 means unpublished: a failed lookup isn't a reason to
           # publish.
-          status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+          status="$(curl -sS --retry 3 --retry-all-errors --output /dev/null --write-out '%{http_code}' \
             "https://registry.npmjs.org/zero-swift/$version")"
           case "$status" in
             200) echo "npm=false" >> "$GITHUB_OUTPUT" ;;
@@ -105,7 +105,7 @@ jobs:
           else
             echo "mirror=true" >> "$GITHUB_OUTPUT"
           fi
-          status="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" \
+          status="$(curl -sS --retry 3 --retry-all-errors -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" \
             "https://api.github.com/repos/wevm/zero-swift/releases/tags/$version")"
           case "$status" in
             200) echo "release=false" >> "$GITHUB_OUTPUT" ;;
