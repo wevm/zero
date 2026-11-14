@@ -193,10 +193,19 @@ shared zbugs model (`apps/zbugs-model`); a GPUI app is in progress.
 ## Documented differences
 
 Each is counted separately in the conformance report, never as an exact
-match.
+match. Both come from what Rust's types can hold, not from the client's
+logic, and are kept on purpose.
 
-| Difference      | Why                                                                                                                                                                                                                                                                                                                         |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Lone surrogate  | A Rust `String` can't hold a lone surrogate, which a JS string can. The parser reads an escaped one (`"\ud800"`) as U+FFFD, as the Swift client does; such a case matches when JS's output, with each such escape read as U+FFFD, is what Rust writes. Real servers send valid UTF-8, so this only shows in fuzzing.        |
-| Nesting         | JSON nested deeper than `json::MAX_DEPTH` (1,500) is rejected. Dropping, comparing, and writing a value recurse, and a debug build overflows a 2 MB thread stack by 3,000 levels. JS has no limit short of its own stack (zero-cache writes about 4,100 levels). The Swift client has the same limit.                       |
-| Unwritable path | A JSON path index is a `u32`, so a program with a negative or fractional index (`json('metadata', -1)`) can't be written in Rust. JS rejects it with "Invalid JSON path segment …"; such a case matches when JS rejects it that way. An index past `MAX_JSON_PATH_INDEX` can be written, and is rejected with JS's message. |
+| Difference      | Why it stays                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Lone surrogate  | A Rust `String` can't hold a lone surrogate, which a JS string can. The parser reads an escaped one (`"\ud800"`) as U+FFFD, as the Swift client does; such a case matches when JS's output, with each such escape read as U+FFFD, is what Rust writes. Holding one would take a string type of Rust's own (WTF-8) throughout the client and in every app's code. Postgres text and `jsonb` can't store one: only a `json` (not `jsonb`) column, which keeps its text as written, could bring one to the client, and it shows as U+FFFD, as a browser renders it. Nearly all such cases come from the JSON fuzz corpus. |
+| Unwritable path | A JSON path index is a `u32`, so a program with a negative or fractional index (`json('metadata', -1)`) can't be written in Rust. JS rejects it with "Invalid JSON path segment …"; such a case matches when JS rejects it that way. Rust's types rule out at compile time what JS throws for at run time. An index past `MAX_JSON_PATH_INDEX` can be written, and is rejected with JS's message.                                                                                                                                                                                                                      |
+
+JSON nesting is no longer a difference. JSON nested up to `json::MAX_DEPTH`
+(5,000) levels deep, more than the about 4,100 zero-cache can write, is
+parsed, cloned, compared, written, and dropped within a 2 MB thread stack,
+even in a debug build, so the client takes any value the server sends.
+Deeper text is rejected ("JSON nested too deeply"), where JS takes whatever
+fits its stack. The Swift client rejects past 1,500 levels, so a row with a
+JSON column nested deeper than that makes it disconnect after every
+reconnect. Formatting a value with `Debug` still recurses.
