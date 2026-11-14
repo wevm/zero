@@ -130,6 +130,9 @@
       VirtualList(list, selection: $selection) { item, isSelected in
         IssueRow(issue: item.row, isSelected: isSelected)
       }
+      // A row scrolled back to is shown at once, not made and measured
+      // again in the frame that brings it: about 7 MB per 100 rows.
+      .maxKeptRows(200)
       .overlay {
         let s = list.snapshot
         if s.rowsEmpty {

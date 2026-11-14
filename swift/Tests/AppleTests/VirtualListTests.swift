@@ -237,6 +237,123 @@
       withExtendedLifetime((zero, window)) {}
     }
 
+    final class States {
+      var byRow: [String: Set<UUID>] = [:]
+    }
+
+    /// A row that records the state it's drawn with: one whose view starts
+    /// anew has a new one.
+    struct StatefulRow: View {
+      let id: String
+      let states: States
+      @State private var state = UUID()
+
+      var body: some View {
+        let _ = states.byRow[id, default: []].insert(state)
+        Text(id).frame(height: 30)
+      }
+    }
+
+    @Test func aKeptRowComesBackWithItsState() async throws {
+      let (zero, list) = try makeList()
+      let states = States()
+      let window = show(
+        VirtualList(list) { StatefulRow(id: $0.row.id, states: states) }.maxKeptRows(300))
+      let top = (0..<10).map(Self.id)
+      try await run(30) { top.allSatisfy { states.byRow[$0] != nil } }
+      list.scrollToItem(Self.id(250), align: .end)
+      try await run(30) { list.lastVisibleItem()?.key == Self.id(250) }
+      try await run(0.5) { false }
+      #expect(!list.snapshot.items.contains { $0.key == Self.id(0) })
+      list.scrollToItem(Self.id(0), align: .start)
+      try await run(30) { list.firstVisibleItem()?.key == Self.id(0) }
+      try await run(0.5) { false }
+      #expect(top.map { states.byRow[$0]?.count } == top.map { _ in 1 })
+      withExtendedLifetime((zero, window)) {}
+    }
+
+    /// Row views that record what the layout asks of them: plain views,
+    /// 30 points high.
+    @MainActor final class CountingRowViews: RowViews {
+      /// Each row shown in a view, and its state.
+      var shown: [(key: AnyHashable, state: RowState)] = []
+      var measured = 0
+
+      func view(
+        for item: RowsItem, _ state: RowState, reusing view: PlatformView?, in layout: RowsLayout
+      ) -> PlatformView {
+        shown.append((item.key, state))
+        return view ?? PlatformView(frame: .zero)
+      }
+
+      func height(of view: PlatformView, width: Double) -> Double {
+        measured += 1
+        return 30
+      }
+
+      func discard(_ view: PlatformView) {}
+    }
+
+    /// A layout of 30-point rows, with no frames after its passes: what a
+    /// pass leaves for the next frame doesn't run.
+    func countingLayout(keeping maxKeptRows: Int) -> (RowsLayout, CountingRowViews) {
+      let views = CountingRowViews()
+      let rows = RowsLayout(views: views)
+      rows.host.estimatedRowHeight = { 30 }
+      rows.nextFrame = { _ in }
+      rows.maxKeptRows = maxKeptRows
+      return (rows, views)
+    }
+
+    /// A pass with rows `range` scrolled to at `width`, with `changed`
+    /// rows' data changed: the rows it showed in a view.
+    @discardableResult
+    func pass(
+      _ range: Range<Int>, in rows: RowsLayout, _ views: CountingRowViews, width: Double = 300,
+      changed: Set<Int> = []
+    ) -> [AnyHashable] {
+      views.shown = []
+      views.measured = 0
+      rows.update(
+        RowsSource(
+          items: range.map {
+            RowsItem(
+              key: AnyHashable(Self.id($0)), index: $0, row: changed.contains($0) ? -1 : $0,
+              item: $0)
+          }, spaceBefore: Double(range.lowerBound) * 30))
+      _ = rows.layout(width: width, offset: Double(range.lowerBound) * 30, viewport: 400)
+      return views.shown.map(\.key)
+    }
+
+    // Rows that page out keep their views, up to `maxKeptRows`, and come
+    // back in them, neither shown nor measured again; 0 keeps none.
+    @Test(arguments: [0, 5, 100])
+    func keepsTheViewsOfRowsThatLeave(maxKeptRows: Int) {
+      let (rows, views) = countingLayout(keeping: maxKeptRows)
+      let first = pass(0..<20, in: rows, views)
+      pass(100..<120, in: rows, views)
+      let back = pass(0..<20, in: rows, views)
+      let anew = first.count - min(maxKeptRows, first.count)
+      #expect(first.filter(back.contains).count == anew)
+      #expect(views.measured == anew)
+    }
+
+    // A kept row comes back as it is now: with its new data, in its
+    // selection, and measured at the list's width, all changed while it was
+    // kept.
+    @Test func aKeptRowComesBackAsItIsNow() throws {
+      let (rows, views) = countingLayout(keeping: 100)
+      let first = pass(0..<20, in: rows, views)
+      pass(100..<120, in: rows, views)
+      rows.selected = AnyHashable(Self.id(3))
+      pass(100..<120, in: rows, views, width: 250)
+      let back = pass(0..<20, in: rows, views, width: 250, changed: [1])
+      #expect(Set(back) == [AnyHashable(Self.id(1)), AnyHashable(Self.id(3))])
+      let selected = try #require(views.shown.first { $0.key == AnyHashable(Self.id(3)) })
+      #expect(selected.state.selected)
+      #expect(views.measured == first.count)
+    }
+
     @Test func scrollsToARowFarBelow() async throws {
       let (zero, list) = try makeList()
       let window = show(VirtualList(list) { Text($0.row.text).frame(height: 30) })

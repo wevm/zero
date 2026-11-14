@@ -54,6 +54,7 @@
     private let selectable: Bool
     private let header: AnyView?
     private let footer: AnyView?
+    private var maxKeptRows = 0
     @State private var model = VirtualListModel()
 
     /// - Parameters:
@@ -99,6 +100,25 @@
       self.footer = Self.accessory(footer)
     }
 
+    /// Keeps the views of up to `count` rows that leave the list as it
+    /// pages, for when they come back: a row scrolled back to is shown at
+    /// once, with its state and its own queries as it left them, instead of
+    /// being made and measured anew, which a fast scroll back can't keep up
+    /// with. Each kept row holds its view, and its queries stay open, while
+    /// it's kept; the oldest go first. 0, the default, keeps none.
+    ///
+    /// ```swift
+    /// VirtualList(issues) { item in
+    ///   IssueRow(issue: item.row)
+    /// }
+    /// .maxKeptRows(200)
+    /// ```
+    public func maxKeptRows(_ count: Int) -> Self {
+      var list = self
+      list.maxKeptRows = max(0, count)
+      return list
+    }
+
     private static func accessory<V: View>(_ content: () -> V) -> AnyView? {
       V.self == EmptyView.self ? nil : AnyView(content())
     }
@@ -115,7 +135,7 @@
           ? (
             selection.wrappedValue.map { AnyHashable($0) },
             { [selection] key in selection.wrappedValue = key.base as? Key }
-          ) : nil, model: model
+          ) : nil, maxKeptRows: maxKeptRows, model: model
       )
       .onAppear { model.attach(list) }
       .onDisappear { model.detach(list) }

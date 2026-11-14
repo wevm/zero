@@ -181,6 +181,15 @@
       }
     }
 
+    /// How many rows that leave the list as it pages keep their views for
+    /// when they come back: `row` doesn't make or show them again, and
+    /// they aren't measured again. Each kept row holds its view while it's
+    /// kept; the oldest go first. 0, the default, keeps none.
+    public var maxKeptRows: Int {
+      get { rows.rows.maxKeptRows }
+      set { rows.rows.maxKeptRows = max(0, newValue) }
+    }
+
     private static func accessory(_ view: PlatformView) -> RowsAccessory {
       RowsAccessory(view: view) { [unowned view] width in
         AppRowViews.fittingHeight(of: view, width: width)
