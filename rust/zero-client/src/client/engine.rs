@@ -9,7 +9,7 @@ use super::database::{AggregateWrites, ReplicaDatabase, StorageOp, StoredMutatio
 use super::event_loop::{EventLoop, LoopScheduler};
 use super::ivm_branch::IvmBranch;
 use super::log::Log;
-use super::mutation_tracker::MutationTracker;
+use super::mutation_tracker::{MutationTracker, OutcomeListeners};
 use super::poke_handler::{MergedPoke, PokeHandler};
 use super::query_context::QueryContext;
 use super::query_manager::QueryManager;
@@ -349,6 +349,22 @@ impl MutationOutcome {
         }
         Value::Object(o)
     }
+}
+
+/// The server's outcome of a mutation this client made, reported by
+/// [`Zero::add_mutation_outcome_listener`](super::Zero::add_mutation_outcome_listener).
+/// Swift's `MutationServerOutcome`: the JS client has no counterpart.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MutationServerOutcome {
+    /// The mutation's ID, counted per client from 1.
+    pub mutation_id: u64,
+    /// The mutator's name, such as `issue.create`.
+    pub name: String,
+    /// The mutator's arguments: `None` when it was given none.
+    pub args: Option<Value>,
+    /// `Success` or `AppError`, with the server's data or message; or
+    /// `ZeroError` when the server reported a mutation it couldn't process.
+    pub outcome: MutationOutcome,
 }
 
 /// What `mutate` returns: the outcome of the optimistic run on the client,
@@ -1601,6 +1617,12 @@ impl Engine {
         }
     }
 
+    /// Reports the server's outcome of each mutation this engine makes to
+    /// `listeners`, which `Zero` keeps (`onMutationOutcome`).
+    pub(crate) fn set_mutation_outcome_listeners(&self, listeners: Rc<OutcomeListeners>) {
+        self.mutation_tracker.set_outcome_listeners(listeners);
+    }
+
     fn settle_pending_waiters(&self) {
         if self.pending_waiters.borrow().is_empty() || !self.pending_settled() {
             return;
@@ -2688,7 +2710,7 @@ impl Engine {
     }
 
     /// What a mutation's caller hears for an error (`wrapErrorFor`).
-    fn outcome(error: &Error) -> MutationOutcome {
+    pub(crate) fn outcome(error: &Error) -> MutationOutcome {
         if let Error::Connection(e) = error
             && e.is_zero_error()
         {
@@ -2881,6 +2903,7 @@ impl Engine {
             timestamp: self.scheduler.monotonic_now(),
             writes: write.writes.clone(),
         };
+        self.mutation_tracker.mutation_ran(mutation_id, name, args);
         let stored = StoredMutation {
             client_id: self.client_id.clone(),
             id: mutation_id,
