@@ -65,6 +65,10 @@ public struct ZeroOptions: Sendable {
   /// (`hiddenTabDisconnectDelay`). The Apple layer pushes the pending
   /// mutations before it reports the app hidden, so it disconnects at once.
   var hiddenDisconnectDelayMs: Double = 0
+  /// A W3C `traceparent` for each query change and push the client sends
+  /// (`getTraceparent`), so zero-cache and the API server can join the
+  /// app's trace. Called once per message; nil sends none.
+  public var getTraceparent: (@MainActor @Sendable () -> String?)?
 
   public init(
     cacheURL: String? = nil, userID: String? = nil, auth: String? = nil,
@@ -298,7 +302,12 @@ final class Engine {
     queryManager = QueryManager(
       clientID: clientID, schema: schema, mutationTracker: mutationTracker, scheduler: scheduler,
       queryChangeThrottleMs: options.queryChangeThrottleMs, recentQueriesMaxSize: 0,
-      send: { [weak self] body in self?.sendIfConnected(.changeDesiredQueries(body)) },
+      send: { [weak self] body in
+        guard let self else { return }
+        var body = body
+        body.traceparent = self.options.getTraceparent?()
+        self.sendIfConnected(.changeDesiredQueries(body))
+      },
       onFatalError: { [weak self] error in self?.disconnect(error) })
     pokeHandler = PokeHandler(
       clientID: clientID, schema: schema, scheduler: scheduler,
@@ -1051,7 +1060,9 @@ final class Engine {
     if patch.count > 0, initConnectionQueries != nil {
       send(
         .changeDesiredQueries(
-          ChangeDesiredQueriesBody(desiredQueriesPatch: patch.entries.map(\.value))))
+          ChangeDesiredQueriesBody(
+            desiredQueriesPatch: patch.entries.map(\.value),
+            traceparent: options.getTraceparent?())))
     } else if initConnectionQueries == nil {
       send(
         .initConnection(
@@ -1059,7 +1070,8 @@ final class Engine {
             desiredQueriesPatch: patch.entries.map(\.value),
             clientSchema: connectCookie.isNull ? clientSchema : nil, deleted: deletedClients,
             userPushURL: options.mutateURL, userPushHeaders: options.mutateHeaders,
-            userQueryURL: options.queryURL, userQueryHeaders: options.queryHeaders)))
+            userQueryURL: options.queryURL, userQueryHeaders: options.queryHeaders,
+            traceparent: options.getTraceparent?())))
       deletedClients = nil
     }
     initConnectionQueries = nil
@@ -1581,7 +1593,8 @@ final class Engine {
                   id: m.id, clientID: m.clientID, name: m.name, args: [m.args],
                   timestamp: timestamp))
             ],
-            pushVersion: 1, timestamp: now, requestID: requestID)))
+            pushVersion: 1, timestamp: now, requestID: requestID,
+            traceparent: options.getTraceparent?())))
       lastMutationIDsSent[m.clientID] = m.id
     }
   }

@@ -68,7 +68,17 @@ factory.
 | `pingTimeoutMs`, `disconnectTimeoutMs`, `queryChangeThrottleMs`, `maxHeaderLength` | the same, in snake case                                               |
 | `hiddenTabDisconnectDelay`                                                         | `hidden_disconnect_delay_ms`, with `Zero::set_visible`                |
 | `kvStore` (`'idb'` or `'mem'`)                                                     | `storage`: `ZeroStorage::Memory` (the default), `Sqlite`, or `Custom` |
-| `getTraceparent`, `slowMaterializeThreshold`, `batchViewUpdates`, `onOnlineChange` | not ported                                                            |
+| `getTraceparent`                                                                   | `get_traceparent`                                                     |
+| `onOnlineChange` (deprecated)                                                      | `connection().subscribe(listener)`                                    |
+| `server`, `getQueriesURL` (deprecated)                                             | `cache_url`, `query_url`                                              |
+| `slowMaterializeThreshold`, `batchViewUpdates`, `maxRecentQueries` (deprecated)    | not ported                                                            |
+
+Two defaults differ from JS. `storage` is `ZeroStorage::Memory`, since
+SQLite is an opt-in feature, where JS keeps its data in IndexedDB.
+`hidden_disconnect_delay_ms` is 0 where JS waits 5 minutes, as in Swift:
+a native app is suspended soon after it goes to the background, so the
+client disconnects as soon as the app says it is hidden. A desktop app
+whose window can stay hidden for long can set JS's 300,000.
 
 ### The client
 
@@ -79,7 +89,7 @@ factory.
 | `zero.userID`, `zero.schema`, `zero.context`, `zero.closed`                        | `user_id()`, `schema()`, `context()`, `closed()`                                                        |
 | `zero.materialize(query)`                                                          | `materialize(&query, &ttl)?`, a `MaterializedView` with `data`, `add_listener`, `destroy`, `update_ttl` |
 | `zero.run(query, {type})`                                                          | `run(&query, RunType, ttl)`, a `Deferred<ViewValue>` to await or read once settled                      |
-| `zero.preload(query)`                                                              | `preload(&query, &ttl)`, a `Preload` with `cleanup`, `cached`, and `complete`                           |
+| `zero.preload(query)`                                                              | `preload(&query, &Ttl::DEFAULT_PRELOAD)`, a `Preload` with `cleanup`, `cached`, and `complete`          |
 | `zero.mutate(request)`                                                             | `mutate(name, args)`, a `MutatorResult` whose `client` and `server` are `Deferred<MutationOutcome>`     |
 | `zero.connection.state`, `.subscribe`, `.connect({auth})`                          | `connection().state()`, `.subscribe(listener)`, `.connect(auth)`                                        |
 | `zero.close()`, `zero.delete()`, `dropAllDatabases()`                              | `close()`, `delete()`, `client::drop_all_databases(&storage)`, which return the `DroppedDatabases`      |

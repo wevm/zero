@@ -152,6 +152,9 @@ final class ScenarioRunner {
     options.queryURL = o["queryURL"]?.stringValue
     options.queryHeaders = o["queryHeaders"]?.objectValue?.dictionary.compactMapValues(
       \.stringValue)
+    if let traceparent = o["traceparent"]?.stringValue {
+      options.getTraceparent = { traceparent }
+    }
     options.storageKey = "\(o["storageKey"]?.stringValue ?? "")#scenario-\(scenarioKey)"
     options.storage = storage
     options.onUpdateNeeded = { [weak self] reason in

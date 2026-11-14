@@ -31,7 +31,8 @@ are arguments of
 | `kvStore` (`'idb'` or `'mem'`)                                                                    | `storage`: `.sqlite()` or `.memory`                                                                                              |
 | `hiddenTabDisconnectDelay`                                                                        | none: the client pushes pending mutations and disconnects when the app goes to the background, and reconnects when it comes back |
 | `onOnlineChange` (deprecated)                                                                     | ``Connection/subscribe(_:)``                                                                                                       |
-| `getTraceparent`, `slowMaterializeThreshold`, `batchViewUpdates`, `maxRecentQueries` (deprecated) | not ported                                                                                                                       |
+| `getTraceparent`                                                                                  | the same                                                                                                                         |
+| `slowMaterializeThreshold`, `batchViewUpdates`, `maxRecentQueries` (deprecated)                   | not ported                                                                                                                       |
 
 ## The client
 

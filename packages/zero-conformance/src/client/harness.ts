@@ -43,6 +43,8 @@ export type ScenarioOptions = {
   storageKey?: string | undefined;
   /** Defaults to 5 minutes, the JS default. */
   hiddenTabDisconnectDelay?: number | undefined;
+  /** What `getTraceparent` returns. Defaults to no `getTraceparent`. */
+  traceparent?: string | undefined;
 };
 
 export type Step =
@@ -324,6 +326,10 @@ export async function runScenario(scenario: Scenario): Promise<StepResult[]> {
       queryURL: options.queryURL,
       queryHeaders: options.queryHeaders,
       hiddenTabDisconnectDelay: options.hiddenTabDisconnectDelay,
+      getTraceparent:
+        options.traceparent === undefined
+          ? undefined
+          : () => options.traceparent,
       // In-memory stores outlive their Zero instance, keyed by name, so every
       // scenario gets a store of its own. The storage key is not sent.
       storageKey: `${options.storageKey ?? ''}#scenario-${scenarioKey}`,

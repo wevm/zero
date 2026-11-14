@@ -72,6 +72,32 @@ export const connectionScenarios: Scenario[] = [
     ],
   },
   {
+    name: 'connect: getTraceparent goes with query changes and pushes, not the header',
+    options: {
+      traceparent: '00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01',
+    },
+    steps: [
+      {op: 'materialize', view: 'a', query: 'issues.all'},
+      {op: 'materialize', view: 'b', query: 'users.all'},
+      connected,
+      {op: 'materialize', view: 'c', query: 'issues.open'},
+      advance(10),
+      mutate('m1', 'issue.create', {id: 'i1', title: 'traced'}),
+    ],
+  },
+  {
+    name: 'connect: getTraceparent goes with an initConnection too large for the header',
+    options: {
+      maxHeaderLength: 200,
+      traceparent: '00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01',
+    },
+    steps: [
+      {op: 'materialize', view: 'v', query: 'issues.open'},
+      connected,
+      advance(10),
+    ],
+  },
+  {
     name: 'connect: no cacheURL opens no socket and local mutations still apply',
     options: {cacheURL: null},
     steps: [

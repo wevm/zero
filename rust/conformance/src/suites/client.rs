@@ -687,6 +687,10 @@ impl Runner {
         options.mutate_headers = string_record(get("mutateHeaders"));
         options.query_url = get("queryURL").and_then(Value::as_str).map(str::to_owned);
         options.query_headers = string_record(get("queryHeaders"));
+        if let Some(t) = get("traceparent").and_then(Value::as_str) {
+            let t = t.to_owned();
+            options.get_traceparent = Some(Rc::new(move || Some(t.clone())));
+        }
         options.storage_key = Some(format!(
             "{}#scenario-{scenario_key}",
             get("storageKey").and_then(Value::as_str).unwrap_or("")
