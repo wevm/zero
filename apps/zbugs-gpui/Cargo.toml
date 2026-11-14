@@ -43,7 +43,7 @@ tokio-tungstenite = { version = "0.30", default-features = false, features = [
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 zbugs-model = { path = "../zbugs-model" }
 # SQLite storage, so the app keeps its data across launches.
-zero-client = { path = "../../rust/zero-client", features = ["sqlite"] }
+zero-client = { path = "../../rust/zero-client", features = ["sqlite", "serde"] }
 
 [features]
 # The end-to-end run CI does against zbugs' backend: see src/app/e2e.rs.

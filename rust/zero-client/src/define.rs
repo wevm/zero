@@ -43,7 +43,7 @@ use crate::typed::{Query, QueryValue, ZeroValueError};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::borrow::Cow;
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// `args` as sent: `None` for a type without fields that writes `null`,
 /// such as `()`, which stands for no arguments.
@@ -89,7 +89,7 @@ pub const fn define_query<A, C, R, T>(
 
 impl<A, C, R, T> QueryDefinition<A, C, R, T>
 where
-    A: Serialize + 'static,
+    A: Serialize + Send + Sync + 'static,
     C: 'static,
     R: 'static,
     T: 'static,
@@ -101,17 +101,18 @@ where
         QueryRequest {
             name: self.name,
             args: encoded,
-            build: Rc::new(move |context| body(&args, context)),
+            build: Arc::new(move |context| body(&args, context)),
         }
     }
 }
 
 /// Builds a request's query from the client's context.
-type BuildQuery<C, R, T> = Rc<dyn Fn(&C) -> Query<R, T>>;
+type BuildQuery<C, R, T> = Arc<dyn Fn(&C) -> Query<R, T> + Send + Sync>;
 
 /// A [`QueryDefinition`] applied to its arguments: what
 /// [`Zero::materialize`](crate::client::Zero::materialize), `run`, and
-/// `preload` take, which build it with the client's context.
+/// `preload` take, which build it with the client's context. It is `Send`,
+/// so an app can make one on one thread for a client on another.
 pub struct QueryRequest<C, R, T = Vec<R>> {
     name: &'static str,
     args: Vec<Value>,
@@ -178,7 +179,7 @@ pub trait NamedQuery<C> {
 
 impl<A, C, R, T> NamedQuery<C> for QueryDefinition<A, C, R, T>
 where
-    A: Serialize + DeserializeOwned + 'static,
+    A: Serialize + DeserializeOwned + Send + Sync + 'static,
     C: 'static,
     R: 'static,
     T: 'static,
