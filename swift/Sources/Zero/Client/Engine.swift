@@ -817,7 +817,8 @@ final class Engine {
       userID: userID,
       baseCookie: connectCookie.stringValue ?? connectCookie.numberValue.map(JSNumber.format),
       timestamp: scheduler.monotonicNow, lastMutationID: lastMutationIDReceived, wsid: wsid,
-      profileID: profileID, additionalParams: additionalConnectParams ?? [])
+      profileID: profileID, debugPerf: log.level == .debug,
+      additionalParams: additionalConnectParams ?? [])
     addConnectEvent(attempt, "reading deleted clients")
     var deleted = deletedClientsBody()
     addConnectEvent(attempt, "reading desired queries")

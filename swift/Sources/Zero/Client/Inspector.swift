@@ -248,7 +248,10 @@ public struct InspectorQuery: Sendable {
   init(row: JSONValue, clientAST: AST?, clientMetrics: QueryClientMetrics?) throws {
     clientID = row["clientID"]?.stringValue ?? ""
     id = row["queryID"]?.stringValue ?? ""
-    inactivatedAt = row["inactivatedAt"]?.numberValue
+    // `new Date(ms)`'s time value: the whole milliseconds, NaN out of range.
+    inactivatedAt = row["inactivatedAt"]?.numberValue.map { ms in
+      ms.isFinite && abs(ms) <= 8.64e15 ? ms.rounded(.towardZero) + 0 : .nan
+    }
     ttl = TTL.milliseconds(row["ttl"]?.numberValue ?? 0).normalized
     name = row["name"]?.stringValue
     args = row["args"]?.arrayValue

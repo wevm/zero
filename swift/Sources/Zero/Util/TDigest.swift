@@ -274,6 +274,9 @@ extension TDigest {
       }
       let cumulative = self.cumulative
       let lower = binarySearch(cumulative.count) { -cumulative[$0] + index }
+      // Past the last cumulative weight, which rounding can leave below the
+      // total weight: JS reads past the arrays' ends, which makes NaN.
+      if lower == cumulative.count { return .nan }
       if lower + 1 != cumulative.count {
         let z1 = index - cumulative[lower - 1]
         let z2 = cumulative[lower] - index
