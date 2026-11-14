@@ -249,8 +249,26 @@ final class ScriptedServer: Sendable {
       }
       guard b.count >= i + length else { return nil }
       var payload = Array(b[i..<(i + length)])
-      for j in payload.indices { payload[j] ^= mask[j % 4] }
+      if masked { unmask(&payload, mask) }
       return (Frame(fin: b[0] & 0x80 != 0, opcode: b[0] & 0x0F, payload: payload), i + length)
+    }
+
+    /// XORs `payload` with the repeating four-byte `mask`, eight bytes at a time. Byte by byte, an 11 MB frame took most of a second in a debug build, and over the 30 s a probe waits for it on a busy iOS Simulator.
+    static func unmask(_ payload: inout [UInt8], _ mask: [UInt8]) {
+      let key = (mask + mask).withUnsafeBytes { $0.loadUnaligned(as: UInt64.self) }
+      payload.withUnsafeMutableBytes { p in
+        var j = 0
+        while j + 8 <= p.count {
+          p.storeBytes(
+            of: p.loadUnaligned(fromByteOffset: j, as: UInt64.self) ^ key, toByteOffset: j,
+            as: UInt64.self)
+          j += 8
+        }
+        while j < p.count {
+          p[j] ^= mask[j % 4]
+          j += 1
+        }
+      }
     }
   }
 }
