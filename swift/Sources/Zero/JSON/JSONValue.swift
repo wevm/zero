@@ -177,6 +177,83 @@ extension JSONValue: Hashable {
   }
 }
 
+// Freeing without recursion. Swift frees an array or object by freeing its
+// values, so freeing nested values recurses, about 240 bytes of stack a
+// level in a release build: a 512 KB thread fits about 2,200 levels. Row
+// and object storage free their values with `free(_:)` instead, and so do
+// the parser and message decoders for what they drop.
+extension JSONValue {
+  /// Sets `value` to `.null`, freeing what it held without recursion.
+  package static func discard(_ value: inout JSONValue) {
+    var pending: [JSONValue] = []
+    takeNested(&value, into: &pending)
+    free(&pending)
+  }
+
+  /// Moves `value` onto `pending` if it is an array or object nothing else
+  /// holds, which freeing it would free; drops it otherwise. Leaves `.null`
+  /// in place of an array or object.
+  ///
+  /// Here and in `free(_:)`, an array or object is checked and emptied once
+  /// it is out of the switch that found it: a switch can hold a copy of
+  /// its subject (a debug build does) until it ends.
+  static func takeNested(_ value: inout JSONValue, into pending: inout [JSONValue]) {
+    var array: [JSONValue]?
+    var object: JSONObject?
+    switch value {
+    case .array(let a): array = a
+    case .object(let o): object = o
+    default: return
+    }
+    value = .null
+    if array?.isUniquelyReferenced() == true || object?.isUniquelyReferenced() == true {
+      pending.append(array.map(JSONValue.array) ?? .object(object!))
+    }
+  }
+
+  /// Frees the arrays and objects of `takeNested(_:into:)`: each is
+  /// emptied of the arrays and objects it alone holds, which go onto
+  /// `pending`, before it is freed, so freeing it frees no other.
+  static func free(_ pending: inout [JSONValue]) {
+    var array: [JSONValue]?
+    var object: JSONObject?
+    while let last = pending.indices.last {
+      switch pending[last] {
+      case .array(let a): array = a
+      case .object(let o): object = o
+      default: break
+      }
+      pending.removeLast()
+      if array != nil {
+        for i in array!.indices { takeNested(&array![i], into: &pending) }
+        array = nil
+      } else if object != nil {
+        object!.takeNested(into: &pending)
+        object = nil
+      }
+    }
+  }
+}
+
+extension Array {
+  /// Whether no other array shares this one's buffer. An array is one
+  /// reference to its buffer, a Swift object, on every platform; the
+  /// standard library doesn't make its own check public. The buffer is
+  /// read as a Swift class's instance: as `AnyObject`, the check would take
+  /// it for an Objective-C object on Apple platforms (its class derives
+  /// from one, for bridging) and always answer false.
+  mutating func isUniquelyReferenced() -> Bool {
+    Swift.withUnsafeMutableBytes(of: &self) { bytes in
+      bytes.baseAddress!.withMemoryRebound(to: ArrayBuffer.self, capacity: 1) {
+        isKnownUniquelyReferenced(&$0.pointee)
+      }
+    }
+  }
+}
+
+/// Stands for an array's buffer in `Array.isUniquelyReferenced()`.
+private final class ArrayBuffer {}
+
 /// An array or object being hashed, and the index of its next value.
 private enum HashFrame {
   case array([JSONValue], next: Int)

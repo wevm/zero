@@ -9,31 +9,27 @@ import Testing
 @Suite(.enabled(if: Vectors.available))
 struct HardenJSONTests {
   /// One case: `JSON.parse` acceptance, and `JSON.stringify` of the result.
-  /// JSON nested deeper than `JSONParser.maxDepth` is rejected by design
-  /// (JSParity.md), so that rejection is not a difference.
-  /// Returns the value parsed, if any, for the caller to free.
-  @discardableResult
-  static func checkJSON(_ c: JSONValue) -> JSONValue? {
+  static func checkJSON(_ c: JSONValue) {
     let input = c["input"]!.stringValue!
     let ok = c["ok"]!.boolValue!
-    let value: JSONValue
+    var value: JSONValue
     do throws(JSONParser.Error) {
       value = try JSONParser.parse(input)
     } catch {
-      #expect(
-        !ok || error.message == "JSON nested too deeply",
-        "rejected \(String(reflecting: input)): \(error)")
-      return nil
+      #expect(!ok, "rejected \(String(reflecting: input)): \(error)")
+      return
     }
+    // The vectors hold arrays thousands of levels deep, which only an
+    // object or a row frees without recursion.
+    defer { JSONValue.discard(&value) }
     #expect(ok, "accepted \(String(reflecting: input))")
-    guard ok else { return value }
+    guard ok else { return }
     let expected = Self.replacingLoneSurrogateEscapes(c["stringify"]!.stringValue!)
     let actual = JSONSerializer.stringify(value)
     #expect(
       actual.utf16.elementsEqual(expected),
       "\(String(reflecting: input)): Swift \(actual.debugDescription), JS \(String(decoding: expected, as: UTF16.self).debugDescription)"
     )
-    return value
   }
 
   /// `JSON.stringify` output with each escaped lone surrogate (`\ud800`),
@@ -63,18 +59,9 @@ struct HardenJSONTests {
     return out
   }
 
-  /// Parsed and stringified on the test's thread, 512 KB on macOS. The
-  /// vectors hold JSON as deep as the parser accepts, and freeing that
-  /// recurses deeper than parsing in a debug build (JSONDepthTests), so the
-  /// values are freed on a larger stack.
-  @Test func json() async throws {
-    let values = Values(try Vectors.cases("harden-json").compactMap { Self.checkJSON($0) })
-    try await SweepWireTests.onThread(stackSize: 8 << 20) { values.all = [] }
-  }
-
-  final class Values: @unchecked Sendable {
-    var all: [JSONValue]
-    init(_ all: [JSONValue]) { self.all = all }
+  /// On the test's thread, 512 KB on macOS.
+  @Test func json() throws {
+    for c in try Vectors.cases("harden-json") { Self.checkJSON(c) }
   }
 
   @Test(.enabled(if: Vectors.generatedAvailable)) func jsonFuzz() throws {
