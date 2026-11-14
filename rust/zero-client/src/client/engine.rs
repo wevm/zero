@@ -2367,14 +2367,11 @@ impl Engine {
 
     /// `connection.connect()`: resumes from needs-auth or error. `auth`,
     /// when set, replaces the token first (`Some(None)` clears it).
-    pub(crate) fn connect(&self, auth: Option<Option<String>>) {
+    pub(crate) fn connect(&self, auth: Option<Option<String>>) -> Result<(), Error> {
         if let Some(auth) = auth {
             // JS's `#setAuth` throws this, so `connect` rejects before it
             // does anything.
-            if let Err(e) = Self::check_auth_valid(self.user_id.as_deref(), auth.as_deref()) {
-                self.log.error(|| format!("connect(auth:) ignored: {e}"));
-                return;
-            }
+            Self::check_auth_valid(self.user_id.as_deref(), auth.as_deref())?;
             self.set_auth(auth);
         }
         if let State::Disconnected(r) = self.connection_manager.state()
@@ -2385,12 +2382,12 @@ impl Engine {
                  No reconnect will be attempted."
                     .into()
             });
-            return;
+            return Ok(());
         }
-        if !self.connection_manager.is_in_terminal_state() {
-            return;
+        if self.connection_manager.is_in_terminal_state() {
+            self.connection_manager.request_connect();
         }
-        self.connection_manager.request_connect();
+        Ok(())
     }
 
     fn client_state_not_found(&self) {

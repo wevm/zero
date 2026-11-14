@@ -200,7 +200,7 @@ import ZeroTesting
         #""rowsPatch":[{"op":"update","tableName":"issues","id":{"id":"a"},"merge":{"id":"b"}}]"#)
       precondition(socket.closed)
       precondition(view.data.entries.map { $0.row["id"] } == ["a", "b"])
-      h.zero.connection.connect()
+      try h.zero.connection.connect()
       let next = try h.connect()
       precondition(next !== socket)
       h.poke(

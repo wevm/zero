@@ -456,21 +456,21 @@ import ZeroTesting
 
   // MARK: - Auth and close
 
-  /// `connect(auth:)` while connecting: no `updateAuth` on the attempt's
+  /// `connect(.set(_:))` while connecting: no `updateAuth` on the attempt's
   /// socket, and the run loop keeps the attempt.
   @Test(.timeLimit(.minutes(1)))
   func connectWithAuthWhileConnecting() throws {
     let zero = try makeZero()
     scheduler.runDueTimers()
     let socket = try #require(sockets.sockets.last)
-    zero.connection.connect(auth: "t2")
+    try zero.connection.connect(.set("t2"))
     scheduler.runDueTimers()
     #expect(sent("updateAuth", on: socket).isEmpty)
     socket.receive(text: #"["connected",{"wsid":"w"}]"#)
     scheduler.runDueTimers()
     #expect(zero.connection.state == .connected)
     #expect(sockets.sockets.count == 1)
-    zero.connection.connect(auth: "t3")
+    try zero.connection.connect(.set("t3"))
     #expect(sent("updateAuth", on: socket) == [["auth": "t3"]])
   }
 

@@ -20,9 +20,9 @@ use std::sync::Arc;
 use zero_client::ast::Ast;
 use zero_client::ast::{Direction, JsonPathSegment, SimpleOperator, System};
 use zero_client::client::{
-    AnalyzeQueryOptions, ApplicationError, Deferred, Error, InspectorClient, InspectorQuery,
-    LogLevel, MaterializedView, Mutator, PlanDebugEvent, RunType, SocketMessage, Transaction, Zero,
-    ZeroOptions, ZeroStorage,
+    AnalyzeQueryOptions, ApplicationError, ConnectAuth, Deferred, Error, InspectorClient,
+    InspectorQuery, LogLevel, MaterializedView, Mutator, PlanDebugEvent, RunType, SocketMessage,
+    Transaction, Zero, ZeroOptions, ZeroStorage,
 };
 use zero_client::decode::JsonCodable;
 use zero_client::json::{self, Object, Value};
@@ -313,6 +313,17 @@ fn field(args: Option<&Value>, key: &str, fallback: Value) -> Value {
     match args.and_then(|a| a.get(key)) {
         Some(v) if !v.is_null() => v.clone(),
         _ => fallback,
+    }
+}
+
+/// The harness's `connect(auth === undefined ? undefined : {auth})`: a
+/// missing `auth` keeps the token, `null` clears it, a string sets it.
+fn connect_auth(step: &Value) -> Result<ConnectAuth, String> {
+    match step.get("auth") {
+        None => Ok(ConnectAuth::Keep),
+        Some(Value::Null) => Ok(ConnectAuth::Clear),
+        Some(Value::String(auth)) => Ok(ConnectAuth::Set(auth.clone())),
+        Some(v) => Err(format!("connect auth must be a string or null, not {v:?}")),
     }
 }
 
@@ -1153,6 +1164,12 @@ impl Runner {
             "onState" => {
                 let name = string("state")?;
                 let then = step.field("then")?.clone();
+                let close = then.get("op").and_then(Value::as_str) == Some("close");
+                let auth = if close {
+                    None
+                } else {
+                    Some(connect_auth(&then)?)
+                };
                 let unsubscribe: Rc<RefCell<Option<Unsubscribe>>> = Rc::default();
                 let w = self.me.clone();
                 let u = unsubscribe.clone();
@@ -1167,19 +1184,20 @@ impl Runner {
                     }
                     let Some(runner) = w.upgrade() else { return };
                     let zero = runner.zero();
-                    if then.get("op").and_then(Value::as_str) == Some("close") {
-                        zero.close();
-                    } else {
-                        zero.connection()
-                            .connect(then.get("auth").and_then(Value::as_str).map(str::to_owned));
+                    match auth.clone() {
+                        None => zero.close(),
+                        // The harness drops the promise (`void`).
+                        Some(auth) => {
+                            let _ = zero.connection().connect(auth);
+                        }
                     }
                 });
                 *unsubscribe.borrow_mut() = Some(remove);
             }
-            "connect" => self
-                .zero()
-                .connection()
-                .connect(step.get("auth").and_then(Value::as_str).map(str::to_owned)),
+            "connect" => {
+                // The harness drops the promise (`void`).
+                let _ = self.zero().connection().connect(connect_auth(step)?);
+            }
             "close" => self.zero().close(),
             "restart" => self.restart(step)?,
             "inspect" => self.inspect(step)?,

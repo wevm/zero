@@ -44,4 +44,4 @@ pub use scheduler::*;
 pub use socket::{SocketConnection, SocketEvents, SocketFactory, SocketMessage};
 pub use storage::*;
 pub use transaction::{Reason, TableMutator, Transaction};
-pub use zero::{Connection, MutateRequest, Mutator, Zero};
+pub use zero::{ConnectAuth, Connection, MutateRequest, Mutator, Zero};

@@ -547,13 +547,40 @@ impl Connection {
         })
     }
 
-    /// Resumes connecting from `needs-auth` or `error`. With `auth`, sets
-    /// the token first; when already connected, the server gets the new
-    /// token.
-    pub fn connect(&self, auth: Option<String>) {
+    /// Resumes connecting from `needs-auth` or `error` (`connect` in
+    /// `connection.ts`). From any other state it only applies `auth`, and
+    /// after a disconnect for a missing `cache_url` it never reconnects.
+    ///
+    /// `auth` first sets or clears the token, as `connect({auth})` does;
+    /// when already connected, the server gets a new non-empty token in
+    /// `updateAuth`. A token on a client without a `user_id` is an
+    /// [`Error::Connection`] of kind `Internal` (JS's rejection), and
+    /// nothing changes.
+    ///
+    /// It returns once the connection is asked to resume, not once it
+    /// has: JS's promise waits for the next state, which
+    /// [`subscribe`](Self::subscribe) follows here.
+    pub fn connect(&self, auth: ConnectAuth) -> Result<(), Error> {
+        let auth = match auth {
+            ConnectAuth::Keep => None,
+            ConnectAuth::Set(token) => Some(Some(token)),
+            ConnectAuth::Clear => Some(None),
+        };
         let e = self.0.engine.borrow().clone();
-        e.event_loop.call(|| e.connect(auth.map(Some)));
+        e.event_loop.call(|| e.connect(auth))
     }
+}
+
+/// What [`Connection::connect`] does with the auth token first: the
+/// `auth` of `connect({auth})` absent, a string, or `null`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ConnectAuth {
+    /// Keeps the token (no `auth`).
+    Keep,
+    /// Replaces the token.
+    Set(String),
+    /// Removes the token (`auth: null`).
+    Clear,
 }
 
 impl ConnectionInner {
