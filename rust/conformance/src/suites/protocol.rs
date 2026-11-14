@@ -186,9 +186,6 @@ fn downstream_text(c: &Value, _: &Value) -> Result<Outcome, String> {
     let result = Downstream::from_text(text);
     match (result, c.bool("ok")?) {
         (Ok(_), true) | (Err(_), false) => Ok(Outcome::Pass),
-        (Err(e), true) if e.message.contains(json::TOO_DEEP) => {
-            Ok(Outcome::Exception(super::json::TOO_DEEP))
-        }
         (Ok(_), false) => Err(format!("accepted {}", quote(text))),
         (Err(e), true) => Err(format!("rejected {}: {e}", quote(text))),
     }

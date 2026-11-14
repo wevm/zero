@@ -20,11 +20,12 @@ impl std::error::Error for ParseError {}
 
 /// Nesting deeper than this is rejected with [`TOO_DEEP`].
 ///
-/// Parsing doesn't recurse, but dropping, comparing, and writing a value do,
-/// so the limit keeps them within a 2 MB thread stack (the default for
-/// spawned Rust threads) in a debug build, which overflows one by 3,000
-/// levels. JS has no limit short of its own stack; see `rust/PARITY.md`.
-pub const MAX_DEPTH: usize = 1_500;
+/// It is above the about 4,100 levels zero-cache can write, so the client
+/// takes any value the server sends. JS has no limit short of its own
+/// stack; see `rust/PARITY.md`. Parsing, cloning, comparing, and writing a
+/// value don't recurse that deep, and dropping one fits in a 2 MB thread
+/// stack (the default for spawned Rust threads) even in a debug build.
+pub const MAX_DEPTH: usize = 5_000;
 
 /// The message of the error for JSON nested deeper than [`MAX_DEPTH`].
 pub const TOO_DEEP: &str = "JSON nested too deeply";
