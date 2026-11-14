@@ -78,12 +78,14 @@ factory.
 | `slowMaterializeThreshold`                                                         | `slow_materialize_threshold_ms` (5,000, as in JS)                     |
 | `maxRecentQueries` (deprecated)                                                    | not ported: JS keeps no recent queries by default either              |
 
-Two defaults differ from JS. `storage` is `ZeroStorage::Memory`, since
-SQLite is an opt-in feature, where JS keeps its data in IndexedDB.
-`hidden_disconnect_delay_ms` is 0 where JS waits 5 minutes, as in Swift:
-a native app is suspended soon after it goes to the background, so the
-client disconnects as soon as the app says it is hidden. A desktop app
-whose window can stay hidden for long can set JS's 300,000.
+One default differs from JS, on purpose: `storage` is
+`ZeroStorage::Memory`, where JS keeps its data in IndexedDB. SQLite
+storage is the opt-in `sqlite` feature, so the default build has no
+third-party dependencies, and an app chooses where its replica lives
+(`ZeroStorage::Sqlite { directory }`); an app that wants its data across
+restarts sets it. `hidden_disconnect_delay_ms` is JS's 5 minutes; a mobile
+app, which the system suspends soon after it goes to the background, can
+set 0 to disconnect as soon as it says it is hidden, as Swift does.
 
 ### The client
 

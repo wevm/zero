@@ -207,7 +207,10 @@ pub struct ZeroOptions {
     /// Where messages are logged. Defaults to [`StderrLogSink`].
     pub log_sink: Option<Rc<dyn LogSink>>,
     /// How long the app is hidden before the client disconnects
-    /// (`hiddenTabDisconnectDelay`); see [`Zero::set_visible`].
+    /// (`hiddenTabDisconnectDelay`); see [`Zero::set_visible`]. 5 minutes
+    /// by default, as in JS. A mobile app, which the system suspends soon
+    /// after it goes to the background, can set 0 to disconnect as soon as
+    /// it is hidden.
     ///
     /// [`Zero::set_visible`]: crate::client::Zero::set_visible
     pub hidden_disconnect_delay_ms: f64,
@@ -249,7 +252,7 @@ impl Default for ZeroOptions {
             on_storage_failure: None,
             log_level: LogLevel::Warn,
             log_sink: None,
-            hidden_disconnect_delay_ms: 0.0,
+            hidden_disconnect_delay_ms: 300_000.0,
             get_traceparent: None,
             batch_view_updates: None,
             slow_materialize_threshold_ms: 5_000.0,
