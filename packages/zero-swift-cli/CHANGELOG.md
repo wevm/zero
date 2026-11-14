@@ -1,5 +1,13 @@
 # zero-swift
 
+## 0.7.13
+
+### Patch Changes
+
+- 4629981: Add JS's inspector and query metrics. `zero.inspector` lists the client's and its group's queries on the server, with their client and server timings and ZQL, reads the clients the local store knows and their local data, reports the client's query metrics merged with the server's, shows zero-cache's version, and analyzes a query, a server AST, or a named query on the server. Where JS asks for zero-cache's admin password in a dialog, a request throws `InspectorError.authenticationRequired`: call `zero.inspector.authenticate(password:)` first, and the password it accepts is presented again after a reconnect. The client records JS's query metrics (`query-materialization-client`, `query-materialization-end-to-end`, `query-update-client`) in a `TDigest` that gives the same quantiles as JS's, and `ZeroOptions.slowMaterializeThreshold` (5 seconds by default) logs a warning for a query that takes longer to materialize, server and network included.
+- 9fa75ad: Take rows whose JSON is nested up to 5,000 levels deep, as the Rust client does, instead of 1,500. zero-cache writes up to about 4,100 levels, which JS accepts; a row nested deeper than about 1,495 levels made the client reject the poke, disconnect, and fail the same way after every reconnect. Values that deep are now also freed without recursion, so they don't overflow a 512 KB thread stack.
+- 8f4916a: Add two of JS's options to `ZeroOptions`. `getTraceparent` puts a W3C `traceparent` on each query change, `initConnection` message, and push the client sends, so zero-cache and the API server can join the app's trace. `batchViewUpdates` wraps each new view's creation and each change that updates the views, with their listener calls, so a UI can render them at once.
+
 ## 0.7.12
 
 ### Patch Changes
