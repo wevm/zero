@@ -386,6 +386,12 @@ final class ReplicaDatabase {
     }
   }
 
+  /// The stored snapshot of group `id`, for the inspector's look at a
+  /// client of another group.
+  func storedEntries(ofGroup id: String) throws -> KVMap {
+    try loadGroup(id).entries
+  }
+
   /// Applies `ops` to the in-memory state now and queues them for SQLite.
   func apply(_ ops: [StorageOp]) {
     guard !dropped else { return }

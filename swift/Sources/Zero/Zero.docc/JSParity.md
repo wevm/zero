@@ -31,8 +31,8 @@ are arguments of
 | `kvStore` (`'idb'` or `'mem'`)                                                                    | `storage`: `.sqlite()` or `.memory`                                                                                              |
 | `hiddenTabDisconnectDelay`                                                                        | none: the client pushes pending mutations and disconnects when the app goes to the background, and reconnects when it comes back |
 | `onOnlineChange` (deprecated)                                                                     | ``Connection/subscribe(_:)``                                                                                                       |
-| `getTraceparent`, `batchViewUpdates`                                                              | the same                                                                                                                         |
-| `slowMaterializeThreshold`, `maxRecentQueries` (deprecated)                                       | not ported                                                                                                                       |
+| `getTraceparent`, `batchViewUpdates`, `slowMaterializeThreshold`                                  | the same                                                                                                                         |
+| `maxRecentQueries` (deprecated)                                                                   | not ported                                                                                                                       |
 
 ## The client
 
@@ -50,7 +50,8 @@ are arguments of
 | `zero.close()`                                                                                                                                                                                    | `zero.close()`; dropping the last reference to a `Zero` closes it too |
 | `zero.mutate.issue.insert(...)` (CRUD mutators)                                                                                                                                                   | not ported: write a mutator                                                                           |
 | `zero.delete()`, `dropAllDatabases()` | `await zero.delete()`, `await dropAllDatabases(_:)`, which return the ``DroppedDatabases`` |
-| `zero.mutateBatch`, `zero.online`, `zero.onOnline`, `zero.inspector`, `zero.server`, `zero.storageKey`, `zero.idbName`, `zero.kvStore`, `zero.schemaVersion` | not ported |
+| `zero.inspector`: `client`, `clientGroup`, `metrics()`, `clients()`, `clientsWithQueries()`, `serverVersion()`, `analyzeQuery`, `analyzeServerAST`, `analyzeNamedQuery`, `authenticate`, `formatPlannerEvents` | `zero.inspector`, an ``Inspector`` with the same members, whose methods are `async throws` (`formatPlannerEvents` isn't); its queries are ``InspectorQuery`` values, and the metrics ``TDigest``s. Where JS asks for the admin password in a dialog, a request throws ``InspectorError/authenticationRequired``: call `authenticate(password:)` first |
+| `zero.mutateBatch`, `zero.online`, `zero.onOnline`, `zero.server`, `zero.storageKey`, `zero.idbName`, `zero.kvStore`, `zero.schemaVersion` | not ported |
 | `zero.version`                                                                                                                                                                                    | ``protocolVersion``, the sync protocol version                                                          |
 
 When the server no longer has the client's state, JS asks the app to
