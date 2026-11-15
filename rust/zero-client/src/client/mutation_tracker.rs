@@ -1,6 +1,7 @@
 //! Tracks the mutations waiting for the server's verdict and settles their
 //! `server` results (`packages/zero-client/src/client/mutation-tracker.ts`).
 
+use super::engine::{Engine, MutationOutcome, MutationServerOutcome};
 use super::replica_store::{KvDiff, KvDiffOp};
 use super::{ApplicationError, ClientErrorKind, ConnectionError, Deferred, Error};
 use crate::decode::JsonCodable;
@@ -9,10 +10,68 @@ use crate::protocol::{
     ErrorBody, ErrorKind, ErrorOrigin, ErrorReason, FailureCause, MutationError, MutationId,
     MutationResult, PushError, PushResponseBody,
 };
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap};
+use std::rc::Rc;
 
 pub(crate) type ServerResult = Deferred<Option<Value>>;
+
+type OutcomeListener = Rc<dyn Fn(&MutationServerOutcome)>;
+
+/// The listeners of `Zero::add_mutation_outcome_listener`. The client
+/// keeps them, and gives them to each engine it makes, so they outlive a
+/// replaced one.
+#[derive(Default)]
+pub(crate) struct OutcomeListeners {
+    listeners: RefCell<Vec<(u64, OutcomeListener)>>,
+    next_id: Cell<u64>,
+}
+
+impl OutcomeListeners {
+    pub(crate) fn add(&self, listener: OutcomeListener) -> u64 {
+        let id = self.next_id.get();
+        self.next_id.set(id + 1);
+        self.listeners.borrow_mut().push((id, listener));
+        id
+    }
+
+    pub(crate) fn remove(&self, id: u64) {
+        self.listeners.borrow_mut().retain(|(i, _)| *i != id);
+    }
+
+    fn notify(&self, outcome: &MutationServerOutcome) {
+        // A listener may add or remove one.
+        let listeners: Vec<_> = self
+            .listeners
+            .borrow()
+            .iter()
+            .map(|(_, l)| l.clone())
+            .collect();
+        for l in listeners {
+            l(outcome);
+        }
+    }
+}
+
+/// A mutation taken off the unreported ones, to report to `listeners`
+/// once its `server` result has settled.
+struct Report {
+    listeners: Rc<OutcomeListeners>,
+    mutation_id: u64,
+    name: String,
+    args: Option<Value>,
+}
+
+impl Report {
+    fn send(self, outcome: MutationOutcome) {
+        self.listeners.notify(&MutationServerOutcome {
+            mutation_id: self.mutation_id,
+            name: self.name,
+            args: self.args,
+            outcome,
+        });
+    }
+}
 
 struct Entry {
     mutation_id: Option<f64>,
@@ -30,11 +89,18 @@ struct State {
     next_ephemeral_id: u64,
     largest_outstanding_mutation_id: f64,
     current_mutation_id: f64,
+    /// The mutations sent to the server whose outcome hasn't been
+    /// reported: their names and arguments, by mutation ID. Unlike
+    /// `outstanding`, they stay when the connection gives up on them:
+    /// they're sent again on reconnect, and their outcome is reported then.
+    unreported: BTreeMap<u64, (String, Option<Value>)>,
 }
 
 pub(crate) struct MutationTracker {
     client_id: String,
     state: RefCell<State>,
+    /// Hear each mutation's outcome from the server once.
+    outcome_listeners: RefCell<Option<Rc<OutcomeListeners>>>,
     ack_mutations: Box<dyn Fn(MutationId)>,
     on_fatal_error: Box<dyn Fn(ConnectionError)>,
     on_all_mutations_applied: Box<dyn Fn()>,
@@ -54,6 +120,7 @@ impl MutationTracker {
         MutationTracker {
             client_id,
             state: RefCell::default(),
+            outcome_listeners: RefCell::new(None),
             ack_mutations,
             on_fatal_error,
             on_all_mutations_applied,
@@ -92,6 +159,39 @@ impl MutationTracker {
         s.ephemeral_ids_by_mutation_id
             .insert(mid_key(mutation_id), ephemeral_id);
         s.largest_outstanding_mutation_id = s.largest_outstanding_mutation_id.max(mutation_id);
+    }
+
+    /// Mutation `mutation_id` ran on the client and is stored: its outcome
+    /// is reported once the server gives one. Swift records it when the ID
+    /// is assigned and drops it when the mutator throws (`rejectMutation`);
+    /// recording it once the mutator ran is the same, and moves `args` here
+    /// instead of copying them.
+    pub(crate) fn mutation_ran(&self, mutation_id: f64, name: &str, args: Option<Value>) {
+        self.state
+            .borrow_mut()
+            .unreported
+            .insert(mid_key(mutation_id), (name.to_owned(), args));
+    }
+
+    /// The listeners to report outcomes to, from now on.
+    pub(crate) fn set_outcome_listeners(&self, listeners: Rc<OutcomeListeners>) {
+        *self.outcome_listeners.borrow_mut() = Some(listeners);
+    }
+
+    /// Takes mutation `mid` off the unreported ones: its report, when it
+    /// wasn't reported yet and someone listens.
+    fn take_report(&self, mid: u64) -> Option<Report> {
+        let (name, args) = self.state.borrow_mut().unreported.remove(&mid)?;
+        let listeners = self.outcome_listeners.borrow().clone()?;
+        if listeners.listeners.borrow().is_empty() {
+            return None;
+        }
+        Some(Report {
+            listeners,
+            mutation_id: mid,
+            name,
+            args,
+        })
     }
 
     /// Rejects a mutation the client could not run. It was not stored.
@@ -207,6 +307,22 @@ impl MutationTracker {
                 return Ok(());
             }
             s.current_mutation_id = last_mutation_id;
+            drop(s);
+            // Applied without a result of their own: they succeeded.
+            let lmid = mid_key(last_mutation_id);
+            loop {
+                let next = {
+                    let s = self.state.borrow();
+                    match s.unreported.first_key_value() {
+                        Some((&mid, _)) if mid <= lmid => mid,
+                        _ => break,
+                    }
+                };
+                if let Some(report) = self.take_report(next) {
+                    report.send(MutationOutcome::Success { data: None });
+                }
+            }
+            let mut s = self.state.borrow_mut();
             let mut settled = Vec::new();
             let mut head = 0;
             while head < s.order.len() {
@@ -269,8 +385,14 @@ impl MutationTracker {
             };
             Error::Connection(invalid_push(message))
         };
+        let report = self
+            .take_report(mid_key(mid))
+            .map(|r| (r, Engine::outcome(&failure)));
         if let Some(ephemeral_id) = self.ephemeral_id(mid) {
             self.settle(ephemeral_id, Err(failure));
+        }
+        if let Some((report, outcome)) = report {
+            report.send(outcome);
         }
         if kind == "oooMutation" {
             (self.on_fatal_error)(invalid_push(
@@ -292,8 +414,12 @@ impl MutationTracker {
                 "received mutation for the wrong client",
             ));
         }
+        let report = self.take_report(mid_key(mid)).map(|r| (r, data.clone()));
         if let Some(ephemeral_id) = self.ephemeral_id(mid) {
             self.settle(ephemeral_id, Ok(data));
+        }
+        if let Some((report, data)) = report {
+            report.send(MutationOutcome::Success { data });
         }
         Ok(())
     }

@@ -104,6 +104,7 @@ set 0 to disconnect as soon as it says it is hidden, as Swift does.
 | `zero.mutate.issue.insert(...)` (CRUD mutators)                  | not ported: write a mutator                                                                             |
 | `zero.inspector`                                                 | `inspector()`, an `Inspector`; see below                                                                |
 | `zero.mutateBatch`, `zero.online`, `zero.server`, `zero.version` | not ported; `protocol::PROTOCOL_VERSION` is the sync protocol's version                                 |
+| none (Swift's `addMutationOutcomeListener`)                      | `add_mutation_outcome_listener(listener)`, which returns the function that removes it                   |
 
 Rust adds `reconnect_now` (the network may be back, so skip the backoff),
 `when_pending_settled`, and `flush_storage` (wait for the store's queued
@@ -115,6 +116,13 @@ writes, such as before the app exits).
 a `user_id`, it returns the error and changes nothing. It returns before
 the state changes, where JS's promise waits for the next one: `subscribe`
 follows it.
+
+`add_mutation_outcome_listener` is Swift's API, with no JS counterpart: the
+listener hears each mutation's server outcome once, as a
+`MutationServerOutcome`, including that of a mutation replayed after its
+`server` result settled with a `ZeroError` when the client gave up
+connecting. Swift's `mutationOutcomes` stream isn't ported: the listener can
+feed a channel.
 
 When the server no longer has the client's state, JS asks the app to
 reload. Without `on_client_state_not_found`, Rust replaces the client

@@ -30,8 +30,8 @@ mod zero;
 
 pub use connection_manager::{ConnectionState, ConnectionStatus, NeedsAuthReason};
 pub use engine::{
-    BatchViewUpdates, MutationOutcome, MutatorResult, StorageFailureHandler, UpdateNeededHandler,
-    UpdateNeededReason, ZeroOptions,
+    BatchViewUpdates, MutationOutcome, MutationServerOutcome, MutatorResult, StorageFailureHandler,
+    UpdateNeededHandler, UpdateNeededReason, ZeroOptions,
 };
 pub use error::*;
 pub use inspector::{

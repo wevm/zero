@@ -3,8 +3,11 @@
 
 use super::connection_manager::ConnectionState;
 use super::database::{ReplicaDatabase, replicache_name};
-use super::engine::{Engine, MutatorFn, MutatorResult, UpdateNeededReason, ZeroOptions};
+use super::engine::{
+    Engine, MutationServerOutcome, MutatorFn, MutatorResult, UpdateNeededReason, ZeroOptions,
+};
 use super::inspector::{Inspector, InspectorHost};
+use super::mutation_tracker::OutcomeListeners;
 use super::query_context::{MaterializedView, Preload, RunType, WeakView};
 use super::storage::DroppedDatabases;
 use super::transaction::Transaction;
@@ -107,6 +110,8 @@ struct Core {
     preloads: RefCell<Vec<Rc<PreloadRecord>>>,
     /// What the client's inspectors share, once there is one.
     inspector: RefCell<Option<Rc<InspectorHost>>>,
+    /// The mutation outcome listeners, which every engine reports to.
+    outcome_listeners: Rc<OutcomeListeners>,
 }
 
 /// A preload, which a replacement starts again on the new engine until
@@ -175,6 +180,7 @@ impl<C: 'static> Zero<C> {
             views: RefCell::default(),
             preloads: RefCell::default(),
             inspector: RefCell::default(),
+            outcome_listeners: Rc::default(),
         });
         Core::attach(&core, &engine);
         Ok(Zero { core, context })
@@ -321,6 +327,38 @@ impl<C: 'static> Zero<C> {
         self.mutate(&request.name, request.args)
     }
 
+    /// Calls `listener` with the server's outcome of each mutation this
+    /// client makes, once per mutation, as the server reports it. Returns
+    /// the function that removes it.
+    ///
+    /// Unlike a mutation's `server` result, it hears the outcome of a
+    /// mutation sent again after the connection came back: `server` settles
+    /// with [`MutationOutcome::ZeroError`](super::MutationOutcome::ZeroError)
+    /// when the client gives up connecting
+    /// ([`disconnect_timeout_ms`](ZeroOptions::disconnect_timeout_ms)), and
+    /// the mutation is replayed when it reconnects. A mutation still pending
+    /// when the app quits is replayed when it next launches, but its outcome
+    /// isn't reported, nor is a pending mutation's when the client replaces
+    /// itself. The listeners stay with the client when it does.
+    ///
+    /// Use it for a single place that shows rejections, instead of each
+    /// `server` result, so a rejection isn't shown twice. To read the
+    /// outcomes elsewhere, such as from an async task, send them to a
+    /// channel from the listener. Swift's `addMutationOutcomeListener`: the
+    /// JS client has no counterpart.
+    pub fn add_mutation_outcome_listener(
+        &self,
+        listener: impl Fn(&MutationServerOutcome) + 'static,
+    ) -> Box<dyn Fn()> {
+        let id = self.core.outcome_listeners.add(Rc::new(listener));
+        let weak = Rc::downgrade(&self.core.outcome_listeners);
+        Box::new(move || {
+            if let Some(listeners) = weak.upgrade() {
+                listeners.remove(id);
+            }
+        })
+    }
+
     /// The app was shown, or hidden. Hidden for
     /// `ZeroOptions::hidden_disconnect_delay_ms`, the client disconnects
     /// until it is shown again.
@@ -380,8 +418,10 @@ impl Core {
     }
 
     /// Hooks `engine` up to the client: the connection hears it needs an
-    /// update, and the client replaces it when it lost its state.
+    /// update, the mutation outcome listeners hear its mutations' outcomes,
+    /// and the client replaces it when it lost its state.
     fn attach(core: &Rc<Core>, engine: &Rc<Engine>) {
+        engine.set_mutation_outcome_listeners(core.outcome_listeners.clone());
         let connection = Rc::downgrade(&core.connection.0);
         *engine.on_update_needed.borrow_mut() = Some(Rc::new(move |reason| {
             if let Some(c) = connection.upgrade() {
