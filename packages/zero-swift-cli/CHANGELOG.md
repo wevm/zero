@@ -1,5 +1,15 @@
 # zero-swift
 
+## 0.8.0
+
+### Minor Changes
+
+- 23f9185: `Connection.connect(_:)` now matches JS's `connection.connect({auth})`, and replaces `connect(auth:)`. It takes a `ConnectAuth`: `.keep` (the default) keeps the token, `.set(token)` replaces it, and `.clear` removes it, which JS's `auth: null` does and Swift couldn't. It throws where JS's promise rejects: a token for a client without a `userID` throws the `Internal` error "ZeroOptions.userID is required when auth is set." and changes nothing, where it was logged and ignored. Write `connect(auth: token)` as `try connect(.set(token))` and `connect()` as `try connect()`.
+
+### Patch Changes
+
+- 0ba9559: Add `VirtualList.maxKeptRows(_:)` and `VirtualListView.maxKeptRows`: how many rows that page out of the list keep their views for when they come back. A kept row scrolled back to is shown at once, with its state, instead of being made and measured again in the frame that brings it, which is what stalls a fast scroll back over rows it paged out. Kept rows hold their views, and their own queries stay open, until they come back or are among the oldest beyond the limit. The default, 0, keeps none, as before.
+
 ## 0.7.14
 
 ### Patch Changes
