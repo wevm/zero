@@ -85,9 +85,9 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
-//! With generated types, the query is `zql::issue()`, and a view's data
-//! reads as row structs with `query.read(&view.data())`; see the
-//! [README](https://github.com/wevm/zero/blob/main/rust/README.md#generated-types).
+//! With generated types, the query is `zql::issue()`, and
+//! [`Zero::live`](client::Zero::live) keeps its rows read as row structs;
+//! see the [README](https://github.com/wevm/zero-rust#quick-start).
 
 pub mod ast;
 pub mod builder;
