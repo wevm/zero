@@ -1,5 +1,14 @@
 # zero-rust
 
+## 0.3.0
+
+### Minor Changes
+
+- 23f9185: `Connection::connect` now matches JS's `connection.connect({auth})`. It takes a `ConnectAuth`: `Keep` keeps the token, `Set(token)` replaces it, and `Clear` removes it, which JS's `auth: null` does and Rust couldn't. It returns a `Result`, `Err` where JS's promise rejects: a token for a client without a `user_id` is the `Internal` connection error "ZeroOptions.userID is required when auth is set." and changes nothing, where it was logged and ignored. Write `connect(Some(token))` as `connect(ConnectAuth::Set(token))?` and `connect(None)` as `connect(ConnectAuth::Keep)?`.
+- d1b27f8: `ZeroOptions::hidden_disconnect_delay_ms` now defaults to 5 minutes, as JS's `hiddenTabDisconnectDelay` does, instead of 0: after `Zero::set_visible(false)`, the client stays connected for 5 minutes before it disconnects. An app that wants the old behavior, such as a mobile app the system suspends in the background, sets `hidden_disconnect_delay_ms: 0.0`.
+- abfc5d8: Add `LiveView`, a typed live query after the Swift client's `LiveQuery` (zero-react's `useQuery`). `Zero::live(&query, &ttl)` takes a typed `Query` or a named query's `QueryRequest` and returns a `LiveView<T>` whose `value()` is the query's rows, `one()` row, or aggregate read as its Rust type and kept current, with `result_type()`, `error()` (a `LiveError`: the server's query error, or rows that didn't read, which keep the last value), `add_listener`, `update_ttl`, and `view()` for the `MaterializedView`. An update reads only the rows whose entries changed, so an optimistic update with a live view of 100,000 rows read as structs no longer reads every row again. A live view follows the client when it replaces itself, and dropping it removes its listeners and destroys its view. `QueryValue` gains `update_from_view`, which has a default, and the new `typed::TypedQuery` trait names what a query reads as.
+- 8a70783: Add `Zero::add_mutation_outcome_listener`, the Swift client's `addMutationOutcomeListener`, which JS has no counterpart for. The listener hears each mutation's server outcome once, as a `client::MutationServerOutcome` with the mutation's ID, name, arguments, and `MutationOutcome`, and the call returns the function that removes it. Unlike a mutation's `server` result, which settles with a `ZeroError` when the client gives up connecting (`disconnect_timeout_ms`), it hears the real outcome of a mutation replayed after the client reconnects, so an app can show each rejection in one place. Listeners stay with the `Zero` when it replaces its client; a mutation still pending when the app quits is replayed on the next launch, but its outcome isn't reported.
+
 ## 0.2.0
 
 ### Minor Changes
