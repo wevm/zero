@@ -36,6 +36,7 @@ use crate::client::Error;
 use crate::query::{ExpressionBuilder, JsonPathReference};
 use std::fmt;
 use std::marker::PhantomData;
+use std::rc::Rc;
 use std::sync::Arc;
 
 /// A value that doesn't fit the Rust type a row declares for it.
@@ -396,12 +397,170 @@ impl<V: ZeroValue> ColumnUpdate<V> {
 pub trait QueryValue: Sized {
     /// Reads the query's result from its view.
     fn from_view(view: &ViewValue) -> Result<Self, ZeroValueError>;
+
+    /// Reads `view` into `self`, which was read from `previous`, as
+    /// [`from_view`](QueryValue::from_view) would, keeping what it can of
+    /// `self`, and makes `previous` what was read: a
+    /// [`LiveView`](crate::client::LiveView) reads each update so. On an
+    /// error both are left as they were. By default it reads `view` anew;
+    /// rows (`Vec<E>`) read only the entries that changed.
+    fn update_from_view(
+        &mut self,
+        previous: &mut ViewValue,
+        view: &ViewValue,
+    ) -> Result<(), ZeroValueError> {
+        *self = Self::from_view(view)?;
+        *previous = view.clone();
+        Ok(())
+    }
 }
 
 impl<E: QueryElement> QueryValue for Vec<E> {
     fn from_view(view: &ViewValue) -> Result<Self, ZeroValueError> {
         view.entries().into_iter().map(E::from_entry).collect()
     }
+
+    /// Keeps the rows whose entries are equal, and reads the others (the
+    /// Swift client's `RowCache`). Most updates change a few rows in place,
+    /// or insert or remove one, so the entries are matched in order,
+    /// skipping at most one. `previous` becomes a copy of the entries
+    /// changed in the same way, so the view, which then shares its rows with
+    /// nothing, changes them in place.
+    fn update_from_view(
+        &mut self,
+        previous: &mut ViewValue,
+        view: &ViewValue,
+    ) -> Result<(), ZeroValueError> {
+        let (ViewValue::Many(old), ViewValue::Many(new)) = (&mut *previous, view) else {
+            *self = Self::from_view(view)?;
+            *previous = view.clone();
+            return Ok(());
+        };
+        if old.len() != self.len() {
+            *self = Self::from_view(view)?;
+            *previous = view.clone();
+            return Ok(());
+        }
+        // What the rows become, in order: runs of old rows kept, by index,
+        // and of rows read anew. Rows are read before anything changes, so a
+        // row that fails leaves both as they were.
+        let mut runs: Vec<Run> = Vec::new();
+        let mut fresh = Vec::new();
+        // Whether every row kept stays at its index, so the rows read anew
+        // replace the others where they are.
+        let mut in_place = old.len() == new.len();
+        let mut j = 0;
+        for (i, entry) in new.iter().enumerate() {
+            let kept = if old.get(j).is_some_and(|o| same_entry(o, entry)) {
+                Some(j)
+            } else if old.get(j + 1).is_some_and(|o| same_entry(o, entry)) {
+                Some(j + 1)
+            } else {
+                None
+            };
+            match (kept, runs.last_mut()) {
+                (Some(k), Some(Run::Keep { from, len })) if *from + *len == k => *len += 1,
+                (Some(k), _) => runs.push(Run::Keep { from: k, len: 1 }),
+                (None, Some(Run::Fresh(len))) => *len += 1,
+                (None, _) => runs.push(Run::Fresh(1)),
+            }
+            match kept {
+                Some(k) => {
+                    in_place &= k == i;
+                    j = k + 1;
+                }
+                None => fresh.push(E::from_entry(entry)?),
+            }
+        }
+        if in_place && fresh.is_empty() {
+            return Ok(());
+        }
+        let mut fresh = fresh.into_iter();
+        apply_runs(self, &runs, in_place, new.len(), |_| {
+            fresh.next().expect("a row read for each new entry")
+        });
+        apply_runs(Rc::make_mut(old), &runs, in_place, new.len(), |i| {
+            new[i].clone()
+        });
+        Ok(())
+    }
+}
+
+/// Whether two entries are equal, as `==` says, comparing the rows and the
+/// lists they share by address first: an entry a view didn't change shares
+/// them with the copy read before.
+fn same_entry(a: &ViewEntry, b: &ViewEntry) -> bool {
+    (Rc::ptr_eq(&a.row, &b.row) || a.row == b.row)
+        && a.relationships.len() == b.relationships.len()
+        && a.relationships
+            .iter()
+            .zip(&b.relationships)
+            .all(|((m, a), (n, b))| m == n && same_value(a, b))
+}
+
+fn same_value(a: &ViewValue, b: &ViewValue) -> bool {
+    match (a, b) {
+        (ViewValue::Many(a), ViewValue::Many(b)) => {
+            Rc::ptr_eq(a, b)
+                || (a.len() == b.len() && a.iter().zip(b.iter()).all(|(a, b)| same_entry(a, b)))
+        }
+        (ViewValue::One(Some(a)), ViewValue::One(Some(b))) => same_entry(a, b),
+        (a, b) => a == b,
+    }
+}
+
+/// A run of `Vec::update_from_view`'s rows.
+enum Run {
+    /// `len` old rows from `from`.
+    Keep { from: usize, len: usize },
+    /// `len` rows read anew.
+    Fresh(usize),
+}
+
+/// Makes `items` the `len` items `runs` lists: the old ones kept, and
+/// `fresh(i)` for the `i`th, read anew. `in_place`: each item kept stays
+/// where it is.
+fn apply_runs<X>(
+    items: &mut Vec<X>,
+    runs: &[Run],
+    in_place: bool,
+    len: usize,
+    mut fresh: impl FnMut(usize) -> X,
+) {
+    if in_place {
+        let mut at = 0;
+        for run in runs {
+            match *run {
+                Run::Keep { len, .. } => at += len,
+                Run::Fresh(n) => {
+                    for (i, item) in items[at..at + n].iter_mut().enumerate() {
+                        *item = fresh(at + i);
+                    }
+                    at += n;
+                }
+            }
+        }
+        return;
+    }
+    let mut out = Vec::with_capacity(len);
+    let mut old = std::mem::take(items).into_iter();
+    let mut next = 0;
+    for run in runs {
+        match *run {
+            Run::Keep { from, len } => {
+                if from > next {
+                    old.nth(from - next - 1);
+                }
+                out.extend(old.by_ref().take(len));
+                next = from + len;
+            }
+            Run::Fresh(n) => {
+                let at = out.len();
+                out.extend((at..at + n).map(&mut fresh));
+            }
+        }
+    }
+    *items = out;
 }
 
 /// What an `Option` query value holds: the row of `one()`, or the value of
@@ -1029,6 +1188,18 @@ impl<R, T: QueryValue> Query<R, T> {
     pub fn read(&self, view: &ViewValue) -> Result<T, ZeroValueError> {
         T::from_view(view)
     }
+}
+
+/// A query whose view reads as a [`QueryValue`]: a typed [`Query`], or a
+/// named query's `QueryRequest`. What
+/// [`Zero::live`](crate::client::Zero::live) takes.
+pub trait TypedQuery<C>: crate::query::ZeroQuery<C> {
+    /// What the query's view reads as.
+    type Value: QueryValue;
+}
+
+impl<C, R, T: QueryValue> TypedQuery<C> for Query<R, T> {
+    type Value = T;
 }
 
 fn names<R>(columns: Vec<ColumnRef<R>>) -> Vec<String> {

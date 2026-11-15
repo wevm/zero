@@ -7,6 +7,7 @@ use super::engine::{
     Engine, MutationServerOutcome, MutatorFn, MutatorResult, UpdateNeededReason, ZeroOptions,
 };
 use super::inspector::{Inspector, InspectorHost};
+use super::live_view::LiveView;
 use super::mutation_tracker::OutcomeListeners;
 use super::query_context::{MaterializedView, Preload, RunType, WeakView};
 use super::storage::DroppedDatabases;
@@ -17,6 +18,7 @@ use crate::json::Value;
 use crate::query::{AnyQuery, ZeroQuery};
 use crate::schema::Schema;
 use crate::ttl::Ttl;
+use crate::typed::TypedQuery;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -240,6 +242,19 @@ impl<C: 'static> Zero<C> {
         views.retain(|(v, _, _)| v.upgrade().is_some_and(|v| !v.is_destroyed()));
         views.push((view.downgrade(), query.into_owned(), ttl.clone()));
         Ok(view)
+    }
+
+    /// The query's result read as its Rust type and kept current: its rows,
+    /// the row of a `one()` query, or the value of an aggregate, from a
+    /// typed [`Query`](crate::typed::Query) or a named query's
+    /// `QueryRequest`. Fails when the query can't be materialized, or when
+    /// its rows don't read as the type (an [`Error::Message`] saying why).
+    pub fn live<Q>(&self, query: &Q, ttl: &Ttl) -> Result<LiveView<Q::Value>, Error>
+    where
+        Q: TypedQuery<C> + ?Sized,
+        Q::Value: 'static,
+    {
+        LiveView::new(self.materialize(query, ttl)?)
     }
 
     /// The query's rows: what the replica holds now (`Unknown`), or once

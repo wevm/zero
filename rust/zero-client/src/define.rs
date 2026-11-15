@@ -39,7 +39,7 @@ use crate::client::{ApplicationError, Error, MutateRequest, Mutator, Transaction
 use crate::ivm::ViewValue;
 use crate::json::{self, Value};
 use crate::query::{AnyQuery, ZeroQuery};
-use crate::typed::{Query, QueryValue, ZeroValueError};
+use crate::typed::{Query, QueryValue, TypedQuery, ZeroValueError};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::borrow::Cow;
@@ -158,6 +158,10 @@ impl<C, R, T> ZeroQuery<C> for QueryRequest<C, R, T> {
     fn any_query(&self, context: &C) -> Cow<'_, AnyQuery> {
         Cow::Owned(self.query(context).into_any())
     }
+}
+
+impl<C, R, T: QueryValue> TypedQuery<C> for QueryRequest<C, R, T> {
+    type Value = T;
 }
 
 /// A named query whose arguments come as JSON, as the server gets them,

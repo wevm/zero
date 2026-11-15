@@ -16,13 +16,15 @@ mod harness;
 
 use fixtures::{Client, sum, update_user_args, user_json, users};
 use harness::{Bench, check, resident_memory};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::hint::black_box;
+use std::rc::Rc;
 use zero_client::ast::SimpleOperator;
 use zero_client::hash::xxhash32;
 use zero_client::ivm::{ViewEntry, ViewValue};
 use zero_client::json::Value;
-use zero_client::typed::{QueryElement, QueryValue, ZeroValueError, column};
+use zero_client::ttl::Ttl;
+use zero_client::typed::{Query, QueryElement, QueryValue, ZeroValueError, column};
 
 fn main() {
     let mut filters = Vec::new();
@@ -144,6 +146,7 @@ fn hydration(bench: &mut Bench) {
         for n in [1_000, 10_000, 100_000] {
             if !bench.wants(&format!("materialize {n} rows"))
                 && !bench.wants(&format!("materialize {n} rows as structs"))
+                && !bench.wants(&format!("live view of {n} rows as structs"))
             {
                 continue;
             }
@@ -160,6 +163,13 @@ fn hydration(bench: &mut Bench) {
                 check(rows.len() == n, "every row");
                 black_box(rows.iter().map(User::total).sum::<f64>());
                 view.destroy();
+            });
+            let typed = Query::<User>::from_any(all.clone());
+            bench.run(&format!("live view of {n} rows as structs"), || {
+                let live = client.zero.live(&typed, &Ttl::default()).unwrap();
+                let rows = live.value();
+                check(rows.len() == n, "every row");
+                black_box(rows.iter().map(User::total).sum::<f64>());
             });
         }
     });
@@ -283,6 +293,45 @@ fn mutations(bench: &mut Bench) {
                 let _ = local.zero.mutate("updateUser", Some(args));
             });
             check_updated(&local_view, before, "updated");
+
+            // The same with the rows read as structs on every update, as an
+            // app reads them: by hand, and with a live view, which reads only
+            // the rows that changed.
+            let all = Query::<User>::from_any(users(local.zero.schema()));
+            let read = Client::new(n, false);
+            let read_view = read.materialize(all.any());
+            let rows = Rc::new(RefCell::new(Vec::new()));
+            let into = rows.clone();
+            let _remove = read_view.add_listener(move |data, _, _| {
+                *into.borrow_mut() = Vec::<User>::from_view(data).unwrap();
+            });
+            let before = value.get();
+            bench.run(
+                &format!("optimistic update, {n}-row view read as structs"),
+                || {
+                    value.set(value.get() + 1);
+                    let args = update_user_args(value.get() % n, value.get());
+                    let _ = read.zero.mutate("updateUser", Some(args));
+                },
+            );
+            let updated = |rows: &[User]| rows[value.get() % n].b == value.get() as f64;
+            if value.get() > before {
+                check(updated(&rows.borrow()), "read");
+            }
+            let structs = Client::new(n, false);
+            let live = structs.zero.live(&all, &Ttl::default()).unwrap();
+            let before = value.get();
+            bench.run(
+                &format!("optimistic update, {n}-row live query of structs"),
+                || {
+                    value.set(value.get() + 1);
+                    let args = update_user_args(value.get() % n, value.get());
+                    let _ = structs.zero.mutate("updateUser", Some(args));
+                },
+            );
+            if value.get() > before {
+                check(updated(&live.value()), "read");
+            }
 
             // The client's side of a round trip: the optimistic update, the
             // push, and the poke that confirms it, which rebases the pending

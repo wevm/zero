@@ -4,11 +4,13 @@
 //! `LocalSet`, while Rune owns the main thread and runs no executor. So the
 //! client lives on a thread of its own, with a current-thread runtime. The
 //! UI sends it commands (closures that run with the client), and it sends
-//! back each view's rows, read as the generated row types, with
-//! `AppHandle::update`, which runs them on the UI thread before the next
-//! frame. Reading a poke into IVM and the rows out of it stays off the UI
-//! thread.
+//! back each view's rows, read as the generated row types by a `LiveView`,
+//! with `AppHandle::update`, which runs them on the UI thread before the
+//! next frame. Reading a poke into IVM and the rows out of it stays off the
+//! UI thread.
 
+use std::any::Any;
+use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -16,8 +18,8 @@ use std::sync::Arc;
 use rune::AppHandle;
 use tokio::sync::mpsc;
 use zero_client::client::{
-    ConnectionState, MaterializedView, MutationOutcome, Mutator, MutatorResult, Preload, Zero,
-    ZeroOptions, ZeroStorage,
+    ConnectionState, Error, LiveError, LiveView, MutationOutcome, Mutator, MutatorResult, Preload,
+    Zero, ZeroOptions, ZeroStorage,
 };
 use zero_client::define::QueryRequest;
 use zero_client::ivm::ResultType;
@@ -113,7 +115,7 @@ impl<S: 'static, C: Clone + Send + 'static> SyncThread<S, C> {
     /// Keeps `slot` showing `query`'s rows: `apply` gets them now, from the
     /// local store, and on every change. Watching a slot again replaces its
     /// query; the old rows stay in the app's state until the new ones come.
-    pub fn watch<R: 'static, T: QueryValue + Send + 'static>(
+    pub fn watch<R: 'static, T: QueryValue + Clone + Send + 'static>(
         &self,
         slot: &'static str,
         query: QueryRequest<C, R, T>,
@@ -212,21 +214,13 @@ struct Client<C: 'static> {
     unsubscribe: Box<dyn Fn()>,
 }
 
-type Remake<C> = Rc<dyn Fn(&Zero<C>) -> Option<(MaterializedView, Box<dyn Fn()>)>>;
+/// Makes a slot's live view on a client; dropping it stops it.
+type Remake<C> = Rc<dyn Fn(&Zero<C>) -> Option<Rc<dyn Any>>>;
 
-/// A slot's view, and how to make it again on a new client.
+/// A slot's live view, and how to make it again on a new client.
 struct Watch<C> {
-    view: Option<(MaterializedView, Box<dyn Fn()>)>,
+    _live: Option<Rc<dyn Any>>,
     remake: Remake<C>,
-}
-
-impl<C> Drop for Watch<C> {
-    fn drop(&mut self) {
-        if let Some((view, remove)) = self.view.take() {
-            remove();
-            view.destroy();
-        }
-    }
 }
 
 pub struct Worker<S: 'static, C: 'static> {
@@ -301,7 +295,7 @@ impl<S: 'static, C: Clone + 'static> Worker<S, C> {
         }
     }
 
-    fn watch<R: 'static, T: QueryValue + Send + 'static>(
+    fn watch<R: 'static, T: QueryValue + Clone + Send + 'static>(
         &mut self,
         slot: &'static str,
         query: QueryRequest<C, R, T>,
@@ -311,17 +305,34 @@ impl<S: 'static, C: Clone + 'static> Worker<S, C> {
         // Built for each client, with its context: logging in changes what
         // a query asks for.
         let remake: Remake<C> = Rc::new(move |zero| {
-            let view = zero.materialize(&query, &Ttl::seconds(10.0)).ok()?;
-            let (ui, query) = (ui.clone(), query.clone());
-            let remove = view.add_listener(move |data, result_type, _| {
-                // Rows the generated types can't read are a bug of the
-                // port; say so rather than show nothing.
-                match query.read(data) {
-                    Ok(rows) => ui.update(move |s, tx| apply(s, rows, result_type, tx)),
-                    Err(e) => eprintln!("zbugs-rune: {slot}: {e}"),
+            // Rows the generated types can't read are a bug of the port;
+            // say so rather than show nothing.
+            let live = match zero.live(&query, &Ttl::seconds(10.0)) {
+                Ok(live) => live,
+                Err(Error::Message(e)) => {
+                    eprintln!("zbugs-rune: {slot}: {e}");
+                    return None;
+                }
+                Err(_) => return None,
+            };
+            let cell: Rc<OnceCell<LiveView<T>>> = Rc::default();
+            let weak = Rc::downgrade(&cell);
+            let ui = ui.clone();
+            // Removed when the live view drops.
+            let _ = live.add_listener(move |rows, result_type| {
+                // Only set once this first call is over, which reads the
+                // rows `zero.live` already read.
+                let error = weak.upgrade().and_then(|c| c.get()?.error());
+                match error {
+                    Some(LiveError::Decode(e)) => eprintln!("zbugs-rune: {slot}: {e}"),
+                    _ => {
+                        let rows = rows.clone();
+                        ui.update(move |s, tx| apply(s, rows, result_type, tx));
+                    }
                 }
             });
-            Some((view, remove))
+            let _ = cell.set(live);
+            Some(cell as Rc<dyn Any>)
         });
         self.watches.remove(slot);
         self.install(slot, remake);
@@ -329,11 +340,23 @@ impl<S: 'static, C: Clone + 'static> Worker<S, C> {
 
     fn install(&mut self, slot: &'static str, remake: Remake<C>) {
         let Some(client) = &self.client else {
-            self.watches.insert(slot, Watch { view: None, remake });
+            self.watches.insert(
+                slot,
+                Watch {
+                    _live: None,
+                    remake,
+                },
+            );
             return;
         };
-        let view = remake(&client.zero);
-        self.watches.insert(slot, Watch { view, remake });
+        let live = remake(&client.zero);
+        self.watches.insert(
+            slot,
+            Watch {
+                _live: live,
+                remake,
+            },
+        );
     }
 
     fn close(&mut self) {
