@@ -20,7 +20,7 @@ import {
 import * as v from '../../../../../shared/src/valita.ts';
 import {mapIndexPredicateColumns} from '../../../db/index-predicate.ts';
 import {
-  mapPostgresToLiteColumn,
+  newColumnDefault,
   UnsupportedColumnDefaultError,
 } from '../../../db/pg-to-lite.ts';
 import type {
@@ -31,7 +31,12 @@ import type {
 import {getOrCreateCounter} from '../../../observability/metrics.ts';
 import {type LexiVersion} from '../../../types/lexi-version.ts';
 import {PG_17} from '../../../types/pg-versions.ts';
-import {isPostgresError, pgClient, type PostgresDB} from '../../../types/pg.ts';
+import {
+  isPostgresError,
+  pgClient,
+  UPSTREAM_SESSION_SETTINGS,
+  type PostgresDB,
+} from '../../../types/pg.ts';
 import {upstreamSchema, type ShardID} from '../../../types/shards.ts';
 import {
   majorVersionFromString,
@@ -96,7 +101,7 @@ import {
   type InternalShardConfig,
   type Replica,
 } from './schema/shard.ts';
-import {validate} from './schema/validation.ts';
+import {validate, validateRelationNames} from './schema/validation.ts';
 
 // Parameterize this if necessary. In practice starvation may never happen.
 const MAX_LOW_PRIORITY_DELAY_MS = 1000;
@@ -153,10 +158,12 @@ export class PostgresChangeSource implements ChangeSource {
     this.#lc = lc.withContext('component', 'change-source');
     this.#subscribe = deps.subscribe ?? subscribe;
     this.#streamBackfill = deps.streamBackfill ?? streamBackfill;
-    // used for schema changes, lag reporting, and slot cleanup
+    // used for schema changes, lag reporting, and slot cleanup, and the
+    // replication stream copies its options
     this.#db = pgClient(lc, upstreamUri, 'replication-monitor', {
       max: 3,
       idle_timeout: 60,
+      connection: UPSTREAM_SESSION_SETTINGS,
     });
     this.#upstreamUri = upstreamUri;
     this.#shard = shard;
@@ -1162,6 +1169,21 @@ class ChangeMaker {
     lsn: bigint,
     msg: Message,
   ): Promise<ChangeStreamData[]> {
+    // A table with no published columns is not on the replica, as it has
+    // nothing to store.
+    if (
+      (msg.tag === 'insert' || msg.tag === 'update' || msg.tag === 'delete') &&
+      msg.relation.columns.length === 0
+    ) {
+      return [];
+    }
+    if (msg.tag === 'truncate') {
+      const relations = msg.relations.filter(r => r.columns.length > 0);
+      if (relations.length === 0) {
+        return [];
+      }
+      msg = {...msg, relations};
+    }
     switch (msg.tag) {
       case 'begin':
         return [
@@ -1205,8 +1227,15 @@ class ChangeMaker {
         ];
       }
 
-      case 'insert':
+      case 'insert': {
+        const populating = this.#populatingNewTable;
+        if (populating && !populating.has(msg.relation.relationOid)) {
+          // The rows of a CREATE TABLE AS or SELECT INTO precede the event
+          // that creates the table, which backfills them instead.
+          return [];
+        }
         return [['data', {...msg, relation: makeRelation(msg.relation)}]];
+      }
       case 'truncate':
         return [['data', {...msg, relations: msg.relations.map(makeRelation)}]];
 
@@ -1237,6 +1266,7 @@ class ChangeMaker {
         // in the `ddlUpdate` and does not depend on the value of the preceding
         // event.
         this.#lastReplicationEvent = undefined;
+        this.#populatingNewTable = undefined;
         return [
           [
             'commit',
@@ -1301,6 +1331,11 @@ class ChangeMaker {
   // The lastReplicationEvent is stored to understand the context
   // of the next one.
   #lastReplicationEvent: ReplicationEvent | undefined;
+
+  // The OIDs of the tables that existed before a command that creates a table
+  // with its rows. Set from the ddlStart of the command until the next ddl
+  // event.
+  #populatingNewTable: Set<number> | undefined;
 
   readonly #ddlEventsIgnored = getOrCreateCounter(
     'replication',
@@ -1412,6 +1447,14 @@ class ChangeMaker {
     const prevEvent = this.#lastReplicationEvent;
     // Store the new event to understand the context of the next event.
     this.#lastReplicationEvent = event;
+    // An event without a schema does not say which tables are new, so no
+    // inserts are held back for it.
+    this.#populatingNewTable =
+      type === 'ddlStart' &&
+      CREATES_TABLE_WITH_ROWS.has(event.event.tag) &&
+      event.schema
+        ? new Set(event.schema.tables.map(t => t.oid))
+        : undefined;
 
     const {schema} = event;
     if (schema === undefined) {
@@ -1540,6 +1583,7 @@ class ChangeMaker {
       for (const table of nextTbl.values()) {
         validate(lc, table);
       }
+      validateRelationNames(nextSchema);
 
       const [droppedIdx, createdIdx] = symmetricDifferences(prevIdx, nextIdx);
 
@@ -1571,12 +1615,35 @@ class ChangeMaker {
 
       // DROP
       const [droppedTbl, createdTbl] = symmetricDifferences(prevTbl, nextTbl);
+      const tables = intersection(prevTbl, nextTbl);
+
+      // Attaching, detaching or dropping a partition adds rows to, or removes
+      // rows from, the partitioned table without changes to those rows in the
+      // replication stream. The replica cannot tell which rows these are, so
+      // the table is dropped, created again and backfilled.
+      for (const id of tables) {
+        const prev = must(prevTbl.get(id));
+        const next = must(nextTbl.get(id));
+        if (partitionsChanged(prev, next, tag)) {
+          lc.info?.(
+            `resyncing ${next.schema}.${next.name}: its partitions changed`,
+          );
+          tables.delete(id);
+          droppedTbl.add(id);
+          createdTbl.add(id);
+          for (const [idxID, idx] of nextIdx) {
+            if (idx.schema === next.schema && idx.tableName === next.name) {
+              createdIdx.add(idxID);
+            }
+          }
+        }
+      }
+
       for (const id of droppedTbl) {
         const {schema, name} = must(prevTbl.get(id));
         changes.push({tag: 'drop-table', id: {schema, name}});
       }
       // ALTER TABLE | ALTER PUBLICATION
-      const tables = intersection(prevTbl, nextTbl);
       for (const id of tables) {
         changes.push(
           ...this.#getTableChanges(
@@ -1595,7 +1662,8 @@ class ChangeMaker {
           spec,
           metadata: getMetadata(spec),
         };
-        // Only tables introduced by a `CREATE` statement can skip backfill.
+        // Only tables introduced by a `CREATE` statement can skip backfill,
+        // unless the statement also inserts their rows.
         // All other scenarios in which tables are introduced into the
         // schema, e.g.
         // * ALTER PUBLICATION statements
@@ -1603,7 +1671,7 @@ class ChangeMaker {
         // * MANUAL snapshots
         // * UNKNOWN command tags
         // must be backfilled.
-        if (!tag.startsWith('CREATE')) {
+        if (!tag.startsWith('CREATE') || CREATES_TABLE_WITH_ROWS.has(tag)) {
           createTable.backfill = mapValues(spec.columns, ({pos: attNum}) => ({
             attNum,
           })) satisfies Record<string, ColumnMetadata>;
@@ -1708,12 +1776,12 @@ class ChangeMaker {
         addColumn.column.spec.dflt = null;
         addColumn.backfill = {attNum: spec.pos} satisfies ColumnMetadata;
       } else {
-        // Determine if the ChangeProcessor will accept the column add as is.
+        // Determine the default that the ChangeProcessor sets, if any.
         try {
-          mapPostgresToLiteColumn(table.name, column);
+          addColumn.column.spec.dflt = newColumnDefault(table.name, column);
         } catch (e) {
           if (!(e instanceof UnsupportedColumnDefaultError)) {
-            // Note: mapPostgresToLiteColumn is not expected to throw any other
+            // Note: newColumnDefault is not expected to throw any other
             // types of errors.
             throw e;
           }
@@ -1771,6 +1839,10 @@ class ChangeMaker {
     const orel = this.#replica.initialSchema.tables.find(
       t => t.oid === rel.relationOid,
     );
+    if (!orel && rel.columns.length === 0) {
+      // A table with no published columns is not in the published schema.
+      return [];
+    }
     if (!orel) {
       // Can happen if a table is created and then dropped in the same transaction.
       throw new MissingEventTriggerSupport(
@@ -1874,6 +1946,24 @@ function translateError(e: unknown): Error {
   return e;
 }
 const idString = (id: Identifier) => `${id.schema}.${id.name}`;
+
+/**
+ * Whether the rows of a partitioned table may have changed because the set of
+ * its partitions did. A new partition made by `CREATE TABLE` is empty.
+ */
+function partitionsChanged(
+  prev: PublishedTableWithReplicaIdentity,
+  next: PublishedTableWithReplicaIdentity,
+  tag: string,
+): boolean {
+  return (
+    tag !== 'CREATE TABLE' &&
+    // Unknown for a schema stored before partitions were reported.
+    prev.partitions !== undefined &&
+    next.partitions !== undefined &&
+    !deepEqual(prev.partitions, next.partitions)
+  );
+}
 
 function specsByID(published: PublishedSchema) {
   return [
@@ -2008,6 +2098,13 @@ function getMetadata(table: PublishedTableWithReplicaIdentity): TableMetadata {
     ),
   };
 }
+
+// The command tags that create a table and insert its rows before the event
+// trigger for the end of the command fires.
+const CREATES_TABLE_WITH_ROWS: ReadonlySet<string> = new Set([
+  'CREATE TABLE AS',
+  'SELECT INTO',
+]);
 
 // Avoid sending the `columns` from the Postgres MessageRelation message.
 // They are not used downstream and the message can be large.

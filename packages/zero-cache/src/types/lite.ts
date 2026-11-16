@@ -1,5 +1,6 @@
 import {assert} from '../../../shared/src/asserts.ts';
 import {stringify, type JSONValue} from '../../../shared/src/bigint-json.ts';
+import {assignProperty} from '../../../shared/src/objects.ts';
 import type {
   SchemaValue,
   ValueType,
@@ -55,7 +56,11 @@ export function liteRow(
   const converted: Record<string, LiteValueType> = {};
   for (const key in row) {
     numCols++;
-    converted[key] = liteValue(row[key], columnType(key, table), jsonFormat);
+    assignProperty(
+      converted,
+      key,
+      liteValue(row[key], columnType(key, table), jsonFormat),
+    );
   }
   return {row: converted, numCols};
 }
@@ -194,6 +199,18 @@ export function liteTypeString(
     typeString += TEXT_ARRAY_ATTRIBUTE;
   }
   return typeString;
+}
+
+/**
+ * Whether the `value` of a key column is one that cannot identify a row past
+ * the replica: a `NaN`, which is a NULL there, or an infinite number, which
+ * JSON has no way to write. Row keys are JSON in the change log, in the CVR,
+ * and on the way to clients.
+ */
+export function isUnusableKeyValue(value: unknown): boolean {
+  return (
+    value === null || (typeof value === 'number' && !Number.isFinite(value))
+  );
 }
 
 export function upstreamDataType(liteTypeString: LiteTypeString) {

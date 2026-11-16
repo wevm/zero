@@ -6,10 +6,11 @@ import {assert, unreachable} from '../../../../shared/src/asserts.ts';
 import {stringify} from '../../../../shared/src/bigint-json.ts';
 import {deepEqual} from '../../../../shared/src/json.ts';
 import {must} from '../../../../shared/src/must.ts';
+import {assignProperty} from '../../../../shared/src/objects.ts';
 import {mapEntries} from '../../../../shared/src/objects.ts';
 import type {DownloadStatus} from '../../../../zero-events/src/status.ts';
 import {
-  createLiteIndexStatement,
+  createLiteIndex,
   createLiteTableStatement,
   liteColumnDef,
 } from '../../db/create.ts';
@@ -29,6 +30,7 @@ import type {ColumnSpec} from '../../db/specs.ts';
 import type {StatementRunner} from '../../db/statements.ts';
 import type {LexiVersion} from '../../types/lexi-version.ts';
 import {
+  isUnusableKeyValue,
   JSON_PARSED,
   liteRow,
   type JSONFormat,
@@ -444,14 +446,17 @@ class TransactionProcessor {
     return must(this.#tableSpecs.get(name), `Unknown table ${name}`);
   }
 
+  #keyColumns(relation: MessageRelation) {
+    return relation.rowKey.type !== 'full'
+      ? relation.rowKey.columns // already a suitable key
+      : this.#tableSpec(liteTableName(relation)).primaryKey;
+  }
+
   #getKey(
     {row, numCols}: {row: LiteRow; numCols: number},
     {relation}: {relation: MessageRelation},
   ): LiteRowKey {
-    const keyColumns =
-      relation.rowKey.type !== 'full'
-        ? relation.rowKey.columns // already a suitable key
-        : this.#tableSpec(liteTableName(relation)).primaryKey;
+    const keyColumns = this.#keyColumns(relation);
     if (!keyColumns?.length) {
       throw new Error(
         `Cannot replicate table "${relation.name}" without a PRIMARY KEY or UNIQUE INDEX`,
@@ -464,22 +469,48 @@ class TransactionProcessor {
     }
     const key: Record<string, LiteValueType> = {};
     for (const col of keyColumns) {
-      key[col] = row[col];
+      assignProperty(key, col, row[col]);
     }
     return key;
+  }
+
+  // A NaN has no value on the replica, where it is stored as a NULL, and an
+  // infinite number has none in JSON, which is what row keys are in the
+  // change log and beyond. A row with either in its key could not be matched
+  // by later changes to it, so it is not replicated. (Initial sync and
+  // backfills skip these rows as well.)
+  #lacksKey(table: string, key: LiteRowKey): boolean {
+    for (const v of Object.values(key)) {
+      if (isUnusableKeyValue(v)) {
+        this.#lc.warn?.(
+          `Skipping a row of ${table} with a NaN or an infinite value in its key`,
+        );
+        return true;
+      }
+    }
+    return false;
   }
 
   processInsert(insert: MessageInsert) {
     const table = liteTableName(insert.relation);
     const tableSpec = this.#tableSpec(table);
     const newRow = liteRow(insert.new, tableSpec, this.#jsonFormat);
+    const keyed = !!this.#keyColumns(insert.relation)?.length;
+    if (keyed) {
+      const key = this.#getKey(newRow, insert);
+      if (this.#lacksKey(table, key)) {
+        // An earlier row with this key may have left a row or an entry.
+        this.#deleteRowLackingKey(table, key, tableSpec.backfilling);
+        return;
+      }
+    }
 
     this.#upsert(table, {
       ...newRow.row,
       [ZERO_VERSION_COLUMN_NAME]: this.#version,
     });
 
-    if (insert.relation.rowKey.columns.length === 0) {
+    if (!keyed) {
       // INSERTs can be replicated for rows without a PRIMARY KEY or a
       // UNIQUE INDEX. These are written to the replica but not recorded
       // in the changeLog, because these rows cannot participate in IVM.
@@ -491,6 +522,18 @@ class TransactionProcessor {
     }
     const key = this.#getKey(newRow, insert);
     this.#logSetOp(table, key, getBackfilledColumns(newRow.row, tableSpec));
+  }
+
+  // A table without a key gets UPDATEs and DELETEs only with REPLICA IDENTITY
+  // FULL, which identifies a row by all of its values. Any one row with those
+  // values will do, as they are interchangeable. As with INSERTs, these
+  // changes are not recorded in the changeLog.
+  #matchRowWithoutKey(table: string, {row}: {row: LiteRow}) {
+    const conds = Object.keys(row).map(col => `${id(col)} IS ?`);
+    return {
+      where: `_rowid_ = (SELECT _rowid_ FROM ${id(table)} WHERE ${conds.join(' AND ')} LIMIT 1)`,
+      params: Object.values(row),
+    };
   }
 
   #upsert(table: string, row: LiteRow) {
@@ -522,14 +565,46 @@ class TransactionProcessor {
     const newRow = liteRow(update.new, tableSpec, this.#jsonFormat);
     const row = {...newRow.row, [ZERO_VERSION_COLUMN_NAME]: this.#version};
 
+    if (update.key && !this.#keyColumns(update.relation)?.length) {
+      const {where, params} = this.#matchRowWithoutKey(
+        table,
+        liteRow(update.key, tableSpec, this.#jsonFormat),
+      );
+      const setExprs = Object.keys(row).map(col => `${id(col)}=?`);
+      const {changes} = this.#db.run(
+        `UPDATE ${id(table)} SET ${setExprs.join(',')} WHERE ${where}`,
+        [...Object.values(row), ...params],
+      );
+      if (changes === 0) {
+        this.#upsert(table, row);
+      }
+      return;
+    }
+
     // update.key is set with the old values if the key has changed.
-    const oldKey = update.key
+    let oldKey = update.key
       ? this.#getKey(
           liteRow(update.key, this.#tableSpec(table), this.#jsonFormat),
           update,
         )
       : null;
     const newKey = this.#getKey(newRow, update);
+
+    if (oldKey && this.#lacksKey(table, oldKey)) {
+      // The row was not replicated, so the update is applied to its new key,
+      // which adds the row.
+      this.#deleteRowLackingKey(table, oldKey, tableSpec.backfilling);
+      oldKey = null;
+    }
+    if (this.#lacksKey(table, newKey)) {
+      // The row is no longer replicated.
+      this.#deleteRowLackingKey(table, newKey, tableSpec.backfilling);
+      if (oldKey) {
+        this.#delete(table, oldKey);
+        this.#logDeleteOp(table, oldKey, tableSpec.backfilling);
+      }
+      return;
+    }
 
     if (oldKey) {
       this.#logDeleteOp(table, oldKey, tableSpec.backfilling);
@@ -586,13 +661,56 @@ class TransactionProcessor {
   processDelete(del: MessageDelete) {
     const table = liteTableName(del.relation);
     const tableSpec = this.#tableSpec(table);
+    if (!this.#keyColumns(del.relation)?.length) {
+      const {where, params} = this.#matchRowWithoutKey(
+        table,
+        liteRow(del.key, tableSpec, this.#jsonFormat),
+      );
+      this.#db.run(`DELETE FROM ${id(table)} WHERE ${where}`, params);
+      return;
+    }
     const rowKey = this.#getKey(
       liteRow(del.key, tableSpec, this.#jsonFormat),
       del,
     );
+    if (this.#lacksKey(table, rowKey)) {
+      this.#deleteRowLackingKey(table, rowKey, tableSpec.backfilling);
+      return;
+    }
 
     this.#delete(table, rowKey);
     this.#logDeleteOp(table, rowKey, tableSpec.backfilling);
+  }
+
+  // A replica written before these rows were skipped can still hold one: with
+  // a NULL in its key for a NaN, or the infinite number itself. It is removed
+  // when its upstream row changes. Upstream has at most one row with a given
+  // key, so every match is a copy of it.
+  #deleteRowLackingKey(
+    table: string,
+    rowKey: LiteRowKey,
+    backfilling: string[] | undefined,
+  ) {
+    const conds: string[] = [];
+    const params: LiteValueType[] = [];
+    for (const [col, v] of Object.entries(rowKey)) {
+      if (v === null || Number.isNaN(v)) {
+        conds.push(`${id(col)} IS NULL`);
+      } else {
+        conds.push(`${id(col)}=?`);
+        params.push(v);
+      }
+    }
+    this.#db.run(
+      `DELETE FROM ${id(table)} WHERE ${conds.join(' AND ')}`,
+      params,
+    );
+    // The change log entry of such a row has a null for these values, so no
+    // reader can find the row by it. The entry of a delete is skipped by
+    // them, where that of the insert or update it replaces is an error. It is
+    // written whether or not the row was still there, as an earlier version
+    // may have removed the row and left its entry.
+    this.#logDeleteOp(table, rowKey, backfilling);
   }
 
   #delete(table: string, rowKey: LiteRowKey) {
@@ -653,7 +771,14 @@ class TransactionProcessor {
 
     const oldName = liteTableName(rename.old);
     const newName = liteTableName(rename.new);
-    this.#db.db.exec(`ALTER TABLE ${id(oldName)} RENAME TO ${id(newName)}`);
+    if (oldName.toLowerCase() === newName.toLowerCase()) {
+      // SQLite ignores case, and would take this for a table that exists.
+      const tmpName = `tmp.${newName}`;
+      this.#db.db.exec(`ALTER TABLE ${id(oldName)} RENAME TO ${id(tmpName)}`);
+      this.#db.db.exec(`ALTER TABLE ${id(tmpName)} RENAME TO ${id(newName)}`);
+    } else {
+      this.#db.db.exec(`ALTER TABLE ${id(oldName)} RENAME TO ${id(newName)}`);
+    }
 
     // Rename in metadata table
     this.#columnMetadata.renameTable(oldName, newName);
@@ -828,7 +953,7 @@ class TransactionProcessor {
 
   processCreateIndex(create: IndexCreate) {
     const index = mapPostgresToLiteIndex(create.spec);
-    this.#db.db.exec(createLiteIndexStatement(index));
+    createLiteIndex(this.#lc, this.#db.db, index);
 
     // indexes affect tables visibility (e.g. sync-ability is gated on
     // having a unique index), so reset pipelines to refresh table schemas.
@@ -974,6 +1099,12 @@ class TransactionProcessor {
         this.#jsonFormat,
       );
       const rowKey = this.#getKey(row, {relation});
+      if (this.#lacksKey(tableName, rowKey)) {
+        // An earlier version may have left the row or its entry.
+        this.#deleteRowLackingKey(tableName, rowKey, tableSpec.backfilling);
+        skipped++;
+        continue;
+      }
       const rowOp = this.#changeLog.getLatestRowOp(tableName, rowKey);
       if (rowOp?.op === DEL_OP && rowOp.stateVersion > watermark) {
         skipped++;
