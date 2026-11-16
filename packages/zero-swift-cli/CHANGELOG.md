@@ -1,5 +1,11 @@
 # zero-swift
 
+## 0.8.1
+
+### Patch Changes
+
+- 6af328f: Publish the aligned README (#220) to the wevm/zero-swift mirror. 0.8.0 shipped with the previous README. No code changes.
+
 ## 0.8.0
 
 ### Minor Changes
