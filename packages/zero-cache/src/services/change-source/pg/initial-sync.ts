@@ -11,6 +11,7 @@ import {equals} from '../../../../../shared/src/set-utils.ts';
 import type {DownloadStatus} from '../../../../../zero-events/src/status.ts';
 import {Database} from '../../../../../zqlite/src/db.ts';
 import {
+  createLiteIndex,
   createLiteIndexStatement,
   createLiteTableStatement,
 } from '../../../db/create.ts';
@@ -20,14 +21,16 @@ import {
   BinaryCopyParser,
   hasBinaryDecoder,
   makeBinaryDecoder,
-  textCastDecoder,
+  makeTextCastDecoder,
 } from '../../../db/pg-copy-binary.ts';
 import {TsvParser} from '../../../db/pg-copy.ts';
 import {
+  isArrayColumn,
   mapPostgresToLite,
   mapPostgresToLiteIndex,
 } from '../../../db/pg-to-lite.ts';
 import {getTypeParsers} from '../../../db/pg-type-parser.ts';
+import * as PostgresTypeClass from '../../../db/postgres-type-class-enum.ts';
 import {runTx} from '../../../db/run-transaction.ts';
 import type {IndexSpec, PublishedTableSpec} from '../../../db/specs.ts';
 import {importSnapshot, TransactionPool} from '../../../db/transaction-pool.ts';
@@ -36,15 +39,18 @@ import {
   getOrCreateHistogram,
 } from '../../../observability/metrics.ts';
 import {
+  isUnusableKeyValue,
   JSON_STRINGIFIED,
   liteValue,
   type LiteValueType,
 } from '../../../types/lite.ts';
 import {liteTableName} from '../../../types/names.ts';
 import {hasPostgresPatch} from '../../../types/pg-patch.ts';
+import {FLOAT4, FLOAT4_ARRAY} from '../../../types/pg-types.ts';
 import {PG_15} from '../../../types/pg-versions.ts';
 import {
   connectPgClient,
+  UPSTREAM_SESSION_SETTINGS,
   type PostgresDB,
   type PostgresTransaction,
   type PostgresValueType,
@@ -163,7 +169,9 @@ export async function initialSync(
   ).publish(lc, 'Initializing');
   try {
     const copyProfiler = profileCopy ? await CpuProfiler.connect() : null;
-    sql = await connectPgClient(lc, upstreamURI, 'initial-sync');
+    sql = await connectPgClient(lc, upstreamURI, 'initial-sync', {
+      connection: UPSTREAM_SESSION_SETTINGS,
+    });
     await checkUpstreamConfig(sql);
 
     // In shadow mode we assume the shard is already initialized and just
@@ -230,6 +238,7 @@ export async function initialSync(
         {
           max: numWorkers,
           ['max_lifetime']: 120 * 60, // set a long (2h) limit for COPY streaming
+          connection: UPSTREAM_SESSION_SETTINGS,
         },
       );
       const copiers = await startTableCopyWorkers(
@@ -711,7 +720,7 @@ export async function createLiteIndices(
     );
     // Exclude the time spent waiting for the event from the index's timing.
     progress.restartTimer();
-    tx.exec(stmt);
+    createLiteIndex(lc, tx, liteIndex);
     const elapsed = progress.finish();
     totalMs += elapsed;
     lc.info?.(`Created index ${n} (${elapsed.toFixed(3)} ms): ${stmt}`);
@@ -852,6 +861,16 @@ function publicationRowFilter(table: PublishedTableSpec): string | null {
 // Exported for testing.
 export const INSERT_BATCH_SIZE = 50;
 
+// SQLITE_MAX_VARIABLE_NUMBER, which a batch of a wide table can exceed.
+const MAX_SQL_VARIABLES = 32766;
+
+function insertBatchSize(valuesPerRow: number): number {
+  return Math.min(
+    INSERT_BATCH_SIZE,
+    Math.floor(MAX_SQL_VARIABLES / valuesPerRow),
+  );
+}
+
 const MB = 1024 * 1024;
 const MAX_BUFFERED_ROWS = 10_000;
 const BUFFERED_SIZE_THRESHOLD = 8 * MB;
@@ -885,8 +904,8 @@ function limitClause(maxRowsPerTable: number | undefined): string {
 }
 
 /**
- * Returns the SELECT column expressions for binary COPY, casting columns
- * without a known binary decoder to `::text`.
+ * Returns the SELECT column expressions for binary COPY, converting columns
+ * without a known binary decoder to text.
  */
 export function makeBinarySelectExprs(
   table: PublishedTableSpec,
@@ -894,7 +913,21 @@ export function makeBinarySelectExprs(
 ): string[] {
   return cols.map(col => {
     const spec = table.columns[col];
-    return hasBinaryDecoder(spec) ? id(col) : `${id(col)}::text`;
+    if (hasBinaryDecoder(spec)) {
+      return id(col);
+    }
+    if (spec.typeOID === FLOAT4 || spec.typeOID === FLOAT4_ARRAY) {
+      return `${id(col)}::text`; // parsed by makeTextCastDecoder()
+    }
+    if (isArrayColumn(spec)) {
+      // Replication doesn't parse the elements of an array of a domain.
+      return spec.elemPgTypeClass === PostgresTypeClass.Domain
+        ? `to_json(${id(col)}::text[])::text`
+        : `to_json(${id(col)})::text`;
+    }
+    // The output format of the type, which is what replication sends. A cast
+    // to text can differ: it adds a full netmask to an inet, for instance.
+    return `CASE WHEN ${id(col)} IS NOT NULL THEN format('%s', ${id(col)}) END`;
   });
 }
 
@@ -962,10 +995,59 @@ export function makeDownloadStatements(
   };
 }
 
+// A published table, with the columns of its replica identity when known.
+type CopiedTableSpec = PublishedTableSpec & {
+  readonly replicaIdentityColumns?: readonly string[] | undefined;
+};
+
 type DownloadState = {
-  spec: PublishedTableSpec;
+  spec: CopiedTableSpec;
   status: DownloadStatus;
 };
+
+/**
+ * Flags the columns of the key that identifies the rows of the `table` in the
+ * replication stream.
+ */
+function keyColumnFlags(table: CopiedTableSpec, columns: string[]): boolean[] {
+  const key = new Set(table.replicaIdentityColumns ?? table.primaryKey ?? []);
+  return columns.map(col => key.has(col));
+}
+
+/**
+ * Deletes the rows whose key has a value that cannot identify them: a `NaN`,
+ * which has no value on the replica, or an infinite number, which has none in
+ * the JSON of a row key. Changes to such a row could not be matched to it, so
+ * replication skips them as well.
+ *
+ * Returns the number of rows deleted.
+ */
+function deleteRowsWithoutKey(
+  lc: LogContext,
+  db: Database,
+  tableName: string,
+  columns: string[],
+  isKey: boolean[],
+): number {
+  const conds = columns
+    .filter((_, i) => isKey[i])
+    // Only a number: in a text column the text 'Inf' is equal to 9e999.
+    .map(
+      col =>
+        `${id(col)} IS NULL OR ` +
+        `(typeof(${id(col)}) = 'real' AND ${id(col)} IN (9e999, -9e999))`,
+    );
+  const {changes} = db
+    .prepare(`DELETE FROM ${id(tableName)} WHERE ${conds.join(' OR ')}`)
+    .run();
+  if (changes > 0) {
+    lc.warn?.(
+      `Skipped ${changes} rows of ${tableName} that have a NaN or an ` +
+        `infinite value in their key`,
+    );
+  }
+  return changes;
+}
 
 type CopyFormat = 'binary' | 'text';
 type InitialSyncMode = 'initial' | 'shadow';
@@ -1317,7 +1399,7 @@ function copy(
 
 async function copyBinary(
   lc: LogContext,
-  table: PublishedTableSpec,
+  table: CopiedTableSpec,
   status: DownloadStatus,
   from: PostgresTransaction,
   to: Database,
@@ -1343,9 +1425,10 @@ async function copyBinary(
     columnNames.length > 0 ? `(${'?,'.repeat(columnNames.length - 1)}?)` : '()';
   const insertSql = /*sql*/ `
     INSERT INTO "${tableName}" (${insertColumnList}) VALUES ${valuesSql}`;
+  const batchSize = insertBatchSize(columnNames.length);
   const insertStmt = to.prepare(insertSql);
   const insertBatchStmt = to.prepare(
-    insertSql + `,${valuesSql}`.repeat(INSERT_BATCH_SIZE - 1),
+    insertSql + `,${valuesSql}`.repeat(batchSize - 1),
   );
 
   // Build SELECT with ::text casts for columns without a known binary decoder.
@@ -1358,17 +1441,21 @@ async function copyBinary(
   ).select;
 
   const decoders = orderedColumns.map(([, spec]) =>
-    hasBinaryDecoder(spec) ? makeBinaryDecoder(spec) : textCastDecoder,
+    hasBinaryDecoder(spec)
+      ? makeBinaryDecoder(spec)
+      : makeTextCastDecoder(spec),
   );
 
   const valuesPerRow = columnSpecs.length;
-  const valuesPerBatch = valuesPerRow * INSERT_BATCH_SIZE;
+  const valuesPerBatch = valuesPerRow * batchSize;
 
   const pendingValues: LiteValueType[] = Array.from({
     length: MAX_BUFFERED_ROWS * valuesPerRow,
   });
   let pendingRows = 0;
   let pendingSize = 0;
+  const isKey = keyColumnFlags(table, columnNames);
+  let hasRowWithoutKey = false;
 
   function flush() {
     const flushStart = performance.now();
@@ -1376,7 +1463,7 @@ async function copyBinary(
     const flushedSize = pendingSize;
 
     let l = 0;
-    for (; pendingRows > INSERT_BATCH_SIZE; pendingRows -= INSERT_BATCH_SIZE) {
+    for (; pendingRows > batchSize; pendingRows -= batchSize) {
       insertBatchStmt.run(pendingValues.slice(l, (l += valuesPerBatch)));
     }
     for (; pendingRows > 0; pendingRows--) {
@@ -1433,8 +1520,11 @@ async function copyBinary(
           for (const fieldBuf of binaryParser.parse(chunk)) {
             const fieldSize = fieldBuf === null ? 4 : fieldBuf.length;
             pendingSize += fieldSize;
-            pendingValues[pendingRows * valuesPerRow + col] =
-              fieldBuf === null ? null : decoders[col](fieldBuf);
+            const value = fieldBuf === null ? null : decoders[col](fieldBuf);
+            pendingValues[pendingRows * valuesPerRow + col] = value;
+            if (isKey[col] && isUnusableKeyValue(value)) {
+              hasRowWithoutKey = true;
+            }
 
             if (++col === decoders.length) {
               col = 0;
@@ -1474,6 +1564,10 @@ async function copyBinary(
     }),
   );
 
+  if (hasRowWithoutKey) {
+    status.rows -= deleteRowsWithoutKey(lc, to, tableName, columnNames, isKey);
+  }
+
   const sourceWaitMs = Math.max(
     0,
     performance.now() - copyStreamStart - processingMs,
@@ -1506,7 +1600,7 @@ async function copyBinary(
 
 async function copyText(
   lc: LogContext,
-  table: PublishedTableSpec,
+  table: CopiedTableSpec,
   status: DownloadStatus,
   dbClient: PostgresDB,
   from: PostgresTransaction,
@@ -1533,9 +1627,10 @@ async function copyText(
     columnNames.length > 0 ? `(${'?,'.repeat(columnNames.length - 1)}?)` : '()';
   const insertSql = /*sql*/ `
     INSERT INTO "${tableName}" (${insertColumnList}) VALUES ${valuesSql}`;
+  const batchSize = insertBatchSize(columnNames.length);
   const insertStmt = to.prepare(insertSql);
   const insertBatchStmt = to.prepare(
-    insertSql + `,${valuesSql}`.repeat(INSERT_BATCH_SIZE - 1),
+    insertSql + `,${valuesSql}`.repeat(batchSize - 1),
   );
 
   const {select} = makeDownloadStatements(
@@ -1545,13 +1640,15 @@ async function copyText(
     maxRowsPerTable,
   );
   const valuesPerRow = columnSpecs.length;
-  const valuesPerBatch = valuesPerRow * INSERT_BATCH_SIZE;
+  const valuesPerBatch = valuesPerRow * batchSize;
 
   const pendingValues: LiteValueType[] = Array.from({
     length: MAX_BUFFERED_ROWS * valuesPerRow,
   });
   let pendingRows = 0;
   let pendingSize = 0;
+  const isKey = keyColumnFlags(table, columnNames);
+  let hasRowWithoutKey = false;
 
   function flush() {
     const flushStart = performance.now();
@@ -1559,7 +1656,7 @@ async function copyText(
     const flushedSize = pendingSize;
 
     let l = 0;
-    for (; pendingRows > INSERT_BATCH_SIZE; pendingRows -= INSERT_BATCH_SIZE) {
+    for (; pendingRows > batchSize; pendingRows -= batchSize) {
       insertBatchStmt.run(pendingValues.slice(l, (l += valuesPerBatch)));
     }
     for (; pendingRows > 0; pendingRows--) {
@@ -1624,8 +1721,11 @@ async function copyText(
           for (const text of tsvParser.parse(chunk)) {
             const fieldSize = text === null ? 4 : text.length;
             pendingSize += fieldSize;
-            pendingValues[pendingRows * valuesPerRow + col] =
-              text === null ? null : parsers[col](text);
+            const value = text === null ? null : parsers[col](text);
+            pendingValues[pendingRows * valuesPerRow + col] = value;
+            if (isKey[col] && isUnusableKeyValue(value)) {
+              hasRowWithoutKey = true;
+            }
 
             if (++col === parsers.length) {
               col = 0;
@@ -1664,6 +1764,10 @@ async function copyText(
       },
     }),
   );
+
+  if (hasRowWithoutKey) {
+    status.rows -= deleteRowsWithoutKey(lc, to, tableName, columnNames, isKey);
+  }
 
   const sourceWaitMs = Math.max(
     0,

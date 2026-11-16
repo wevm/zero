@@ -41,25 +41,43 @@ WITH published_columns AS (SELECT
   pc.relnamespace::int8 AS "schemaOID" ,
   pc.relname AS "name", 
   pc.relreplident AS "replicaIdentity",
+  -- The partitions that hold the rows of a partitioned table.
+  CASE WHEN pc.relkind = 'p' THEN ARRAY(
+    SELECT relid::oid::int8 FROM pg_partition_tree(pc.oid)
+      WHERE isleaf ORDER BY 1
+  ) END AS "partitions",
   attnum AS "pos", 
   attname AS "col", 
-  pt.typname AS "type", 
+  -- A type name is a label on the replica, in which '|' delimits the attributes
+  -- of the type and '[]' marks an array.
+  replace(replace(COALESCE(elem_pt.typname, pt.typname), '|', '_'), '[]', '__') AS "type",
   atttypid::int8 AS "typeOID", 
   pt.typtype,
   elem_pt.typtype AS "elemTyptype",
   coll.collisdeterministic AS "collationIsDeterministic",
   NULLIF(atttypmod, -1) AS "maxLen", 
-  attndims "arrayDims", 
+  -- attndims is only declarative: it is 0 for an array column made by
+  -- CREATE TABLE AS or declared as e.g. _int4.
+  CASE WHEN elem_pt.oid IS NULL THEN 0 ELSE GREATEST(attndims, 1) END AS "arrayDims",
   attnotnull AS "notNull",
   pg_get_expr(pd.adbin, pd.adrelid) as "dflt",
-  NULLIF(ARRAY_POSITION(conkey, attnum), -1) AS "keyPos", 
+  -- A primary key with a column that is not published, such as a generated
+  -- column, does not identify rows in the replication stream.
+  CASE WHEN EXISTS (
+    SELECT 1 FROM pg_attribute ka
+      WHERE ka.attrelid = pk.conrelid AND ka.attnum = ANY(pk.conkey) AND (
+        NOT ka.attname = ANY(pb.attnames) OR
+        (current_setting('server_version_num')::int < 160000 AND ka.attgenerated != ''))
+  ) THEN NULL ELSE NULLIF(ARRAY_POSITION(conkey, attnum), -1) END AS "keyPos", 
   pb.rowfilter as "rowFilter",
   pb.pubname as "publication"
 FROM pg_attribute
 JOIN pg_class pc ON pc.oid = attrelid
 JOIN pg_namespace pns ON pns.oid = relnamespace
 JOIN pg_type pt ON atttypid = pt.oid
-LEFT JOIN pg_type elem_pt ON elem_pt.oid = pt.typelem
+-- Not pt.typelem, which is also set for types that aren't arrays, such as
+-- point, name and int2vector.
+LEFT JOIN pg_type elem_pt ON elem_pt.typarray = pt.oid
 LEFT JOIN pg_collation coll ON coll.oid = pg_attribute.attcollation
 JOIN pg_publication_tables as pb ON 
   pb.schemaname = nspname AND 
@@ -77,14 +95,13 @@ tables AS (SELECT json_build_object(
   'schemaOID', "schemaOID",
   'name', "name", 
   'replicaIdentity', "replicaIdentity",
+  'partitions', "partitions",
   'columns', json_object_agg(
     DISTINCT
     col,
     jsonb_build_object(
       'pos', "pos",
-      'dataType', CASE WHEN "arrayDims" = 0 
-                       THEN "type" 
-                       ELSE substring("type" from 2) || repeat('[]', "arrayDims") END,
+      'dataType', "type" || repeat('[]', "arrayDims"),
       'pgTypeClass', "typtype",
       'elemPgTypeClass', "elemTyptype",
       'typeOID', "typeOID",
@@ -110,7 +127,7 @@ tables AS (SELECT json_build_object(
     jsonb_build_object('rowFilter', "rowFilter")
   )
 ) AS "table" FROM published_columns 
-  GROUP BY "schema", "schemaOID", "name", "oid", "replicaIdentity"),
+  GROUP BY "schema", "schemaOID", "name", "oid", "replicaIdentity", "partitions"),
   ` +
     // Note: pg_attribute contains column names for tables and for indexes.
     // However, the latter does not get updated when a column in a table is
@@ -142,7 +159,19 @@ tables AS (SELECT json_build_object(
       -- format compatible with older versions of the zero-cache, which
       -- ignore "predicateSQL" and would otherwise create a full UNIQUE index
       -- on the replica.
-      (pg_index.indisunique AND pg_index.indpred IS NULL) as "unique",
+      --
+      -- A deferrable unique constraint is reported as non-unique for a similar
+      -- reason: a transaction can pass through states that violate it, which
+      -- the replica would reject as they are replicated. The exception is a
+      -- primary key, which clients rely on.
+      --
+      -- So is a unique index over a type that the replica stores with less
+      -- precision, in which distinct values can be the same value on the
+      -- replica: numeric, a double there, and time, in milliseconds. The
+      -- exceptions are a primary key and a replica identity, which are keys.
+      (pg_index.indisunique AND pg_index.indpred IS NULL AND
+        (pg_index.indimmediate OR pg_index.indisprimary) AND
+        (pg_index.indisprimary OR pg_index.indisreplident OR NOT indexed.lossy)) as "unique",
       pg_index.indisprimary as "isPrimaryKey",
       pg_index.indisreplident as "isReplicaIdentity",
       pg_index.indimmediate as "isImmediate",
@@ -157,7 +186,18 @@ tables AS (SELECT json_build_object(
       pb.tablename = pg_indexes.tablename
     JOIN pg_index ON pg_index.indexrelid = pc.oid
     JOIN LATERAL (
-      SELECT array_agg(attname) as attnames, array_agg(attgenerated != '') as generated FROM pg_attribute
+      SELECT array_agg(attname) as attnames, array_agg(attgenerated != '') as generated,
+          -- numeric, time and timetz, and the arrays of and domains over them
+          bool_or(EXISTS (
+            WITH RECURSIVE types(oid) AS (
+              SELECT atttypid
+              UNION ALL
+              SELECT CASE WHEN t.typtype = 'd' THEN t.typbasetype ELSE t.typelem END
+                FROM types JOIN pg_type t ON t.oid = types.oid
+                WHERE t.typtype = 'd' OR (t.typcategory = 'A' AND t.typelem != 0)
+            ) SELECT 1 FROM types WHERE types.oid IN (1700, 1083, 1266)
+          )) as lossy
+        FROM pg_attribute
         WHERE attrelid = pg_index.indrelid
           AND attnum = ANY( (pg_index.indkey::smallint[] )[:pg_index.indnkeyatts - 1] )
     ) as indexed ON true
@@ -208,6 +248,9 @@ const rawPublishedColumnSpec = publishedColumnSpec.extend({
 
 const rawPublishedTableSpec = publishedTableSpec.extend({
   columns: v.record(rawPublishedColumnSpec),
+  // The OIDs of the partitions that hold the rows of a partitioned table.
+  // Absent in schemas stored before this was reported.
+  partitions: v.array(v.number()).nullable().optional(),
 });
 
 const rawPublishedIndexSpec = publishedIndexSpec.extend({
@@ -282,8 +325,9 @@ export const publishedSchema = v
       }
     }
 
-    const tables = rawTables.map(table => ({
+    const tables = rawTables.map(({partitions, ...table}) => ({
       ...table,
+      ...(partitions ? {partitions} : {}),
       columns: Object.fromEntries(
         Object.entries(table.columns).map(
           ([name, {collationIsDeterministic: _, ...column}]) => [name, column],
