@@ -475,6 +475,120 @@ final class LayoutScrollView {
     #expect(view.bottomGap == 50)
   }
 
+  // A scroll bar sized by the rows paged in so far can't be dragged to the
+  // list's end, and a thumb dragged far into the space walked to it from
+  // the rows a few pages a query.
+  @Test("with totalRows, the scroll bar spans every row, and a jump loads from the nearer end")
+  func totalRows() {
+    let h = Harness(rowCount: 2000) {
+      $0.anchoring = .manual
+      $0.totalRows = 2000
+    }
+    let view = LayoutScrollView(h)
+    view.settle()
+    #expect(view.host.contentHeight == 2000 * 20)
+    // The bottom, then most of the way back up: the end, then the start,
+    // is nearer than the rows.
+    for (y, first) in [(2000 * 20 - 400, "r1980"), (300 * 20, "r300"), (1500 * 20, "r1500")] {
+      view.userScroll(Double(y))
+      view.frameDrawn()
+      view.pass()
+      #expect(view.blank == 0, "\(first)")
+      #expect(h.core.firstVisibleItem()?.key == first)
+      view.settle(holding: first)
+      #expect(view.scrollOffset == Double(y))
+    }
+  }
+
+  enum OpenAway: String, CaseIterable, CustomTestStringConvertible {
+    /// `countLater`: at a permalink, with `totalRows` from a count that
+    /// comes once the list has opened, as an app's count query does.
+    /// `nearTheEnd`: at a permalink with fewer rows below it than the
+    /// reserve has over the rows above it.
+    case permalink, nearTheStart, restore, countLater, nearTheEnd
+    var testDescription: String { rawValue }
+  }
+
+  // Opened away from its start, a list knows where its rows are in the list
+  // only once it counts the rows above them: until then the space above
+  // them is a reserve of a few pages.
+  @Test(
+    "with totalRows, a list opened away from its start counts the rows above it",
+    arguments: OpenAway.allCases)
+  func countsRowsAbove(_ open: OpenAway) {
+    var state: VirtualScrollState<TestRow, String>?
+    if open == .restore {
+      // Saved before the list counted, as with totalRows off.
+      let saved = Harness(rowCount: 2000) {
+        $0.anchoring = .manual
+        $0.permalinkID = "r1200"
+      }
+      saved.setOptions { $0.onScrollStateChange = { state = $0 } }
+      LayoutScrollView(saved).settle()
+      #expect(state?.anchor.index != 1200)
+    }
+    let id = ["nearTheStart": "r100", "nearTheEnd": "r90"][open.rawValue] ?? "r1200"
+    let rows = open == .nearTheEnd ? 120 : 2000
+    let h = Harness(rowCount: rows) {
+      $0.anchoring = .manual
+      if open != .countLater { $0.totalRows = rows }
+      if let state {
+        $0.scrollState = state
+      } else {
+        $0.permalinkID = id
+      }
+    }
+    h.countPending = true
+    let view = LayoutScrollView(h)
+    view.settle()
+    if open == .countLater {
+      h.setOptions { $0.totalRows = rows }
+      view.settle(holding: id)
+    }
+    #expect(view.rowTop(id) == 0)
+    #expect(view.scrollOffset != Double(id.dropFirst())! * 20)
+    h.countPending = false
+    view.settle(holding: id)
+    // At rest, the space above the rows goes to their estimate: near the
+    // end, as much at a time as stands below the viewport.
+    for _ in 0..<4 {
+      h.scheduler.advance(by: 200)
+      view.settle(holding: id)
+    }
+    #expect(view.rowTop(id) == 0)
+    #expect(view.scrollOffset == Double(id.dropFirst())! * 20)
+    #expect(view.host.contentHeight == Double(rows * 20))
+  }
+
+  // An app's count can come while the list still lands on the row it
+  // opened at, before the server confirms the rows around it: the space
+  // over the estimate goes once it has landed.
+  @Test("with totalRows, a count that comes while the list lands still places the rows")
+  func countWhileLanding() {
+    let h = Harness(rowCount: 120) {
+      $0.anchoring = .manual
+      $0.totalRows = 120
+      $0.permalinkID = "r90"
+    }
+    h.pagesPending = true
+    let view = LayoutScrollView(h)
+    // Not settled: the rows stay unconfirmed, and the list landing.
+    func frames() {
+      for _ in 0..<10 {
+        view.pass()
+        _ = view.frameDrawn()
+      }
+    }
+    frames()
+    h.scheduler.advance(by: 200)
+    frames()
+    h.pagesPending = false
+    view.settle(holding: "r90")
+    #expect(view.rowTop("r90") == 0)
+    #expect(view.scrollOffset == 90 * 20)
+    #expect(view.host.contentHeight == 120 * 20)
+  }
+
   // As when the keyboard comes up under a chat. The re-pin to the bottom
   // used to be taken back by the offset the view passed in, from before the
   // resize, as if the user had scrolled, and the list stopped following.

@@ -98,6 +98,12 @@ public struct VirtualRowRequest: Equatable, Sendable {
   public var settled: Bool
 }
 
+/// What the index query is asked for: how many rows come before the row
+/// `start` was made from (`toStartRow`), in the list's order.
+public struct VirtualIndexRequest<StartRow: Equatable & Sendable>: Equatable, Sendable {
+  public var start: StartRow
+}
+
 /// The inputs that decide which queries run (`RowsQueryInputs`).
 package struct RowsQueryInputs<StartRow: Equatable & Sendable>: Equatable, Sendable {
   package var pageSize: Int
@@ -107,6 +113,9 @@ package struct RowsQueryInputs<StartRow: Equatable & Sendable>: Equatable, Senda
   /// row exists before re-anchoring on it. Nil under a permalink anchor,
   /// which runs its own lookup.
   package var probeID: String?
+  /// A row to count the rows before, as a list that opened away from its
+  /// start numbers its rows with `totalRows`.
+  package var indexOf: StartRow? = nil
 }
 
 /// The raw results of the (up to) three queries (`RowsQueryResults`).
@@ -119,10 +128,13 @@ package struct RowsQueryResults<Row> {
   /// The page after a permalink's row.
   package var afterRows: [Row]?
   package var afterComplete = false
+  /// How many rows come before `indexOf`'s row, once the server has said.
+  package var rowsBefore: Int?
 
   package init(
     singleRow: Row? = nil, singleComplete: Bool = false, mainRows: [Row]? = nil,
-    mainComplete: Bool = false, afterRows: [Row]? = nil, afterComplete: Bool = false
+    mainComplete: Bool = false, afterRows: [Row]? = nil, afterComplete: Bool = false,
+    rowsBefore: Int? = nil
   ) {
     self.singleRow = singleRow
     self.singleComplete = singleComplete
@@ -130,6 +142,7 @@ package struct RowsQueryResults<Row> {
     self.mainComplete = mainComplete
     self.afterRows = afterRows
     self.afterComplete = afterComplete
+    self.rowsBefore = rowsBefore
   }
 }
 
@@ -157,6 +170,8 @@ package struct RowsSnapshot<Row, StartRow: Equatable & Sendable> {
   /// The single-row lookup: its id, the row it found, and whether it
   /// completed. Check the id first: it may answer a previous lookup.
   package var lookup: (id: String, row: Row?, complete: Bool)?
+  /// How many rows come before a row, by its start row (`indexOf`).
+  package var rowsBefore: (start: StartRow, count: Int)? = nil
 
   package static var empty: Self {
     RowsSnapshot(
@@ -223,6 +238,7 @@ package func assembleRows<Row, StartRow>(
     lookupID = inputs.probeID
   }
   let lookup = lookupID.map { (id: $0, row: r.singleRow, complete: r.singleComplete) }
+  let rowsBefore = inputs.indexOf.flatMap { start in r.rowsBefore.map { (start, $0) } }
 
   let beforeLength = r.mainRows?.count ?? 0
   let afterLength = r.afterRows?.count ?? 0
@@ -253,7 +269,7 @@ package func assembleRows<Row, StartRow>(
       atStart: permalinkNotFound || (r.mainComplete && beforeLength <= half),
       atEnd: permalinkNotFound || (r.afterComplete && afterLength <= half - 1),
       firstRowIndex: permalinkNotFound ? anchorIndex : anchorIndex - beforeSize,
-      permalinkNotFound: permalinkNotFound, lookup: lookup)
+      permalinkNotFound: permalinkNotFound, lookup: lookup, rowsBefore: rowsBefore)
 
   case .forward, .backward:
     let forward: Bool
@@ -278,6 +294,6 @@ package func assembleRows<Row, StartRow>(
       atStart: forward ? fromEdge || anchorIndex == 0 : r.mainComplete && !hasMore,
       atEnd: forward ? r.mainComplete && !hasMore : fromEdge,
       firstRowIndex: forward ? anchorIndex : anchorIndex - length,
-      permalinkNotFound: permalinkNotFound, lookup: lookup)
+      permalinkNotFound: permalinkNotFound, lookup: lookup, rowsBefore: rowsBefore)
   }
 }

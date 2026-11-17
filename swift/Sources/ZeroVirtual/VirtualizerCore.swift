@@ -177,6 +177,10 @@ package struct VirtualizerOptions<
   package var stickToBottom = false
   /// How near the bottom counts as at it.
   package var stickSlack = 4.0
+  /// How many rows the list has, as the app counts them: the space after
+  /// the rows stands in for all the rows past them, not only those paged
+  /// in so far. Nil: as far as paging has seen.
+  package var totalRows: Int?
 
   package init(
     estimatedRowHeight: Double, rowKey: @escaping (Row) -> Key,
@@ -298,9 +302,17 @@ package final class VirtualizerCore<
   // The list opened away from its start (a permalink, a restore) and hasn't
   // been there since: its indexes count from where it opened.
   private var openedAway: Bool
+  // With `totalRows`, a list that opened away counts the rows before one of
+  // its rows (`indexOf`), and numbers its rows from the list's start: the
+  // space before them, at their estimate, is where they are in the list.
+  private var counted = false
+  private var indexOf: StartRow?
   private var idleTimer: (any ScheduledTimer)?
   // The space is being given back: compensation scrolls.
   private var reconciling = false
+  // With `totalRows`, at rest: the space before the rows over their
+  // estimate goes in the next pass (`dropSpaceBefore`).
+  private var dropOverEstimate = false
   private var settleTimer: (any ScheduledTimer)?
   private var target: Target?
   // The target's position has been applied once: the viewport is where it
@@ -381,7 +393,9 @@ package final class VirtualizerCore<
   package func setOptions(_ new: Options) {
     let old = options
     options = new
-    if old.estimatedRowHeight != new.estimatedRowHeight { version += 1 }
+    if old.estimatedRowHeight != new.estimatedRowHeight || old.totalRows != new.totalRows {
+      version += 1
+    }
   }
 
   /// Takes new rows without notifying.
@@ -559,7 +573,8 @@ package final class VirtualizerCore<
     var probe: String?
     if case .probe(let p) = target { probe = p.id }
     return RowsQueryInputs(
-      pageSize: pageSize + reach, anchor: effectiveAnchor, settled: settled, probeID: probe)
+      pageSize: pageSize + reach, anchor: effectiveAnchor, settled: settled, probeID: probe,
+      indexOf: isListContextCurrent ? indexOf : nil)
   }
 
   /// Calls `listener` whenever the snapshot or the query inputs change.
@@ -667,6 +682,7 @@ package final class VirtualizerCore<
     anchorKey = nil
     anchorSuppressed = true
     spaceAdjust = 0
+    uncount()
     setPaging(Self.permalinkPaging(id, options.listContext))
   }
 
@@ -715,7 +731,7 @@ package final class VirtualizerCore<
     // Space that takes up rows moving moves them back on the next layout:
     // the rows aren't where paging would read them until then.
     var respaced = measureAndCompensate()
-    if dropSpaceAtStart() { respaced = true }
+    if dropSpaceBefore() { respaced = true }
     reanchorPastDeletedTarget()
     restoreOrReset()
     updatePageSize()
@@ -726,6 +742,7 @@ package final class VirtualizerCore<
 
     liftAnchorSuppression()
     updatePaging()
+    numberFromCount()
     resolveProbe()
     repinToBottom()
     if !respaced { evaluatePaging() }
@@ -791,7 +808,7 @@ package final class VirtualizerCore<
   private var estimatedSpaceBefore: Double {
     if noneBefore { return 0 }
     let estimate = Double(max(0, rows.firstRowIndex)) * rowEstimate
-    guard manual, openedAway, !rows.rowsEmpty else { return estimate }
+    guard manual, openedAway, !counted, !rows.rowsEmpty else { return estimate }
     return max(estimate, Double(3 * pageSize) * rowEstimate)
   }
 
@@ -807,6 +824,7 @@ package final class VirtualizerCore<
   private var effectiveEstimatedTotal: Int {
     let end = rows.firstRowIndex + rows.rowsLength
     if rows.atEnd && rows.atStart && rows.complete { return rows.rowsLength }
+    if let total = options.totalRows { return max(total, end) }
     return max(paging.estimatedTotal, end)
   }
 
@@ -1027,11 +1045,16 @@ package final class VirtualizerCore<
   /// gap above the first row, even mid-fling. What the offset can't take,
   /// near the top, is a gap on screen, as after the scroll thumb is dragged
   /// up into the space: it goes too, and the rows below it come up to the
-  /// top.
-  private func dropSpaceAtStart() -> Bool {
-    guard manual, noneBefore, spaceAdjust >= 0.5, isListContextCurrent, !landing, let host,
-      host.scrollsWithLayout
+  /// top. With `totalRows`, space over the estimate anywhere goes the same
+  /// way once the list rests (`dropOverEstimate`): the scroll bar shows
+  /// where the rows are in the list.
+  private func dropSpaceBefore() -> Bool {
+    if spaceAdjust < 0.5 { dropOverEstimate = false }
+    // Not while a jump lands: once it has.
+    guard manual, noneBefore || dropOverEstimate, spaceAdjust >= 0.5, isListContextCurrent,
+      !landing, let host, host.scrollsWithLayout
     else { return false }
+    dropOverEstimate = false
     let removed = spaceAdjust
     let scrolled = min(removed, max(0, host.scrollOffset))
     spaceAdjust = 0
@@ -1049,9 +1072,25 @@ package final class VirtualizerCore<
       // Space short of its estimate is given back, for the next change to
       // come out of. Space over it stays, as taking it back shrinks the
       // content under the offset, which the view clamps before the list can
-      // scroll; but at the start, where nothing stands before the first row.
-      guard let self, self.spaceAdjust < 0 || (self.noneBefore && self.spaceAdjust > 0)
-      else { return }
+      // scroll; but at the start, where nothing stands before the first row,
+      // and with `totalRows`, so the scroll bar shows where the rows are in
+      // the list: given back the same way while as much content stands
+      // below the viewport, and otherwise, near the end, taken out by the
+      // next pass with a scroll by as much (`dropSpaceBefore`).
+      guard let self else { return }
+      let over = self.spaceAdjust > 0 && !self.noneBefore && self.options.totalRows != nil
+      if over, let host = self.host,
+        host.contentHeight - host.scrollOffset - host.viewportHeight < self.spaceAdjust
+      {
+        self.withNotify {
+          self.dropOverEstimate = true
+          self.version += 1
+        }
+        return
+      }
+      guard self.spaceAdjust < 0 || (self.spaceAdjust > 0 && (self.noneBefore || over)) else {
+        return
+      }
       self.withNotify {
         self.spaceAdjust = 0
         self.reconciling = true
@@ -1191,6 +1230,53 @@ package final class VirtualizerCore<
     }
   }
 
+  // A list that opened away from its start, with `totalRows`, asks how many
+  // rows come before its first row, and numbers its rows from the list's
+  // start once it knows: the space before them then stands for the rows
+  // above at their estimate, as in a list that opened at its start, and the
+  // scroll bar shows where they are in the list. The space goes there once
+  // the list rests, with a scroll by as much: nothing on screen moves.
+  private func numberFromCount() {
+    guard options.totalRows != nil, openedAway, !counted, rowsAnswerQuery, !rows.rowsEmpty
+    else { return }
+    let first = rows.firstRowIndex
+    let loaded = (first..<first + rows.rowsLength).lazy.compactMap { i in
+      self.rows.rowAt(i).map { (index: i, start: self.options.toStartRow($0)) }
+    }
+    guard let asked = indexOf, let row = loaded.first(where: { $0.start == asked }) else {
+      // The first row, or another once the one asked about has gone.
+      indexOf = loaded.first?.start
+      version += 1
+      return
+    }
+    guard let count = rows.rowsBefore, count.start == asked else { return }
+    // As rendered, until the rows come back renumbered, and carried as they
+    // do.
+    let space = snapshot.spaceBefore
+    let shift = count.count - row.index
+    if shift != 0 {
+      var next = paging
+      next.anchor = paging.anchor.with(index: paging.anchor.index + shift)
+      next.estimatedTotal = max(0, paging.estimatedTotal + shift)
+      setPaging(next)
+    }
+    counted = true
+    indexOf = nil
+    spaceAdjust = space - estimatedSpaceBefore
+    version += 1
+    if manual { resetIdleTimer() }
+  }
+
+  // The rows count from where the list opened again, as a jump or a
+  // restore numbers them.
+  private func uncount() {
+    counted = false
+    if indexOf != nil {
+      indexOf = nil
+      version += 1
+    }
+  }
+
   private func restoreOrReset() {
     let restore = pendingRestore.flatMap { $0.listContext == options.listContext ? $0 : nil }
     let permalinkID = options.permalinkID
@@ -1239,6 +1325,7 @@ package final class VirtualizerCore<
           hasReachedEnd: restore.hasReachedEnd, anchor: restore.anchor,
           listContext: options.listContext))
       openedAway = !restore.hasReachedStart
+      uncount()
     } else if let permalinkID {
       // A visible permalink row stays put; any other is scrolled to.
       let targetFrame = host.flatMap { frame($0, key: AnyHashable(permalinkID)) }
@@ -1446,21 +1533,32 @@ package final class VirtualizerCore<
     }
 
     guard let visible else {
-      // A jump into the unloaded space pages toward it.
+      // A jump into the unloaded space pages toward it: from the rows, or,
+      // with `totalRows` and the rows counted from the list's start, from
+      // the end of the list nearer the viewport, where the space puts it.
       let frames = host.rowFrames()
       guard let first = frames.first, let last = frames.last else { return }
       let bottom = host.scrollOffset + host.viewportHeight
+      let ends = options.totalRows != nil && (!openedAway || counted)
       if first.minY >= bottom {
+        let away = first.minY - host.scrollOffset
         if host.scrollOffset <= 0 || rows.atStart {
           setAnchor(.top)
+        } else if ends, bottom < away {
+          setAnchor(.top, reach: reachFor(bottom))
         } else if !noneBefore {
-          updateAnchorForEdge(
-            rows.firstRowIndex, .backward, 0, reach: reachFor(first.minY - host.scrollOffset))
+          updateAnchorForEdge(rows.firstRowIndex, .backward, 0, reach: reachFor(away))
         }
       } else if !noneAfter {
-        updateAnchorForEdge(
-          rows.firstRowIndex + rows.rowsLength - 1, .forward, 1, reach: reachFor(bottom - last.maxY)
-        )
+        let away = bottom - last.maxY
+        let fromEnd = host.contentHeight - host.scrollOffset
+        if ends, fromEnd < away {
+          setAnchor(
+            .backward(index: effectiveEstimatedTotal, startRow: nil), reach: reachFor(fromEnd))
+        } else {
+          updateAnchorForEdge(
+            rows.firstRowIndex + rows.rowsLength - 1, .forward, 1, reach: reachFor(away))
+        }
       }
       return
     }

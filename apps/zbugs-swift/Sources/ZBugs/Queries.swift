@@ -185,6 +185,15 @@ public struct IssueListCountArgs: Codable, Sendable, Hashable {
   }
 }
 
+public struct IssueListCountBeforeArgs: Codable, Sendable, Hashable {
+  public var listContext: ListContextParams
+  public var start: IssueRowSort
+  public init(listContext: ListContextParams, start: IssueRowSort) {
+    self.listContext = listContext
+    self.start = start
+  }
+}
+
 public struct ListIssueByIDArgs: Codable, Sendable, Hashable {
   public var listContext: ListContextParams
   public var idField: IDField
@@ -394,6 +403,21 @@ public enum Queries {
     filterListQuery(zql.issue, args.listContext, auth?.role).count()
   }
 
+  /// The number of issues before `start` in the list: `issueListCount` of
+  /// the rows a backward page from `start` reads, `start` excluded. A list
+  /// that opens away from its top counts these to place its scroll bar.
+  public static let issueListCountBefore = defineQuery("issueListCountBefore") {
+    (args: IssueListCountBeforeArgs, auth: AuthData?) in
+    let listContext = args.listContext
+    let dir: AST.Direction = listContext.sortDirection == .asc ? .desc : .asc
+    let sortField: KeyPath<Issue, Double> =
+      listContext.sortField == .modified ? \.modified : \.created
+    let start = args.start
+    let q = zql.issue.orderBy(sortField, dir).orderBy(\.id, dir)
+      .start([\.id: start.id, \.created: start.created, \.modified: start.modified])
+    return filterListQuery(q, listContext, auth?.role).count()
+  }
+
   public static let listIssueByID = defineQuery("listIssueByID") {
     (args: ListIssueByIDArgs, auth: AuthData?) in
     buildListQuery(ListQueryArgs(listContext: args.listContext, role: auth?.role))
@@ -450,7 +474,7 @@ public enum Queries {
   public static let all: [any NamedQuery<AuthData?>] = [
     allLabels, allUsers, allProjects, user, crewUser, labels, labelsOrderByName, issuePreloadV2,
     userPref, usersForProject, commentsPage, comment, issueDetail, issueListV2, issueListCount,
-    listIssueByID,
+    issueListCountBefore, listIssueByID,
     emojiChange, prevNext, issueList, userPicker,
   ]
 }

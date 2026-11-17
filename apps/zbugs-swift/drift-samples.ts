@@ -199,6 +199,17 @@ const querySamples: QuerySample[] = [
   {name: 'issueListCount', args: {listContext: fullListContext}, context: crew},
   {name: 'issueListCount', args: {listContext}},
   {
+    name: 'issueListCountBefore',
+    args: {listContext, start: rowSort},
+    context: alice,
+  },
+  {
+    name: 'issueListCountBefore',
+    args: {listContext: fullListContext, start: rowSort},
+    context: crew,
+  },
+  {name: 'issueListCountBefore', args: {listContext, start: rowSort}},
+  {
     name: 'listIssueByID',
     args: {listContext, idField: 'shortID', idValue: 12},
     context: alice,

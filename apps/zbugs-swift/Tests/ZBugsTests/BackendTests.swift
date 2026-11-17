@@ -97,6 +97,37 @@ struct BackendTests {
     #expect(byNumber.data?.comments?.count == 1)
   }
 
+  /// The server counts the list, and the issues before a row of it, as the
+  /// list's scroll bar sizes itself (`totalRows`, `indexQuery`).
+  @Test func countsTheListAndTheIssuesBeforeARow() async throws {
+    let zero = try makeZero()
+    defer { zero.close() }
+    // Oldest first: an issue another test creates meanwhile comes last.
+    let oldestFirst = ListContextParams(
+      open: true, assignee: nil, creator: nil, labels: [], textFilter: nil, sortField: .created,
+      sortDirection: .asc)
+    let page = try zero.liveQuery(
+      Queries.issueListV2(
+        IssueListV2Args(listContext: oldestFirst, limit: 30, start: nil, dir: .forward)))
+    try await eventually("the issue list") { page.resultType == .complete }
+    let total = try zero.liveQuery(
+      Queries.issueListCount(IssueListCountArgs(listContext: oldestFirst)))
+    try await eventually("the list's count") { total.resultType == .complete }
+    #expect(total.data >= page.data.count)
+
+    // Rows before the 23rd, and none before the first: `start` excluded.
+    for i in [22, 0] {
+      let row = try #require(page.data.dropFirst(i).first)
+      let before = try zero.liveQuery(
+        Queries.issueListCountBefore(
+          IssueListCountBeforeArgs(
+            listContext: oldestFirst,
+            start: IssueRowSort(id: row.id, created: row.created, modified: row.modified))))
+      try await eventually("the count before row \(i)") { before.resultType == .complete }
+      #expect(before.data == i)
+    }
+  }
+
   @Test func reportsWhatTheServerRejects() async throws {
     let zero = try makeZero()
     defer { zero.close() }

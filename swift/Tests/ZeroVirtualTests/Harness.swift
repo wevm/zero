@@ -117,6 +117,8 @@ final class Harness {
   /// The page queries are incomplete, as before the server confirms them,
   /// while the single-row lookup, answered already, is complete.
   var pagesPending = false
+  /// The index count hasn't come from the server.
+  var countPending = false
   /// A probe's single-row lookup is incomplete, as before the server
   /// confirms it.
   var probePending = false
@@ -177,6 +179,8 @@ final class Harness {
   }
 
   func answer(_ inputs: RowsQueryInputs<TestRow>) -> RowsSnapshot<TestRow, TestRow> {
+    let rowsBefore =
+      countPending ? nil : inputs.indexOf.flatMap { start in data.firstIndex { $0.id == start.id } }
     if case .permalink(_, let id) = inputs.anchor {
       let single = data.first { $0.id == id }
       let beforePending = permalinkBeforePending
@@ -190,7 +194,7 @@ final class Harness {
           },
           mainComplete: !beforePending && !offline && !pagesPending,
           afterRows: single.map { page($0, .forward, inputs.pageSize / 2) },
-          afterComplete: !offline && !pagesPending))
+          afterComplete: !offline && !pagesPending, rowsBefore: rowsBefore))
     }
     let probe = inputs.probeID.flatMap { id in data.first { $0.id == id } }
     let key = Self.pageKey(inputs.anchor)
@@ -217,7 +221,7 @@ final class Harness {
       inputs,
       RowsQueryResults(
         singleRow: probe, singleComplete: inputs.probeID != nil && !probePending, mainRows: main,
-        mainComplete: complete))
+        mainComplete: complete, rowsBefore: rowsBefore))
   }
 
   func tick(scroll: Bool = true) {

@@ -77,6 +77,8 @@ struct Fuzzer {
   let view: LayoutScrollView
   /// The scrolls' pages are answered before the server confirms them.
   var pendingScrolls: Bool { seed % 7 == 3 }
+  /// The list has `totalRows`, as a count query keeps it.
+  var counts: Bool { seed % 6 == 5 }
 
   /// Ids are numbers, a thousand apart to begin with, so rows can be
   /// inserted between any two.
@@ -93,6 +95,7 @@ struct Fuzzer {
       $0.minPageSize = 40
       $0.stickToBottom = stick
       if seed % 5 == 1 { $0.permalinkID = Fuzzer.id(rows / 2 * 1000) }
+      if seed % 6 == 5 { $0.totalRows = rows }
     }
     h.data = (0..<rows).map { TestRow(id: Self.id($0 * 1000)) }
     h.startsByValue = true
@@ -115,6 +118,7 @@ struct Fuzzer {
     for step in 0..<60 {
       let (described, holds) = takeStep()
       guard let described else { continue }
+      if counts { h.setOptions { $0.totalRows = h.data.count } }
       steps.append(described)
       if let traceFrom, step >= traceFrom { trace(step, described) }
       let problems = check(holds: holds, settled: rest())

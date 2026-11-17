@@ -33,6 +33,9 @@
     @SceneStorage("issueList") private var savedScroll: Data?
     @State private var saving = Debouncer()
     @State private var listLayer = ListLayer.swiftUI
+    /// The list's scroll bar spans every issue in it, not only those paged
+    /// in so far.
+    @AppStorage("fullHeightScrollBar") private var fullHeightScrollBar = false
     @State private var sheet: Sheet?
     /// All three columns, on an iPad or a Mac: the filters are how you get
     /// around.
@@ -58,7 +61,7 @@
 
     public var body: some View {
       NavigationSplitView(columnVisibility: $columns, preferredCompactColumn: $compactColumn) {
-        Sidebar(filter: $filter, listLayer: $listLayer)
+        Sidebar(filter: $filter, listLayer: $listLayer, fullHeight: $fullHeightScrollBar)
           .navigationTitle("Zero Bugs")
           #if os(macOS)
             // Wide enough for the pickers' values.
@@ -76,6 +79,12 @@
           #endif
       } content: {
         list
+          .background {
+            if let issues, fullHeightScrollBar, filter.text.isEmpty {
+              // Each list's own count.
+              IssueTotalRows(filter: filter, list: issues).id(ObjectIdentifier(issues))
+            }
+          }
           .navigationTitle(filter.status.title + " Issues")
           .searchable(text: $filter.text, prompt: "Search issues")
           #if os(macOS)
@@ -112,6 +121,10 @@
       .onChange(of: filter) { _, filter in
         issues?.permalinkID = nil
         issues?.listContext = filter.listContext
+      }
+      // Without its count, the scroll bar spans the issues paged in.
+      .onChange(of: fullHeightScrollBar && filter.text.isEmpty) { _, counted in
+        if !counted { issues?.totalRows = nil }
       }
       // A new issue is selected outside a List, which a collapsed split
       // view doesn't follow on its own.
@@ -252,6 +265,7 @@
   private struct Sidebar: View {
     @Binding var filter: IssueFilter
     @Binding var listLayer: ListLayer
+    @Binding var fullHeight: Bool
     @Environment(AppModel.self) private var model
 
     var body: some View {
@@ -273,6 +287,9 @@
         Picker("List", selection: $listLayer) {
           ForEach(ListLayer.allCases) { Text($0.rawValue).tag($0) }
         }
+        // On: the scroll bar spans every issue, by the list's count. Off:
+        // the issues paged in so far, growing as the list pages.
+        Toggle("Full-Height Scroll Bar", isOn: $fullHeight)
       }
       .formStyle(.grouped)
     }

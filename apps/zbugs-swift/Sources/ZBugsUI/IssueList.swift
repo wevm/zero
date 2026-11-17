@@ -44,12 +44,13 @@
     /// The issue list, as zbugs' list page sets it up: pages of
     /// `issueListV2` from a row's sort keys, and an issue looked up by its
     /// id or short id. Opened at `permalinkID`, or else where
-    /// `scrollState` says.
+    /// `scrollState` says. With `totalRows` (`IssueTotalRows`), it counts
+    /// the issues above where it opened with `issueListCountBefore`.
     static func issues(
       _ zero: Zero<AuthData?>, filter: IssueFilter, permalinkID: String?,
       scrollState: IssueScrollState?
     ) -> IssueVirtualizer {
-      IssueVirtualizer(
+      let list = IssueVirtualizer(
         zero: zero, listContext: filter.listContext, estimatedRowHeight: 56, rowKey: \.id,
         toStartRow: { IssueRowSort(id: $0.id, created: $0.created, modified: $0.modified) },
         pageQuery: { page, listContext in
@@ -64,6 +65,32 @@
           return Queries.listIssueByID(
             ListIssueByIDArgs(listContext: listContext, idField: field, idValue: value))
         }, permalinkID: permalinkID, scrollState: scrollState)
+      list.indexQuery = { request, listContext in
+        Queries.issueListCountBefore(
+          IssueListCountBeforeArgs(listContext: listContext, start: request.start))
+      }
+      return list
+    }
+  }
+
+  /// Sizes the list's scroll bar by every issue in it: the server's
+  /// `issueListCount`, once it has counted the list, as the list's
+  /// `totalRows`. Shown only without a text search, which isn't counted
+  /// (`IssueCount`).
+  struct IssueTotalRows: View {
+    let list: IssueVirtualizer
+    @ZeroQuery<Issue, Int, AuthData?> var count: Int
+
+    init(filter: IssueFilter, list: IssueVirtualizer) {
+      self.list = list
+      _count = ZeroQuery(
+        Queries.issueListCount(IssueListCountArgs(listContext: filter.listContext)),
+        ttl: .defaultTTL)
+    }
+
+    var body: some View {
+      let counted = $count.resultType == .complete || $count.resultType == .cached
+      Color.clear.onChange(of: counted ? count : nil, initial: true) { list.totalRows = $1 }
     }
   }
 

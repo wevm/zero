@@ -293,6 +293,24 @@ export const queries = defineQueries({
   ),
 
   /**
+   * The number of issues before `start` in the list: {@link issueListCount}
+   * of the rows a backward page from `start` reads, `start` excluded. A list
+   * that opens away from its top counts these to place its scroll bar.
+   */
+  issueListCountBefore: defineQuery(
+    z.object({listContext: listContextParams, start: issueRowSortSchema}),
+    ({ctx: auth, args: {listContext, start}}) => {
+      const {sortField, sortDirection} = listContext;
+      const dir = sortDirection === 'asc' ? 'desc' : 'asc';
+      return filterListQuery(
+        builder.issue.orderBy(sortField, dir).orderBy('id', dir).start(start),
+        listContext,
+        auth?.role,
+      ).count();
+    },
+  ),
+
+  /**
    * This is used to get a single issue so that we can get the order for start at.
    */
   listIssueByID: defineQuery(

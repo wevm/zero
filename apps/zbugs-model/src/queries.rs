@@ -289,6 +289,30 @@ pub const ISSUE_LIST_COUNT: QueryDefinition<IssueListCountArgs, Context, Issue, 
         filter_list_query(zql::issue(), &a.list_context, role(auth)).count()
     });
 
+/// The number of issues before `start` in the list: `issueListCount` of the
+/// rows a backward page from `start` reads, `start` excluded. A list that
+/// opens away from its top counts these to place its scroll bar.
+pub const ISSUE_LIST_COUNT_BEFORE: QueryDefinition<IssueListCountBeforeArgs, Context, Issue, i64> =
+    define_query("issueListCountBefore", |a, auth| {
+        let dir = a.list_context.sort_direction.flipped().ast();
+        let sort = match a.list_context.sort_field {
+            SortField::Modified => Issue::MODIFIED,
+            SortField::Created => Issue::CREATED,
+        };
+        let q = zql::issue()
+            .order_by(sort, dir)
+            .order_by(Issue::ID, dir)
+            .start_values(
+                vec![
+                    (Issue::ID.into(), Value::from(a.start.id.as_str())),
+                    (Issue::CREATED.into(), Value::from(a.start.created)),
+                    (Issue::MODIFIED.into(), Value::from(a.start.modified)),
+                ],
+                false,
+            );
+        filter_list_query(q, &a.list_context, role(auth)).count()
+    });
+
 /// One issue, for the order to start a list at.
 pub const LIST_ISSUE_BY_ID: QueryDefinition<ListIssueByIdArgs, Context, Issue, Option<Issue>> =
     define_query("listIssueByID", |a, auth| {
@@ -382,6 +406,7 @@ pub fn all() -> Vec<Box<dyn NamedQuery<Context>>> {
         Box::new(ISSUE_DETAIL),
         Box::new(ISSUE_LIST_V2),
         Box::new(ISSUE_LIST_COUNT),
+        Box::new(ISSUE_LIST_COUNT_BEFORE),
         Box::new(LIST_ISSUE_BY_ID),
         Box::new(EMOJI_CHANGE),
         Box::new(PREV_NEXT),
