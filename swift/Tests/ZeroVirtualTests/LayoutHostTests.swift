@@ -412,6 +412,37 @@ final class LayoutScrollView {
     #expect(view.scrollOffset == offset)
   }
 
+  // As a chat opens on its latest message: the jump looks the row up
+  // first, which takes the server a round trip. Following the bottom of the
+  // rows the list had until then paged through the whole list, a new query
+  // each pass, and the jump waited for it to reach the end.
+  @Test("a jump waiting on its row's lookup doesn't page after the bottom")
+  func jumpWaitsInPlace() {
+    let h = Harness(rowCount: 2000, rowHeight: 80) {
+      $0.anchoring = .manual
+      $0.stickToBottom = true
+      $0.minPageSize = 20
+    }
+    let view = LayoutScrollView(h)
+    h.offline = true
+    h.probePending = true
+    view.pass()
+    h.core.scrollToItem("r1999", align: .end)
+    view.pass()
+    let query = h.queryKey(h.core.queryInputs)
+    for _ in 0..<10 {
+      view.frameDrawn()
+      view.pass()
+    }
+    #expect(h.queryKey(h.core.queryInputs) == query)
+    h.offline = false
+    h.probePending = false
+    view.settle()
+    #expect(h.core.lastVisibleItem()?.key == "r1999")
+    #expect(view.bottomGap == 0)
+    #expect(view.blank == 0)
+  }
+
   // As when the keyboard comes up under a chat. The re-pin to the bottom
   // used to be taken back by the offset the view passed in, from before the
   // resize, as if the user had scrolled, and the list stopped following.

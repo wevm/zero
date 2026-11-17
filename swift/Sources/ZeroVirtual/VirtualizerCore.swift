@@ -740,7 +740,10 @@ package final class VirtualizerCore<
   }
 
   private func repinToBottom() {
-    guard options.stickToBottom, stuck, !landing, let host else { return }
+    // Nor while a jump looks up its row: it goes where the row is, and
+    // following the bottom of the rows there until then pages through
+    // them all, a new query each pass, which its lookup waits behind.
+    guard options.stickToBottom, stuck, target == nil, let host else { return }
     setScrollOffset(host.contentHeight - host.viewportHeight)
     stuck = true
   }

@@ -117,6 +117,9 @@ final class Harness {
   /// The page queries are incomplete, as before the server confirms them,
   /// while the single-row lookup, answered already, is complete.
   var pagesPending = false
+  /// A probe's single-row lookup is incomplete, as before the server
+  /// confirms it.
+  var probePending = false
   private var permalinkBeforePending = false
 
   init(
@@ -213,7 +216,7 @@ final class Harness {
     return assembleRows(
       inputs,
       RowsQueryResults(
-        singleRow: probe, singleComplete: inputs.probeID != nil, mainRows: main,
+        singleRow: probe, singleComplete: inputs.probeID != nil && !probePending, mainRows: main,
         mainComplete: complete))
   }
 
