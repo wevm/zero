@@ -7,8 +7,8 @@ use std::sync::OnceLock;
 use rune::{Cx, El, GrowthSpec, ScrollSpec, Tx, col, el, row, text};
 use rune_kit::{
     Button, ButtonVariant, Checkbox, Combobox, ComboboxOption, ComboboxState, Dialog, IconButton,
-    IconButtonVariant, Kit, Markdown, Menu, MenuItem, Placement, Popover, SegmentedControl, Select,
-    Switch, TextArea, TextInput,
+    IconButtonVariant, Kit, Markdown, Menu, MenuItem, Placement, Popover, ScrollBar as _,
+    SegmentedControl, Select, Switch, TextArea, TextInput,
 };
 use zbugs_model::args::{SortDirection, SortField};
 use zbugs_model::schema::{Comment, Emoji, Issue, IssueVisibility, Label, User};
@@ -594,6 +594,11 @@ fn issue_list(s: &App, k: &Kit, layer: &mut Vec<El>) -> El {
                     )
                     .on_visible_rows(|s: &mut App, range| s.list_visible(range.end)),
             )
+            // rune-kit's scroll bar, as the system's "Show scroll bars"
+            // says: while scrolling, or always. Its thumb drags, and a press
+            // in its track pages, or jumps there under "Click in the scroll
+            // bar to" (Option does the other).
+            .scroll_bar(k)
     };
     col()
         .key("list")

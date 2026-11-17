@@ -17,6 +17,7 @@ use gpui_kit::component::dialog::DialogFooter;
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
+use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::text::TextView;
 use gpui_kit::component::tooltip::Tooltip;
@@ -2287,10 +2288,15 @@ impl ZbugsApp {
                     this.toggle_checking(cx)
                 }
             }))
+            .relative()
             .w_full()
             .flex_1()
             .when(tints_blank(), |d| d.bg(rgb(0xff8c1a)))
             .child(list)
+            // GPUI Component's scroll bar: shown while the list scrolls, and
+            // under the pointer too where the system doesn't hide scroll
+            // bars. Its thumb drags, and a click in its track jumps there.
+            .vertical_scrollbar(&self.scroll)
             .into_any_element()
     }
 

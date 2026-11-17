@@ -5,9 +5,9 @@
 //! Two lists, as `BLANKING=issues` (the default) or `BLANKING=chat` picks:
 //!
 //! - `issues`: zbugs-rune's issue list, as `view.rs` builds it: rows of about
-//!   58 points under that estimate, paged as zbugs-rune pages, 100 more rows
-//!   asked for when the last visible row nears the last loaded, which come a
-//!   round trip later.
+//!   58 points under that estimate, with rune-kit's scroll bar, paged as
+//!   zbugs-rune pages, 100 more rows asked for when the last visible row nears
+//!   the last loaded, which come a round trip later.
 //! - `chat`: a chat's messages, from a line to a few hundred words, so a
 //!   row's height isn't known until it's measured. It opens at the bottom and
 //!   follows new messages there (`stick_bottom`), loads older ones a page at a
@@ -16,8 +16,10 @@
 //! `cargo test --example blanking` pushes both, at 120 and at 60 frames a
 //! second: trackpad flings (macOS momentum, as wheel deltas) and Rune's own
 //! flings at 4,000 to 32,000 points a second, swipes released into them, long
-//! fast drags, jumps and glides across the list, and paging, checking every
-//! frame that the rows cover the viewport.
+//! fast drags, jumps and glides across the list, the scroll bar's thumb
+//! dragged back and forth across the track in a second down to a tenth, and
+//! held at the end as pages land, presses in its track that jump far or page,
+//! and paging, checking every frame that the rows cover the viewport.
 //!
 //! One push it leaves out shows blank space: a glide Rune steps itself
 //! (`Tx::scroll_to_bottom`, `Tx::scroll_to`, a far `Tx::scroll_into_view`)
@@ -35,10 +37,14 @@
 //! blanking.mp4 --size 420x760` records what the script does.
 
 use std::borrow::Cow;
+use std::cell::Cell;
 use std::ops::Range;
+use std::rc::Rc;
+use std::sync::OnceLock;
 
 use rune::{AppSpec, Color, Cx, El, GrowthSpec, Key, KeyEvent, ScrollSpec, TextStyle, Tx};
 use rune::{col, memo, oklch, row, text};
+use rune_kit::{Kit, ScrollBar as _};
 
 /// zbugs-rune's estimate for an issue row (`view.rs`'s `ROW`).
 const ROW: f32 = 58.0;
@@ -75,6 +81,9 @@ struct Lists {
     /// When the rows asked for come.
     due: Option<f64>,
     next_message: f64,
+    /// How far down the list is scrolled, and the most it scrolls, which
+    /// its viewport reports, as zbugs-rune's `list_offset`.
+    scrolled: Rc<Cell<[f32; 2]>>,
 }
 
 impl Lists {
@@ -86,6 +95,7 @@ impl Lists {
             limit: PAGE,
             due: None,
             next_message: f64::INFINITY,
+            scrolled: Rc::default(),
         };
         s.splice(s.ids.len(), 0..PAGE as u64);
         s
@@ -99,6 +109,7 @@ impl Lists {
             limit: 0,
             due: None,
             next_message: ARRIVAL,
+            scrolled: Rc::default(),
         };
         s.splice(0, MESSAGES - PAGE as u64..MESSAGES);
         s
@@ -240,6 +251,11 @@ fn key(s: &Lists, i: usize) -> Cow<'_, str> {
     Cow::Borrowed(s.keys[i].as_str())
 }
 
+fn kit() -> &'static Kit {
+    static KIT: OnceLock<Kit> = OnceLock::new();
+    KIT.get_or_init(|| Kit::neutral(false))
+}
+
 fn view(s: &Lists, _: &mut Cx<Lists>) -> El {
     let rows = col().key("rows").w_full().growth(GrowthSpec::default());
     let rows = if s.chat {
@@ -260,7 +276,12 @@ fn view(s: &Lists, _: &mut Cx<Lists>) -> El {
         .scroll(ScrollSpec {
             stick_bottom: s.chat,
         })
-        .child(rows.on_visible_rows(Lists::visible));
+        .on_scroll_offset({
+            let scrolled = s.scrolled.clone();
+            move |at| scrolled.set([at.offset[1], at.max[1]])
+        })
+        .child(rows.on_visible_rows(Lists::visible))
+        .scroll_bar(kit());
     col().w_full().h_full().fill(page()).child(scroll)
 }
 
@@ -302,6 +323,10 @@ mod tests {
     const SIZE: (f32, f32) = (420.0, 760.0);
     /// Where the pointer scrolls: over the list.
     const AT: (f32, f32) = (200.0, 380.0);
+    /// The list's viewport, its rows, and the scroll bar's thumb.
+    const VIEWPORT: &str = "#0/scroll-scroll-area/scroll";
+    const ROWS: &str = "#0/scroll-scroll-area/scroll/rows";
+    const THUMB: &str = "#0/scroll-scroll-area/scroll-bar/thumb-slot/thumb";
 
     struct Run {
         rt: Runtime<Lists>,
@@ -442,6 +467,79 @@ mod tests {
             self.settle();
         }
 
+        /// Where the last frame drew `path`.
+        fn rect(&self, path: &str) -> [f32; 4] {
+            let elements = self.rt.elements();
+            let e = elements.iter().find(|e| e.path == path);
+            e.unwrap_or_else(|| panic!("{path} drawn")).rect
+        }
+
+        /// How far down the list is scrolled: 0 at the top, 1 at the
+        /// bottom.
+        fn scrolled(&self) -> f32 {
+            let [offset, max] = self.rt.state.scrolled.get();
+            if max <= 0.0 {
+                return 0.0;
+            }
+            (offset / max).clamp(0.0, 1.0)
+        }
+
+        /// The pointer at the list's right edge, which brings up the overlay
+        /// scroll bar, as on a Mac with a trackpad, until it shows.
+        fn reveal(&mut self) {
+            self.rt.pointer_move(SIZE.0 - 4.0, AT.1);
+            self.frames(12);
+        }
+
+        /// The scroll bar's thumb grabbed at its middle and dragged to each
+        /// of `stops`, fractions of the window's height, `seconds` to each,
+        /// then let go. The least and the most the list was scrolled on the
+        /// way (`scrolled`).
+        fn thumb_drag(&mut self, stops: &[f32], seconds: f64) -> (f32, f32) {
+            self.reveal();
+            let thumb = self.rect(THUMB);
+            let x = thumb[0] + thumb[2] / 2.0;
+            let mut y = thumb[1] + thumb[3] / 2.0;
+            self.rt.pointer_move(x, y);
+            self.rt.pointer_down(x, y);
+            self.frame();
+            let (mut least, mut most) = (1.0f32, 0.0f32);
+            let steps = (seconds / self.dt).ceil() as usize;
+            for &stop in stops {
+                let (from, to) = (y, stop * SIZE.1);
+                for i in 1..=steps {
+                    y = from + (to - from) * i as f32 / steps as f32;
+                    self.rt.pointer_move(x, y);
+                    self.frame();
+                    let at = self.scrolled();
+                    (least, most) = (least.min(at), most.max(at));
+                }
+            }
+            self.rt.pointer_up(x, y);
+            self.settle();
+            (least, most)
+        }
+
+        /// A press in the scroll bar's track `at` of the window's height,
+        /// held `seconds`: a jump there, or pages toward it, as the system's
+        /// "Click in the scroll bar to" says. How far the list was scrolled
+        /// after the press's first frame (`scrolled`).
+        fn track_press(&mut self, at: f32, seconds: f64) -> f32 {
+            self.reveal();
+            let thumb = self.rect(THUMB);
+            let (x, y) = (thumb[0] + thumb[2] / 2.0, at * SIZE.1);
+            self.rt.pointer_move(x, y);
+            self.rt.pointer_down(x, y);
+            self.frame();
+            let landed = self.scrolled();
+            for _ in 1..(seconds / self.dt) as usize {
+                self.frame();
+            }
+            self.rt.pointer_up(x, y);
+            self.settle();
+            landed
+        }
+
         fn report(&self, list: &str) {
             let blank: usize = self.blanks.iter().map(|b| b.1).sum();
             let by: Vec<String> = self
@@ -462,8 +560,8 @@ mod tests {
     fn blank_in(rt: &Runtime<Lists>) -> f32 {
         let elements = rt.elements();
         let rect = |path: &str| elements.iter().find(|e| e.path == path).map(|e| e.rect);
-        let viewport = rect("#0/scroll").expect("the list's viewport");
-        let content = rect("#0/scroll/rows").expect("the list's rows");
+        let viewport = rect(VIEWPORT).expect("the list's viewport");
+        let content = rect(ROWS).expect("the list's rows");
         let top = viewport[1].max(content[1]);
         let bottom = (viewport[1] + viewport[3]).min(content[1] + content[3]);
         let mut rows: Vec<(f32, f32)> = elements
@@ -471,7 +569,8 @@ mod tests {
             .filter(|e| {
                 !e.exiting
                     && e.path
-                        .strip_prefix("#0/scroll/rows/")
+                        .strip_prefix(ROWS)
+                        .and_then(|k| k.strip_prefix('/'))
                         .is_some_and(|k| !k.contains('/'))
             })
             .map(|e| (e.rect[1], e.rect[1] + e.rect[3]))
@@ -490,8 +589,56 @@ mod tests {
         gap + (bottom - y).max(0.0)
     }
 
+    /// The scroll bar's pushes, from the list's first page, so pages land
+    /// under the thumb. Positive velocities move toward the top.
+    fn thumb(run: &mut Run, toward_end: f32) {
+        // The thumb dragged end to end and back, in a second down to a
+        // tenth of one each way: as fast as a hand goes.
+        run.drive("thumb-drag");
+        for seconds in [1.0, 0.25, 0.1] {
+            let (least, most) = run.thumb_drag(&[1.0, 0.0, 1.0, 0.0, 0.5], seconds);
+            assert!(
+                least < 0.02 && most > 0.98,
+                "a thumb drag of {seconds} s to each end showed {least}..{most}"
+            );
+        }
+        // Held at the end the list pages at (the issues' bottom, the chat's
+        // top) as pages land there and lengthen the track.
+        run.drive("thumb-hold");
+        let (rows, first) = (run.rt.state.ids.len(), run.rt.state.ids[0]);
+        let end = if toward_end < 0.0 {
+            [1.0, 0.99]
+        } else {
+            [0.0, 0.01]
+        };
+        run.thumb_drag(&end.repeat(8), 0.1);
+        let s = &run.rt.state;
+        assert!(
+            s.ids.len() >= rows + 3 * PAGE || s.ids.len() == ISSUES || s.ids[0] == 0,
+            "held at the end, paged from {rows} rows (from {first}) to {} (from {})",
+            s.ids.len(),
+            s.ids[0]
+        );
+        // Far jumps, under "Jump to the spot that's clicked", then pages
+        // held toward each end, under "Jump to the next page".
+        run.drive("thumb-jump");
+        run.rt.set_system_scroller_jumps(true);
+        for at in [0.95, 0.05, 0.6, 0.01, 0.99, 0.3] {
+            let landed = run.track_press(at, 0.0);
+            assert!(
+                (landed - at).abs() < 0.2,
+                "a jump to {at} of the track showed {landed}"
+            );
+        }
+        run.rt.set_system_scroller_jumps(false);
+        run.drive("track-page");
+        run.track_press(0.99, 1.5);
+        run.track_press(0.01, 1.5);
+    }
+
     /// The pushes both lists get. Positive velocities move toward the top.
     fn push(run: &mut Run, toward_end: f32) {
+        thumb(run, toward_end);
         for v in [4_000.0, 8_000.0, 16_000.0, 32_000.0] {
             run.drive(format!("trackpad-{}k", v as u32 / 1000));
             for _ in 0..2 {
