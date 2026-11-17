@@ -43,6 +43,14 @@ use zbugs_model::{AuthData, ZERO_PROJECT_NAME, make_id};
 use zero_client::client::{ConnectionState, MutateRequest, MutationOutcome};
 use zero_client::ttl::Ttl;
 
+/// In a debug build with `ZBUGS_TINT_BLANK` set, the list's background is
+/// orange and its rows draw the window's: any blank space, where a frame
+/// paints no row, is orange.
+fn tints_blank() -> bool {
+    static TINT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *TINT.get_or_init(|| cfg!(debug_assertions) && std::env::var_os("ZBUGS_TINT_BLANK").is_some())
+}
+
 /// Rows the list asks for at a time, as zbugs' list pages.
 const PAGE: i64 = 100;
 const ROW_HEIGHT: f32 = 56.;
@@ -2281,6 +2289,7 @@ impl ZbugsApp {
             }))
             .w_full()
             .flex_1()
+            .when(tints_blank(), |d| d.bg(rgb(0xff8c1a)))
             .child(list)
             .into_any_element()
     }
@@ -2369,6 +2378,7 @@ impl ZbugsApp {
             .h(px(ROW_HEIGHT))
             .px_2()
             .py_0p5()
+            .when(tints_blank(), |d| d.bg(cx.theme().background))
             .on_click(cx.listener(move |this, _, window, cx| {
                 if this.checked.is_some() {
                     this.toggle_checked(&row, cx);

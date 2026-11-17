@@ -48,6 +48,15 @@ zero-client = { path = "../../rust/zero-client", features = [
   "serde",
 ] }
 
+[dev-dependencies]
+# The blanking example's tests open its lists in GPUI's headless test app.
+gpui-kit = { version = "0.9.1", features = ["test-support"] }
+
+# Blank space in the lists, pushed hard; `cargo test` runs its tests.
+[[example]]
+name = "blanking"
+test = true
+
 [features]
 # The end-to-end run CI does against zbugs' backend: see src/app/e2e.rs.
 e2e = []

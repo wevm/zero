@@ -92,3 +92,20 @@ Rune's logo as a badge: its pixel ᚱ, from Rune's repository (MIT,
 Like every Rune app, it renders headless too:
 `cargo run -- --snap zbugs.png --size 1180x760` (and `--tree`, `--script`;
 see Rune's README).
+
+## Blank space
+
+A debug build with `ZBUGS_TINT_BLANK=1` tints the issue list's background
+orange and has its rows draw the page's, so any blank space a scroll shows,
+where no row is drawn yet, stands out. `examples/blanking.rs` pushes a list
+like the issue list, and a chat whose messages run from a line to a few
+hundred words, as hard as it can, and counts the frames that show blank
+space: `cargo test --example blanking` (CI runs it with the other tests), or
+headless on video:
+
+```sh
+cargo run --example blanking -- --script examples/blanking.json \
+  --video blanking.mp4 --size 420x760 --fps 60
+```
+
+with `BLANKING=chat` for the chat.

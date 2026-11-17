@@ -49,3 +49,14 @@ icon is compiled with Xcode's `actool`, which needs Xcode 26 or later.
 The icon (`AppIcon.icon`, an Icon Composer file) is zbugs-swift's with
 GPUI's logo as a badge, the mark from [gpui.rs](https://www.gpui.rs). GPUI
 and its logo are Zed Industries'.
+
+## Blank space
+
+A debug build with `ZBUGS_TINT_BLANK=1` tints the issue list's background
+orange and has its rows draw the window's, so any blank space a scroll
+shows, where no row is painted yet, stands out. `examples/blanking.rs` pushes
+a list like the issue list, and a chat in GPUI's `list` whose messages run
+from a line to a few hundred words, as hard as it can, and counts the frames
+that show blank space: `cargo test --example blanking` runs it headless (CI
+runs it with the other tests), and `cargo run --example blanking` in a window,
+with `BLANKING=chat` for the chat.
