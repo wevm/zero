@@ -1,6 +1,7 @@
-//! What the app keeps across launches: the servers, the login, and where
-//! the list was. A JSON file in the app's support directory, with the token
-//! kept apart in the platform's credential store (`token.rs`).
+//! What the app keeps across launches: the servers, the login, where the
+//! list was, and how tall it is. A JSON file in the app's support
+//! directory, with the token kept apart in the platform's credential store
+//! (`token.rs`).
 
 use std::path::PathBuf;
 
@@ -14,6 +15,9 @@ pub struct Settings {
     pub token: Option<String>,
     /// The selected issue's id.
     pub selection: Option<String>,
+    /// The issue list as tall as its count, so its scroll bar spans all the
+    /// issues, rather than as tall as the rows loaded so far.
+    pub full_height: bool,
 }
 
 impl Default for Settings {
@@ -23,6 +27,7 @@ impl Default for Settings {
             api_url: "http://127.0.0.1:5173".into(),
             token: None,
             selection: None,
+            full_height: true,
         }
     }
 }
@@ -79,6 +84,7 @@ impl Settings {
             api_url: s("apiURL").unwrap_or(d.api_url),
             token: None,
             selection: s("selection"),
+            full_height: s("listHeight").is_none_or(|h| h != "paged"),
         }
     }
 
@@ -89,6 +95,8 @@ impl Settings {
         if let Some(id) = &self.selection {
             o.insert("selection", Value::from(id.as_str()));
         }
+        let height = if self.full_height { "full" } else { "paged" };
+        o.insert("listHeight", Value::from(height));
         Value::Object(o)
     }
 }

@@ -13,7 +13,12 @@
 - `src/live.rs`: a typed query kept current in a GPUI view.
 - `src/app.rs`: the issue list (filters, search, the synced count, a scroll
   bar, paging as it scrolls) and the selected issue (markdown, labels,
-  comments, commenting, closing and reopening).
+  comments, commenting, closing and reopening). Issue List in the account
+  menu sets how tall the list is: Estimated Full Height (the default) makes
+  it as tall as the synced count, so the scroll bar spans every issue and a
+  drag or click of it pages straight there, with placeholders for rows still
+  to come; Pages as You Scroll makes it as tall as the rows loaded so far.
+  The choice is kept in `list-height` in the app's directory.
 - The local store is SQLite in `~/Library/Application Support/zbugs-gpui`,
   apart from zbugs-swift's.
 
@@ -59,4 +64,5 @@ a list like the issue list, and a chat in GPUI's `list` whose messages run
 from a line to a few hundred words, as hard as it can, and counts the frames
 that show blank space: `cargo test --example blanking` runs it headless (CI
 runs it with the other tests), and `cargo run --example blanking` in a window,
-with `BLANKING=chat` for the chat.
+with `BLANKING=full` for the list at its Estimated Full Height and
+`BLANKING=chat` for the chat.

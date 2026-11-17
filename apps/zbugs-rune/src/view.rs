@@ -465,7 +465,21 @@ fn account_menu(s: &App, k: &Kit, layer: &mut Vec<El>) -> El {
             s.open_sheet(Sheet::Login);
         })),
     };
+    // How tall the issue list is, and so what its scroll bar spans.
+    let full = s.full_height();
     menu.separator()
+        .group_label("Issue List")
+        .item(
+            MenuItem::new("Estimated Full Height")
+                .checked(full)
+                .on_select(|s: &mut App| s.set_full_height(true)),
+        )
+        .item(
+            MenuItem::new("Pages as You Scroll")
+                .checked(!full)
+                .on_select(|s: &mut App| s.set_full_height(false)),
+        )
+        .separator()
         .item(MenuItem::new("Servers…").on_select(|s: &mut App| {
             s.picker = None;
             s.open_sheet(Sheet::Servers);
@@ -558,6 +572,14 @@ fn issue_list(s: &App, k: &Kit, layer: &mut Vec<El>) -> El {
     } else {
         let kit = k.clone();
         let offset = s.list_offset.clone();
+        // As tall as the issues in all, from their synced count, which can
+        // trail the rows for a moment, or as the rows loaded so far.
+        let rows = if s.full_height() {
+            let count = s.count.and_then(|n| usize::try_from(n).ok()).unwrap_or(0);
+            s.issues.len().max(count)
+        } else {
+            s.issues.len()
+        };
         let scroll = col().key("list-scroll");
         let scroll = if tints_blank() {
             scroll.fill(rune::oklch(0.75, 0.18, 55.0))
@@ -580,16 +602,15 @@ fn issue_list(s: &App, k: &Kit, layer: &mut Vec<El>) -> El {
                     .w_full()
                     .growth(GrowthSpec::default())
                     .virtual_rows(
-                        s.issues.len(),
+                        rows,
                         ROW,
-                        |s: &App, i| {
-                            s.issues
-                                .get(i)
-                                .map_or(Cow::Borrowed(""), |x| Cow::Borrowed(x.id.as_str()))
+                        |s: &App, i| match s.issues.get(i) {
+                            Some(x) => Cow::Borrowed(x.id.as_str()),
+                            None => Cow::Owned(format!("placeholder-{i}")),
                         },
                         move |s: &App, i| match s.issues.get(i) {
                             Some(issue) => issue_row(s, issue, &kit),
-                            None => el(),
+                            None => placeholder_row(i, &kit),
                         },
                     )
                     .on_visible_rows(|s: &mut App, range| s.list_visible(range.end)),
@@ -729,6 +750,34 @@ fn issue_row(s: &App, issue: &Issue, k: &Kit) -> El {
         r = r.fill(k.c.page);
     }
     r
+}
+
+/// A row the list has no issue for yet, while its rows come: bars where an
+/// issue row's icon, title, and line under it go, in lines as tall as its.
+fn placeholder_row(i: usize, k: &Kit) -> El {
+    let line = |font, w: f32| {
+        row()
+            .center_y()
+            .child(text("\u{a0}").font(font))
+            .child(el().w(w).h(8.0).radius(4.0).fill(k.c.layer_03))
+    };
+    let r = col()
+        .key(format!("placeholder-{i}"))
+        .w_full()
+        .px(12.0)
+        .py(9.0)
+        .child(
+            row()
+                .gap(8.0)
+                .child(el().w(14.0).h(14.0).mt(2.0).radius(7.0).fill(k.c.layer_03))
+                .child(
+                    col()
+                        .gap(3.0)
+                        .child(line(k.ty.ui_medium, 160.0 + (i % 4) as f32 * 30.0))
+                        .child(line(k.ty.small, 110.0)),
+                ),
+        );
+    if tints_blank() { r.fill(k.c.page) } else { r }
 }
 
 /// In a debug build with `ZBUGS_TINT_BLANK` set, the list's background is

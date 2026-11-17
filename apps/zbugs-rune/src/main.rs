@@ -525,15 +525,35 @@ impl App {
         );
     }
 
-    /// The list shows rows up to `end`: ask for the next page when that's
-    /// near the last one it has. Returns whether the state changed.
+    /// The list shows rows up to `end`: when that's near the last one it
+    /// has, ask for the rows up to it and a page past. A list as tall as its
+    /// count doesn't wait for the page asked for last: a drag or jump of the
+    /// thumb far past the rows loaded asks for all the rows up to where it
+    /// went at once, which the client answers from the rows it has, and
+    /// placeholders stand in for those still to come. Returns whether the
+    /// state changed.
     pub fn list_visible(&mut self, end: usize) -> bool {
-        let full = self.issues.len() as i64 >= self.limit;
-        if full && end + 20 >= self.issues.len() {
-            self.limit += LIST_PAGE;
+        let loaded = self.issues.len() as i64;
+        let want = ((end as i64 + 20) / LIST_PAGE + 1) * LIST_PAGE;
+        if want > self.limit && (loaded >= self.limit || self.settings.full_height) {
+            self.limit = want;
             self.watch_list();
         }
         false
+    }
+
+    /// Whether the list is as tall as its count.
+    pub fn full_height(&self) -> bool {
+        self.settings.full_height
+    }
+
+    /// Makes the list as tall as its count, or as the rows loaded, and
+    /// keeps the choice.
+    pub fn set_full_height(&mut self, full: bool) {
+        self.picker = None;
+        self.settings.full_height = full;
+        self.saved.full_height = full;
+        self.saved.save();
     }
 
     pub fn select(&mut self, id: String) {
