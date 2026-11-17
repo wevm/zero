@@ -558,8 +558,13 @@ fn issue_list(s: &App, k: &Kit, layer: &mut Vec<El>) -> El {
     } else {
         let kit = k.clone();
         let offset = s.list_offset.clone();
-        col()
-            .key("list-scroll")
+        let scroll = col().key("list-scroll");
+        let scroll = if tints_blank() {
+            scroll.fill(rune::oklch(0.75, 0.18, 55.0))
+        } else {
+            scroll
+        };
+        scroll
             .w_full()
             .grow(1.0)
             .min_h(0.0)
@@ -695,6 +700,8 @@ fn issue_row(s: &App, issue: &Issue, k: &Kit) -> El {
             r = r.opacity(0.5);
         } else if checked {
             r = r.fill(k.c.layer_02);
+        } else if tints_blank() {
+            r = r.fill(k.c.page);
         }
         return r;
     }
@@ -713,8 +720,18 @@ fn issue_row(s: &App, issue: &Issue, k: &Kit) -> El {
         .child(text_col.w_full());
     if selected {
         r = r.fill(k.c.layer_02);
+    } else if tints_blank() {
+        r = r.fill(k.c.page);
     }
     r
+}
+
+/// In a debug build with `ZBUGS_TINT_BLANK` set, the list's background is
+/// orange and its rows draw the page's: any blank space, where a frame shows
+/// no row, is orange.
+fn tints_blank() -> bool {
+    static TINT: OnceLock<bool> = OnceLock::new();
+    *TINT.get_or_init(|| cfg!(debug_assertions) && std::env::var_os("ZBUGS_TINT_BLANK").is_some())
 }
 
 /// An open issue's circle or a closed one's check, as zbugs-swift's.

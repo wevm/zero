@@ -43,6 +43,11 @@ rune-kit = { git = "https://github.com/anomalyco/rune", rev = "0add0d576dfe85712
   "markdown",
 ] }
 
+# Blank space in the virtual list, pushed hard; `cargo test` runs its tests.
+[[example]]
+name = "blanking"
+test = true
+
 [lints.rust]
 unsafe_code = "forbid"
 
