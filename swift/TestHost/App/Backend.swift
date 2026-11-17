@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import QuartzCore
 import ZeroTesting
 import ZeroVirtual
 
@@ -12,13 +13,19 @@ final class Backend {
   private(set) var messageCount: Int
 
   init(issues: Int = 2000, messages: Int = 200) {
+    // `-messages <n>`: a longer chat.
+    let messages = max(messages, UserDefaults.standard.integer(forKey: "messages"))
     messageCount = messages
+    // `-latency <ms>`: the server that far away, as a real one is.
+    let latency = UserDefaults.standard.double(forKey: "latency")
     server.put("issues", (0..<issues).map(Self.issue))
     server.put("comments", (0..<messages).map { Self.message($0) })
     let options = ZeroOptions(
       cacheURL: "http://loopback.test", userID: "u", storageKey: UUID().uuidString,
       storage: .memory)
-    zero = try! Zero(schema: .test, options: options, socketFactory: server)
+    zero = try! Zero(
+      schema: .test, options: options,
+      socketFactory: latency > 0 ? DelayedSockets(server, seconds: latency / 1000) : server)
   }
 
   static func issueID(_ i: Int) -> String { "i" + String(format: "%04d", i) }
@@ -32,11 +39,16 @@ final class Backend {
     ]
   }
 
+  /// `-tall-messages 1`: one message in 9 runs to 150 to 400 words, taller
+  /// than the screen.
+  static let tallMessages = UserDefaults.standard.bool(forKey: "tall-messages")
+
   /// Message `i`: 1 to 60 words, so rows are many heights.
   static func message(_ i: Int, words count: Int? = nil) -> [String: JSONValue] {
-    [
+    let n = tallMessages && i % 9 == 4 ? 150 + i * 31 % 251 : i * 7919 % 60 + 1
+    return [
       "id": .string(messageID(i)), "authorId": .string(["ana", "ben", "you"][i % 3]),
-      "issue_id": "chat", "text": .string("\(i): " + words(count ?? (i * 7919 % 60 + 1), seed: i)),
+      "issue_id": "chat", "text": .string("\(i): " + words(count ?? n, seed: i)),
       "createdAt": .number(Double(1_000 + i)),
     ]
   }
@@ -64,6 +76,72 @@ final class Backend {
   /// The last message is edited to be much longer.
   func growLast() {
     server.put("comments", Self.message(messageCount - 1, words: 120))
+  }
+}
+
+/// A socket factory whose sockets deliver what they receive `seconds` late,
+/// in order: a server's round trip, from a server in the process.
+@MainActor
+final class DelayedSockets: SocketFactory {
+  private let base: any SocketFactory
+  private let seconds: Double
+  /// The sockets' events: a socket holds its own weakly.
+  private var events: [Delayed] = []
+
+  init(_ base: any SocketFactory, seconds: Double) {
+    self.base = base
+    self.seconds = seconds
+  }
+
+  func open(url: String, secProtocol: String?, events: any SocketEvents) -> any SocketConnection {
+    let delayed = Delayed(events, seconds: seconds)
+    self.events.append(delayed)
+    return base.open(url: url, secProtocol: secProtocol, events: delayed)
+  }
+
+  private final class Delayed: SocketEvents {
+    weak var events: (any SocketEvents)?
+    let seconds: Double
+    private var queue: [(due: Double, deliver: () -> Void)] = []
+
+    init(_ events: any SocketEvents, seconds: Double) {
+      self.events = events
+      self.seconds = seconds
+    }
+
+    func socketDidOpen() { later { $0.socketDidOpen() } }
+    func socketDidReceive(_ message: SocketMessage) { later { $0.socketDidReceive(message) } }
+    func socketDidClose(code: Int, reason: String, wasClean: Bool) {
+      later { $0.socketDidClose(code: code, reason: reason, wasClean: wasClean) }
+    }
+
+    private func later(_ deliver: @escaping (any SocketEvents) -> Void) {
+      queue.append(
+        (
+          CACurrentMediaTime() + seconds,
+          { [weak self] in
+            if let events = self?.events { deliver(events) }
+          }
+        ))
+      if queue.count == 1 { wait() }
+    }
+
+    private func wait() {
+      guard let due = queue.first?.due else { return }
+      Task { @MainActor [weak self] in
+        try? await Task.sleep(for: .seconds(max(0, due - CACurrentMediaTime())))
+        self?.drain()
+      }
+    }
+
+    private func drain() {
+      let now = CACurrentMediaTime()
+      while let first = queue.first, first.due <= now {
+        queue.removeFirst()
+        first.deliver()
+      }
+      wait()
+    }
   }
 }
 

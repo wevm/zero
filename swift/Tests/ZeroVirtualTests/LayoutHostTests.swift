@@ -807,6 +807,59 @@ final class LayoutScrollView {
     #expect(view.rowTop("r0") == 0)
   }
 
+  // The list paged only on pages the server had confirmed: a fling outran
+  // the rows a round trip behind it, showing space, and at the top the space
+  // above a short first page stood until the server confirmed it.
+  @Test("flung through pages the server hasn't confirmed, the rows cover the viewport every pass")
+  func flingThroughUnconfirmedPages() {
+    let h = Harness(rowCount: 1000) { $0.anchoring = .manual }
+    let view = LayoutScrollView(h)
+    for i in 0..<1000 where i % 4 == 0 { view.heights["r\(i)"] = 50 }
+    view.settle()
+    // Down the list once and back, so its length is known.
+    while h.core.lastVisibleItem()?.key != "r999" {
+      view.userScroll(view.scrollOffset + 1500)
+      view.frameDrawn()
+    }
+    while view.scrollOffset > 0 {
+      view.userScroll(view.scrollOffset - 1500)
+      view.frameDrawn()
+    }
+    view.settle()
+    h.scheduler.advance(by: 3000)
+    view.settle()
+
+    // The space a pass shows: in the viewport, within the content, no row.
+    func blank() -> Double {
+      let top = view.scrollOffset
+      let bottom = min(top + view.viewportHeight, view.host.contentHeight)
+      var y = top
+      var gap = 0.0
+      for f in view.host.rowFrames() where f.maxY > y && f.minY < bottom {
+        gap += max(0, f.minY - y)
+        y = f.maxY
+      }
+      return gap + max(0, bottom - y)
+    }
+    h.pagesPending = true
+    // As `ZeroVirtualizer` does, a new page is answered in the pass that
+    // asks for it, from the rows the client has.
+    _ = h.core.subscribe { h.core.setRows(h.answer(h.core.queryInputs)) }
+    var gaps: [String] = []
+    func frame(_ y: Double) {
+      view.userScroll(y)
+      view.frameDrawn()
+      if blank() > 0.5 { gaps.append("\(blank()) at \(view.scrollOffset)") }
+    }
+    // About 40,000 points a second, a frame each pass, down and back up.
+    for _ in 0..<200 where view.bottomGap > 0.5 { frame(view.scrollOffset + 700) }
+    #expect(h.core.lastVisibleItem()?.key == "r999")
+    for _ in 0..<200 where view.scrollOffset > 0 { frame(view.scrollOffset - 700) }
+    #expect(gaps.isEmpty, "\(gaps.count) passes showed space: \(gaps.prefix(5))")
+    #expect(view.scrollOffset == 0)
+    #expect(view.rowTop("r0") == 0)
+  }
+
   @Test("only the rows near the viewport are measured")
   func measuresNearRows() {
     let h = Harness(rowCount: 1000) { $0.anchoring = .manual }

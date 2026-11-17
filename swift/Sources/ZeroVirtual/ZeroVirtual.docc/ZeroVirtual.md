@@ -110,6 +110,13 @@ row.isAccessibilityElement = true
 ``VirtualList`` rows are SwiftUI views; use the accessibility modifiers as
 usual.
 
+## Seeing blank space
+
+Launch a debug build with `-ZeroVirtualTintBlankSpace YES` to tint the
+list's content orange behind the rows, which then draw the system
+background: any space a scroll shows before its rows are drawn stands out.
+Release builds ignore it.
+
 ## Topics
 
 ### Lists

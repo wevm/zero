@@ -398,7 +398,7 @@ package final class VirtualizerCore<
   private func carrySpaceAfter(from old: RowsSnapshot<Row, StartRow>, _ oldSpace: Double) {
     let oldEnd = old.firstRowIndex + old.rowsLength
     let newEnd = rows.firstRowIndex + rows.rowsLength
-    guard isListContextCurrent, !rows.atEnd, !old.rowsEmpty, !rows.rowsEmpty,
+    guard isListContextCurrent, !noneAfter, !old.rowsEmpty, !rows.rowsEmpty,
       let oldLast = old.rowAt(oldEnd - 1).map(options.rowKey),
       let newLast = rows.rowAt(newEnd - 1).map(options.rowKey)
     else {
@@ -776,13 +776,20 @@ package final class VirtualizerCore<
   // nothing, so it keeps at least a reserve for the space to take changes
   // above the rows out of. None at the start.
   private var estimatedSpaceBefore: Double {
-    if rows.atStart { return 0 }
+    if noneBefore { return 0 }
     let estimate = Double(max(0, rows.firstRowIndex)) * rowEstimate
     guard manual, openedAway, !rows.rowsEmpty else { return estimate }
     return max(estimate, Double(3 * pageSize) * rowEstimate)
   }
 
   private var manual: Bool { options.anchoring == .manual }
+
+  // No row stands before (after) the rows: the list's start (end), or the
+  // client has none there, as a page that came back short says before the
+  // server confirms it. Space there would show as a gap until it does; rows
+  // that come later go in as rows added there do.
+  private var noneBefore: Bool { rows.atStart || rows.nothingBefore }
+  private var noneAfter: Bool { rows.atEnd || rows.nothingAfter }
 
   private var effectiveEstimatedTotal: Int {
     let end = rows.firstRowIndex + rows.rowsLength
@@ -792,7 +799,7 @@ package final class VirtualizerCore<
 
   // The space after the rows, as their count estimates it.
   private var estimatedSpaceAfter: Double {
-    if rows.atEnd { return 0 }
+    if noneAfter { return 0 }
     return Double(max(0, effectiveEstimatedTotal - rows.firstRowIndex - rows.rowsLength))
       * rowEstimate
   }
@@ -811,7 +818,7 @@ package final class VirtualizerCore<
     // At the start, space left over from above stands before the first row
     // until the list rests.
     s.spaceBefore = max(0, estimatedSpaceBefore + spaceAdjust)
-    s.spaceAfter = rows.atEnd ? 0 : max(0, estimatedSpaceAfter + spaceAfterAdjust)
+    s.spaceAfter = noneAfter ? 0 : max(0, estimatedSpaceAfter + spaceAfterAdjust)
     s.complete = rows.complete
     s.rowsEmpty = rows.rowsEmpty
     s.permalinkNotFound = rows.permalinkNotFound
@@ -915,6 +922,19 @@ package final class VirtualizerCore<
     anchorOffset = ref?.minY ?? 0
   }
 
+  // The user's scroll keeps the reference row while it's on screen: a row
+  // that comes on screen above it, measured only now, grows up from it, not
+  // down over the rows that were on screen. Picked at the viewport's top, the
+  // reference would be that row, which can come out many times its estimate,
+  // as a long message does. Off screen, as after a scroll down, the first
+  // row reaching below the top, which was on screen.
+  private func keepAnchorOnScreen() {
+    guard let host, let key = anchorKey, let f = frame(host, key: key),
+      f.maxY > host.scrollOffset + 0.5, f.minY < host.scrollOffset + host.viewportHeight
+    else { return refreshAnchor() }
+    anchorOffset = f.minY
+  }
+
   private func compensate(_ delta: Double) {
     guard let host else { return }
     anchorOffset += delta
@@ -987,7 +1007,7 @@ package final class VirtualizerCore<
   /// up into the space: it goes too, and the rows below it come up to the
   /// top.
   private func dropSpaceAtStart() -> Bool {
-    guard manual, rows.atStart, spaceAdjust >= 0.5, isListContextCurrent, !landing, let host,
+    guard manual, noneBefore, spaceAdjust >= 0.5, isListContextCurrent, !landing, let host,
       host.scrollsWithLayout
     else { return false }
     let removed = spaceAdjust
@@ -1008,7 +1028,7 @@ package final class VirtualizerCore<
       // come out of. Space over it stays, as taking it back shrinks the
       // content under the offset, which the view clamps before the list can
       // scroll; but at the start, where nothing stands before the first row.
-      guard let self, self.spaceAdjust < 0 || (self.rows.atStart && self.spaceAdjust > 0)
+      guard let self, self.spaceAdjust < 0 || (self.noneBefore && self.spaceAdjust > 0)
       else { return }
       self.withNotify {
         self.spaceAdjust = 0
@@ -1055,7 +1075,7 @@ package final class VirtualizerCore<
     }
     // Our own scrolls keep it as it was: compensation, or the re-pin.
     if !programmatic { measureStuck() }
-    if manual && !programmatic { refreshAnchor() }
+    if manual && !programmatic { keepAnchorOnScreen() }
     withNotify {
       resetSettleTimer()
       if manual { resetIdleTimer() }
@@ -1339,7 +1359,10 @@ package final class VirtualizerCore<
   }
 
   private func evaluatePaging() {
-    guard rowsSettled, !rows.rowsEmpty, !programmaticScroll, !landing, let host else { return }
+    // On the rows the client has, without waiting for the server to confirm
+    // them: a round trip a page is slower than a fling. Toward an end the
+    // client has no rows past, it waits for the server, which may have some.
+    guard rowsAnswerQuery, !rows.rowsEmpty, !programmaticScroll, !landing, let host else { return }
     let visible = visibleIndexRange(host)
     let threshold = max(options.overscan, nearPageEdgeThreshold(pageSize))
 
@@ -1370,10 +1393,10 @@ package final class VirtualizerCore<
       if top >= host.scrollOffset + host.viewportHeight {
         if host.scrollOffset <= 0 || rows.atStart {
           setAnchor(.top)
-        } else {
+        } else if !noneBefore {
           updateAnchorForEdge(rows.firstRowIndex, .backward, 0)
         }
-      } else {
+      } else if !noneAfter {
         updateAnchorForEdge(rows.firstRowIndex + rows.rowsLength - 1, .forward, 1)
       }
       return
@@ -1395,11 +1418,11 @@ package final class VirtualizerCore<
 
     let fromStart = visible.first - rows.firstRowIndex
     let fromEnd = rows.firstRowIndex + rows.rowsLength - 1 - visible.last
-    if !rows.atStart && fromStart <= threshold {
+    if !noneBefore && fromStart <= threshold {
       updateAnchorForEdge(visible.last + 2 * threshold, .backward, 0)
       return
     }
-    if !rows.atEnd && fromEnd <= threshold {
+    if !noneAfter && fromEnd <= threshold {
       updateAnchorForEdge(visible.first - 2 * threshold, .forward, 1)
     }
   }
