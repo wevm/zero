@@ -111,6 +111,14 @@ final class LayoutScrollView {
     pass(answering: answering)
   }
 
+  /// The scroll view's own bounce: a fling or a pull takes it `points`
+  /// past the content's end, and the view lays out.
+  func pull(pastTheEnd points: Double, answering: Bool = true) {
+    clock += 1.0 / 60
+    offset = max(0, host.contentHeight - viewportHeight) + points
+    pass(answering: answering)
+  }
+
   /// Where the row was drawn on the last pass, from the viewport's top.
   func rowTop(_ key: String) -> Double? { drawn[AnyHashable(key)] }
 
@@ -643,6 +651,53 @@ final class LayoutScrollView {
     view.settle()
     // Negative: the viewport reaches past the content's end.
     #expect(view.bottomGap >= 0)
+  }
+
+  // A fling or a pull past the last row takes the scroll view past the
+  // content's end, as past its start at the top, and it springs back from
+  // there itself. The pass took the offset back to the end, which stopped
+  // the bounce dead: at the list's end, and at the end of the rows loaded
+  // so far, while the next page loads.
+  @Test("past the end, the scroll view's own bounce stays", arguments: [false, true])
+  func bounceAtTheEnd(_ loading: Bool) {
+    let h = Harness(rowCount: loading ? 1000 : 300) { $0.anchoring = .manual }
+    let view = LayoutScrollView(h)
+    view.settle()
+    if loading {
+      // To the end of the first page, before the next one answers.
+      view.userScroll(.infinity, answering: false)
+    } else {
+      for _ in 0..<40 where h.core.lastVisibleItem()?.key != "r299" || view.bottomGap > 0 {
+        view.userScroll(view.scrollOffset + 2000)
+        view.settle()
+      }
+    }
+    #expect(view.bottomGap == 0)
+    let end = view.scrollOffset
+    let last = h.core.lastVisibleItem()!.key
+    for pulled in [30.0, 90, 120, 60] {
+      view.pull(pastTheEnd: pulled, answering: false)
+      #expect(view.scrollOffset == end + pulled)
+      // A frame's pass too, as rows off screen are measured.
+      view.frameDrawn()
+      view.pass(answering: false)
+      #expect(view.scrollOffset == end + pulled)
+    }
+    if loading {
+      // The next page comes in under the bounce: rows fill it, and those on
+      // screen stay put.
+      let top = view.rowTop(last)
+      view.pass()
+      #expect(view.rowTop(last) == top)
+      #expect(view.blank == 0)
+      #expect(view.bottomGap > 0)
+    } else {
+      // Sprung back.
+      view.userScroll(end)
+      view.settle()
+      #expect(view.scrollOffset == end)
+      #expect(h.core.lastVisibleItem()?.key == last)
+    }
   }
 
   // Left where the rows were, the viewport showed none of them, and paging,
