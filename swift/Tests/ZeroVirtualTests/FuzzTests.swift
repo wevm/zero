@@ -75,6 +75,8 @@ struct Fuzzer {
   var rng: SplitMix64
   let h: Harness
   let view: LayoutScrollView
+  /// The scrolls' pages are answered before the server confirms them.
+  var pendingScrolls: Bool { seed % 7 == 3 }
 
   /// Ids are numbers, a thousand apart to begin with, so rows can be
   /// inserted between any two.
@@ -144,8 +146,11 @@ struct Fuzzer {
     case 0..<30:
       let distance = Double(Int.random(in: -2500...2500, using: &rng))
       let parts = Int.random(in: 1...6, using: &rng)
+      // Some seeds' scrolls page before the server confirms the pages.
+      h.pagesPending = pendingScrolls
       for _ in 0..<parts { view.userScroll(view.scrollOffset + distance / Double(parts)) }
-      return ("scroll \(distance) in \(parts)", [])
+      h.pagesPending = false
+      return ("scroll \(distance) in \(parts)\(pendingScrolls ? ", pages pending" : "")", [])
     case 30..<36:
       let toTop = Bool.random(using: &rng)
       view.userScroll(toTop ? 0 : .infinity)

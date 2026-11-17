@@ -47,7 +47,11 @@ final class FrameProbe {
     [(dy: Double, dt: Double, regular: Bool, sample: Sample)] =
       []
   @ObservationIgnored private var applied: Double?
-  @ObservationIgnored private var drive: (velocity: Double, done: CheckedContinuation<Void, Never>)?
+  /// Moves the scroll view a step each frame: from the time since the last
+  /// frame, where the viewport's top is in the content and the furthest it
+  /// goes, to where it goes next; nil once it's done.
+  typealias Motion = @MainActor (_ dt: Double, _ offset: Double, _ end: Double) -> Double?
+  @ObservationIgnored private var drive: (motion: Motion, done: CheckedContinuation<Void, Never>)?
   @ObservationIgnored private var jump: [Sample]?
   @ObservationIgnored private var jumpStill = 0.0
   /// Since the jump began, and whether it has moved yet.
@@ -66,6 +70,16 @@ final class FrameProbe {
   @ObservationIgnored private var dropped = 0
   /// The last wrong frames' reasons, for a failing test's message.
   @ObservationIgnored private var lastWrong: [String] = []
+  /// Frames that showed blank space: part of the viewport, within the
+  /// content, that no row, header or footer covered. In all, and by phase,
+  /// with how many points of it they showed.
+  @ObservationIgnored private(set) var blankFrames = 0
+  @ObservationIgnored private var blankByPhase: [(phase: String, frames: Int, points: Double)] = []
+  /// The list's state, for a blank frame's log line.
+  @ObservationIgnored var describe: (() -> String)?
+  /// The last frames, logged when blank space first shows: how it came.
+  @ObservationIgnored private var recent: [String] = []
+  @ObservationIgnored private var wasBlank = false
   private static var frameInterval: Double {
     #if os(iOS)
       1 / Double(UIScreen.main.maximumFramesPerSecond)
@@ -88,6 +102,10 @@ final class FrameProbe {
     var atEdge = false
     /// The viewport's top in content coordinates: below 0 in a bounce.
     var offset = 0.0
+    /// What covers the viewport: each row's, the header's and the footer's
+    /// top and bottom from the viewport's top.
+    var cover: [(minY: Double, maxY: Double)] = []
+    var contentHeight = 0.0
     /// How long after the display link's timestamp the frame was sampled.
     var latency = 0.0
 
@@ -181,9 +199,56 @@ final class FrameProbe {
   #endif
 
   /// Scrolls as a fling would: `velocity` points per second toward the
-  /// content's end (negative: toward its start), decaying as UIKit's does.
+  /// content's end (negative: toward its start), decaying as UIKit's does,
+  /// a 120 Hz frame's share each frame.
   func drive(velocity: Double) async {
-    await withCheckedContinuation { drive = (velocity, $0) }
+    var v = velocity
+    await move { _, from, end in
+      guard abs(v) >= 20 else { return nil }
+      let to = min(end, max(0, from + v / 120))
+      v *= pow(0.998, 1000.0 / 120)
+      return to == from ? nil : to
+    }
+  }
+
+  /// A fling in real time: as `drive`, by the time between frames, at
+  /// whatever rate the display runs.
+  func fling(velocity: Double) async {
+    var v = velocity
+    await move { dt, from, end in
+      guard abs(v) >= 20 else { return nil }
+      let to = min(end, max(0, from + v * dt))
+      v *= pow(0.998, dt * 1000)
+      return to == from ? nil : to
+    }
+  }
+
+  /// A drag at a steady `velocity`, points per second, for `seconds`.
+  func drag(velocity: Double, seconds: Double) async {
+    var left = seconds
+    await move { dt, from, end in
+      guard left > 0 else { return nil }
+      left -= dt
+      return min(end, max(0, from + velocity * dt))
+    }
+  }
+
+  /// The scroll bar's thumb dragged to `fraction` of the way down, over
+  /// `frames` frames: 1 is a jump.
+  func thumb(to fraction: Double, frames: Int) async {
+    var start: Double?
+    var step = 0
+    await move { _, from, end in
+      guard step < frames else { return nil }
+      step += 1
+      let s = start ?? from
+      start = s
+      return s + (fraction * end - s) * Double(step) / Double(frames)
+    }
+  }
+
+  private func move(_ motion: @escaping Motion) async {
+    await withCheckedContinuation { drive = (motion, $0) }
   }
 
   // MARK: Frames
@@ -213,8 +278,63 @@ final class FrameProbe {
       if t - previous.t > 1.5 * Self.frameInterval { dropped += 1 }
     }
     if let previous { check(previous, sample) }
+    checkBlank(sample)
+    // The time since the last frame, as a scroll view's own animation
+    // takes it: after a stalled frame, momentum catches up.
+    let dt = min(0.25, previous.map { t - $0.t } ?? 1.0 / 120)
     previous = sample
-    step(t, scrollView)
+    step(dt, scrollView)
+  }
+
+  /// Blank space on screen: the part of the viewport within the content
+  /// (a bounce past either end shows none) that nothing drawn covers,
+  /// above the drawn rows, between them, and below them.
+  private func blank(_ s: Sample) -> (above: Double, between: Double, below: Double) {
+    let lo = max(0, -s.offset)
+    let hi = min(viewportHeight, s.contentHeight - s.offset)
+    guard hi - lo > 0.5 else { return (0, 0, 0) }
+    let spans = s.cover.map { (max(lo, $0.minY), min(hi, $0.maxY)) }.filter { $0.1 > $0.0 }
+      .sorted { $0.0 < $1.0 }
+    guard let first = spans.first else { return (0, hi - lo, 0) }
+    var between = 0.0
+    var end = first.1
+    for span in spans.dropFirst() {
+      if span.0 > end { between += span.0 - end }
+      end = max(end, span.1)
+    }
+    return (first.0 - lo, between, hi - end)
+  }
+
+  /// Counts the frame as blank when it shows more than a point of blank
+  /// space, more than rounding leaves between rows.
+  private func checkBlank(_ s: Sample) {
+    let b = blank(s)
+    let total = b.above + b.between + b.below
+    let laid = s.content.filter { Self.isRow($0.key) }.sorted { $0.value < $1.value }
+    let span =
+      laid.first.map { f in "\(f.key)@\(fmt(f.value))…\(laid.last!.key)@\(fmt(laid.last!.value))" }
+      ?? "none"
+    let state =
+      "t \(fmt(s.t * 1000)) offset \(fmt(s.offset)) of \(fmt(s.contentHeight)), laid out \(span), \(describe?() ?? "")"
+    defer {
+      wasBlank = total > 1
+      recent = Array((recent + [state]).suffix(6))
+    }
+    guard total > 1 else { return }
+    if !wasBlank {
+      for line in recent { log("BEFORE BLANK \(line)") }
+    }
+    blankFrames += 1
+    if let i = blankByPhase.firstIndex(where: { $0.phase == phase }) {
+      blankByPhase[i].frames += 1
+      blankByPhase[i].points += total
+    } else {
+      blankByPhase.append((phase, 1, total))
+    }
+    log(
+      "BLANK [\(phase)] \(fmt(total)) (above \(fmt(b.above)), between \(fmt(b.between)), below \(fmt(b.below))) \(state)"
+    )
+    publish()
   }
 
   private func sample(_ t: Double, _ scrollView: PlatformScrollView) -> Sample {
@@ -231,9 +351,13 @@ final class FrameProbe {
         }
         let r = v.convert(v.bounds, to: nil)
         s.content[id] = Double(r.minY - port.minY) + s.offset
+        if r.maxY > port.minY, r.minY < port.maxY {
+          s.cover.append((Double(r.minY - port.minY), Double(r.maxY - port.minY)))
+        }
         guard r.maxY > port.minY + 0.5, r.minY < port.maxY - 0.5 else { continue }
         s.rows[id] = (Double(r.minY - port.minY), Double(r.maxY - port.minY))
       }
+      s.contentHeight = Double(scrollView.contentSize.height)
       s.tracking = scrollView.isTracking
       s.decelerating = scrollView.isDecelerating
       s.atEdge = y <= 0.5 || y >= scrollView.contentSize.height - viewportHeight - 0.5
@@ -251,10 +375,12 @@ final class FrameProbe {
         let minY = port.maxY - r.maxY
         let maxY = port.maxY - r.minY
         s.content[id] = Double(minY) + s.offset
+        if maxY > 0, minY < port.height { s.cover.append((Double(minY), Double(maxY))) }
         guard maxY > 0.5, minY < port.height - 0.5 else { continue }
         s.rows[id] = (Double(minY), Double(maxY))
       }
       let height = scrollView.documentView?.frame.height ?? 0
+      s.contentHeight = Double(height)
       s.atEdge = y <= 0.5 || y >= height - clip.bounds.height - 0.5
     #endif
     return s
@@ -282,6 +408,12 @@ final class FrameProbe {
     let common = a.rows.keys.filter { b.rows[$0] != nil && !Self.accessories.contains($0) }
     guard !common.isEmpty else {
       if a.rows.keys.contains(where: Self.isRow) && b.rows.keys.contains(where: Self.isRow) {
+        // Driven further than the viewport, as the scroll bar's thumb can
+        // be, a frame can show none of the rows the last one did.
+        if let driven, abs(driven) >= viewportHeight {
+          log("SCROLLED \(fmt(driven)), past the viewport")
+          return
+        }
         noCommonRow(a, b)
       }
       return
@@ -470,8 +602,10 @@ final class FrameProbe {
 
   private func publish() {
     let phases = wrongByPhase.map { "\($0.0):\($0.1)" }.joined(separator: ",")
+    let blanks = blankByPhase.map { "\($0.phase):\($0.frames)/\(fmt($0.points))pt" }
+      .joined(separator: ",")
     summary =
-      "wrong=\(wrong) frames=\(frames) moving=\(moving) dropped=\(dropped) phases=[\(phases)] flings=[\(flings.suffix(8).joined(separator: ","))] last=[\(lastWrong.joined(separator: "; "))]\(done ? " done" : "")"
+      "wrong=\(wrong) frames=\(frames) moving=\(moving) dropped=\(dropped) phases=[\(phases)] flings=[\(flings.suffix(8).joined(separator: ","))] blank=\(blankFrames) blanks=[\(blanks)] last=[\(lastWrong.joined(separator: "; "))]\(done ? " done" : "")"
   }
 
   private func log(_ s: String) {
@@ -483,36 +617,32 @@ final class FrameProbe {
 
   // MARK: Driving
 
-  /// Moves the scroll view by this frame's share of the drive, after the
+  /// Moves the scroll view by this frame's step of the drive, after the
   /// frame was checked: the next frame must show the rows moved by it.
-  private func step(_ t: Double, _ scrollView: PlatformScrollView) {
+  private func step(_ dt: Double, _ scrollView: PlatformScrollView) {
     guard let d = drive else { return }
-    let dt = 1.0 / 120
-    let move = d.velocity * dt
     #if os(iOS)
       let inset = scrollView.adjustedContentInset
-      let lo = -inset.top
-      let hi = max(lo, scrollView.contentSize.height + inset.bottom - scrollView.bounds.height)
-      let from = scrollView.contentOffset.y
-      let to = min(hi, max(lo, from + move))
-      scrollView.contentOffset.y = to
+      let from = Double(scrollView.contentOffset.y + inset.top)
+      let end = max(0, Double(scrollView.contentSize.height) - viewportHeight)
     #else
       let clip = scrollView.contentView
-      let height = scrollView.documentView?.frame.height ?? 0
-      let from = clip.bounds.origin.y
-      let to = min(max(0, height - clip.bounds.height), max(0, from + move))
+      let from = Double(clip.bounds.origin.y)
+      let end = max(0, Double(scrollView.documentView?.frame.height ?? 0) - viewportHeight)
+    #endif
+    guard let next = d.motion(dt, from, end) else {
+      drive = nil
+      d.done.resume()
+      return
+    }
+    let to = min(end, max(0, next))
+    #if os(iOS)
+      scrollView.contentOffset.y = CGFloat(to) - inset.top
+    #else
       clip.scroll(to: CGPoint(x: clip.bounds.origin.x, y: to))
       scrollView.reflectScrolledClipView(clip)
     #endif
-    applied = Double(to - from)
-    // UIKit's deceleration: 0.998 a millisecond.
-    let v = d.velocity * pow(0.998, dt * 1000)
-    if abs(v) < 20 || to == from {
-      drive = nil
-      d.done.resume()
-    } else {
-      drive = (v, d.done)
-    }
+    applied = to - from
   }
 
   /// A row's view the list hides: drawn rows only count.

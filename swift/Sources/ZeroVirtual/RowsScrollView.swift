@@ -126,6 +126,18 @@
     static let spareViews = 16
     static let releasedPerFrame = 2
 
+    /// Debug builds launched with `-ZeroVirtualTintBlankSpace YES`: the
+    /// list's content is orange behind the rows, which draw the list's
+    /// background, so any space a scroll shows before its rows are drawn
+    /// stands out.
+    static let tintsBlankSpace: Bool = {
+      #if DEBUG
+        UserDefaults.standard.bool(forKey: "ZeroVirtualTintBlankSpace")
+      #else
+        false
+      #endif
+    }()
+
     /// The views above and below the rows.
     var header: RowsAccessory? {
       didSet { replace(oldValue, with: header) }
@@ -349,7 +361,10 @@
         old.view.removeFromSuperview()
         views.discard(old.view)
       }
-      if let new { addView(new.view) }
+      if let new {
+        if Self.tintsBlankSpace { backdrop(new.view, selected: false) }
+        addView(new.view)
+      }
       host.invalidate()
     }
 
@@ -425,6 +440,18 @@
     fileprivate func isEqual(to other: Any) -> Bool { (other as? Self) == self }
   }
 
+  /// Under the blank-space tint, a row's view draws the list's background:
+  /// clear for the selected row, whose highlight is behind it.
+  @MainActor
+  private func backdrop(_ view: PlatformView, selected: Bool) {
+    #if canImport(UIKit)
+      view.backgroundColor = selected ? nil : .systemBackground
+    #else
+      view.wantsLayer = true
+      view.layer?.backgroundColor = selected ? nil : NSColor.windowBackgroundColor.cgColor
+    #endif
+  }
+
   /// SwiftUI rows, each in a hosting controller, reused for the rows that
   /// come as a collection view reuses a cell. A reused controller's view has
   /// the row's key for its identity, as a `List`'s row has its id: state in
@@ -441,6 +468,12 @@
 
     init(row: @escaping (Any, Bool) -> AnyView) { self.row = row }
 
+    #if canImport(UIKit)
+      private static var backdrop: Color { Color(uiColor: .systemBackground) }
+    #else
+      private static var backdrop: Color { Color(nsColor: .windowBackgroundColor) }
+    #endif
+
     func view(
       for item: RowsItem, _ state: RowState, reusing view: PlatformView?, in layout: RowsLayout
     )
@@ -450,8 +483,14 @@
       let key = item.key
       // Text in the system's styles takes the highlight's colors, as in a
       // `List`.
-      let content = row(item.item, state.selected)
-        .environment(\.backgroundProminence, state.emphasized ? .increased : .standard)
+      var content = AnyView(
+        row(item.item, state.selected)
+          .environment(\.backgroundProminence, state.emphasized ? .increased : .standard))
+      if RowsLayout.tintsBlankSpace {
+        // Drawn with the row's content: a row whose content isn't drawn
+        // yet shows the tint.
+        content = AnyView(content.background(state.selected ? .clear : Self.backdrop))
+      }
       let shown =
         layout.selectable
         ? AnyView(
@@ -539,6 +578,7 @@
       -> PlatformView
     {
       let view = make(item.item, state.selected, view)
+      if RowsLayout.tintsBlankSpace { backdrop(view, selected: state.selected) }
       #if canImport(UIKit)
         if state.selected {
           view.accessibilityTraits.insert(.selected)
@@ -646,11 +686,19 @@
       private lazy var frameLink = FrameLink(view: self)
       /// Behind the selected row.
       let highlight = UIView()
+      /// Behind the rows, over the content, in a debug build that tints
+      /// blank space.
+      private let tint: UIView? = RowsLayout.tintsBlankSpace ? UIView() : nil
       private lazy var tap = UITapGestureRecognizer(target: self, action: #selector(tapped))
 
       init(views: any RowViews) {
         rows = RowsLayout(views: views)
         super.init(frame: .zero)
+        if let tint {
+          tint.backgroundColor = .systemOrange
+          tint.isUserInteractionEnabled = false
+          addSubview(tint)
+        }
         alwaysBounceVertical = true
         highlight.isUserInteractionEnabled = false
         highlight.isHidden = true
@@ -707,6 +755,7 @@
           highlight.isHidden = true
         }
         let size = CGSize(width: width, height: r.contentHeight)
+        tint?.frame = CGRect(origin: .zero, size: size)
         if contentSize != size { contentSize = size }
         let y = CGFloat(r.offset) - inset.top
         if contentOffset.y != y { contentOffset.y = y }
@@ -772,6 +821,13 @@
         drawsBackground = false
         documentView = document
         document.owner = self
+        if RowsLayout.tintsBlankSpace {
+          // Behind the rows, over the content.
+          let tint = RowsTintView()
+          tint.frame = document.bounds
+          tint.autoresizingMask = [.width, .height]
+          document.addSubview(tint)
+        }
         highlight.isHidden = true
         document.addSubview(highlight)
         click.delaysPrimaryMouseButtonEvents = false
@@ -945,6 +1001,24 @@
           emphasized ? .selectedContentBackgroundColor : .unemphasizedSelectedContentBackgroundColor
         layer?.backgroundColor = color.cgColor
         layer?.cornerRadius = 5
+      }
+
+      override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+
+    /// The blank-space tint, behind the rows.
+    final class RowsTintView: NSView {
+      override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+      }
+
+      required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+      override var wantsUpdateLayer: Bool { true }
+
+      override func updateLayer() {
+        layer?.backgroundColor = NSColor.systemOrange.cgColor
       }
 
       override func hitTest(_ point: NSPoint) -> NSView? { nil }

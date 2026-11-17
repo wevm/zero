@@ -143,6 +143,11 @@ package struct RowsSnapshot<Row, StartRow: Equatable & Sendable> {
   package var rowAt: (Int) -> Row?
   package var rowsLength: Int
   package var complete: Bool
+  /// The client has no rows before (after) the window: a page came back
+  /// short, though the server may not have confirmed it. Otherwise the
+  /// client has rows there to page to.
+  package var nothingBefore = false
+  package var nothingAfter = false
   package var rowsEmpty: Bool
   package var atStart: Bool
   package var atEnd: Bool
@@ -242,6 +247,8 @@ package func assembleRows<Row, StartRow>(
       anchor: anchor, pageSize: inputs.pageSize, rowAt: rowAt,
       rowsLength: permalinkNotFound ? 0 : beforeSize + afterSize + (single == nil ? 0 : 1),
       complete: r.singleComplete && (permalinkNotFound || (r.mainComplete && r.afterComplete)),
+      nothingBefore: single != nil && r.mainRows != nil && beforeLength <= half,
+      nothingAfter: single != nil && r.afterRows != nil && afterLength < half,
       rowsEmpty: permalinkNotFound || single == nil || (beforeSize == 0 && afterSize == 0),
       atStart: permalinkNotFound || (r.mainComplete && beforeLength <= half),
       atEnd: permalinkNotFound || (r.afterComplete && afterLength <= half - 1),
@@ -266,7 +273,8 @@ package func assembleRows<Row, StartRow>(
     }
     return RowsSnapshot(
       anchor: anchor, pageSize: inputs.pageSize, rowAt: rowAt, rowsLength: length,
-      complete: r.mainComplete, rowsEmpty: page.isEmpty,
+      complete: r.mainComplete, nothingBefore: !forward && !hasMore,
+      nothingAfter: forward && !hasMore, rowsEmpty: page.isEmpty,
       atStart: forward ? fromEdge || anchorIndex == 0 : r.mainComplete && !hasMore,
       atEnd: forward ? r.mainComplete && !hasMore : fromEdge,
       firstRowIndex: forward ? anchorIndex : anchorIndex - length,

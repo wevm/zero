@@ -52,9 +52,25 @@ struct ChatScreen: View {
       list.scrollToItem(id, align: .end)
     }
     .task {
-      guard FrameProbe.script == "chat" else { return }
-      await ProbeScript.chat(
-        latestID: { latest?.id }, toLatest: toLatest, receive: { backend.receive() })
+      switch FrameProbe.script {
+      case "chat":
+        await ProbeScript.chat(
+          latestID: { latest?.id }, toLatest: toLatest, receive: { backend.receive() })
+      case "blanking":
+        await ProbeScript.until(10) { latest != nil }
+        FrameProbe.shared.describe = { [list] in describe(list.snapshot) }
+        let last = latest!.id
+        await ProbeScript.blanking(
+          opened: last, up: true,
+          targets: [Backend.messageID(0), last, Backend.messageID(backend.messageCount / 2), last],
+          jump: { list.scrollToItem($0, align: .end) }, arrive: { backend.receive() })
+      case "video":
+        await ProbeScript.until(10) { latest != nil }
+        await ProbeScript.video(opened: latest!.id, up: true, far: Backend.messageID(0)) {
+          list.scrollToItem($0, align: .end)
+        }
+      default: break
+      }
     }
   }
 
@@ -63,6 +79,13 @@ struct ChatScreen: View {
     FrameProbe.shared.beginJump()
     list.scrollToItem(latest.id, align: .end)
   }
+}
+
+/// A snapshot's rows and space, for the probe's log.
+func describe<R, K>(_ s: VirtualSnapshot<R, K>) -> String {
+  let rows = s.items.first.map { "\($0.index)…\(s.items.last!.index)" } ?? "none"
+  return
+    "rows \(rows) complete=\(s.complete) before=\(Int(s.spaceBefore)) after=\(Int(s.spaceAfter)) total=\(s.estimatedTotal)"
 }
 
 struct MessageRow: View {
@@ -117,8 +140,19 @@ struct IssuesScreen: View {
     }
     .overlay(alignment: .topTrailing) { ProbeSummary() }
     .task {
-      guard FrameProbe.script == "issues" else { return }
-      await ProbeScript.issues(growHeader: growHeader)
+      switch FrameProbe.script {
+      case "issues": await ProbeScript.issues(growHeader: growHeader)
+      case "blanking":
+        FrameProbe.shared.describe = { [list] in describe(list.snapshot) }
+        await ProbeScript.blanking(
+          opened: Backend.issueID(0), targets: [1999, 0, 1000, 1999, 400, 0].map(Backend.issueID)
+        ) { list.scrollToItem($0, align: .start) }
+      case "video":
+        await ProbeScript.video(opened: Backend.issueID(0), up: false, far: Backend.issueID(1500)) {
+          list.scrollToItem($0, align: .start)
+        }
+      default: break
+      }
     }
   }
 
