@@ -115,6 +115,19 @@ final class LayoutScrollView {
   func rowTop(_ key: String) -> Double? { drawn[AnyHashable(key)] }
 
   var bottomGap: Double { host.contentHeight - offset - viewportHeight }
+
+  /// The space the last pass showed: in the viewport, within the content,
+  /// no row.
+  var blank: Double {
+    let bottom = min(offset + viewportHeight, host.contentHeight)
+    var y = offset
+    var gap = 0.0
+    for f in host.rowFrames() where f.maxY > y && f.minY < bottom {
+      gap += max(0, f.minY - y)
+      y = f.maxY
+    }
+    return gap + max(0, bottom - y)
+  }
 }
 
 @MainActor
@@ -829,18 +842,6 @@ final class LayoutScrollView {
     h.scheduler.advance(by: 3000)
     view.settle()
 
-    // The space a pass shows: in the viewport, within the content, no row.
-    func blank() -> Double {
-      let top = view.scrollOffset
-      let bottom = min(top + view.viewportHeight, view.host.contentHeight)
-      var y = top
-      var gap = 0.0
-      for f in view.host.rowFrames() where f.maxY > y && f.minY < bottom {
-        gap += max(0, f.minY - y)
-        y = f.maxY
-      }
-      return gap + max(0, bottom - y)
-    }
     h.pagesPending = true
     // As `ZeroVirtualizer` does, a new page is answered in the pass that
     // asks for it, from the rows the client has.
@@ -849,7 +850,7 @@ final class LayoutScrollView {
     func frame(_ y: Double) {
       view.userScroll(y)
       view.frameDrawn()
-      if blank() > 0.5 { gaps.append("\(blank()) at \(view.scrollOffset)") }
+      if view.blank > 0.5 { gaps.append("\(view.blank) at \(view.scrollOffset)") }
     }
     // About 40,000 points a second, a frame each pass, down and back up.
     for _ in 0..<200 where view.bottomGap > 0.5 { frame(view.scrollOffset + 700) }
@@ -858,6 +859,71 @@ final class LayoutScrollView {
     #expect(gaps.isEmpty, "\(gaps.count) passes showed space: \(gaps.prefix(5))")
     #expect(view.scrollOffset == 0)
     #expect(view.rowTop("r0") == 0)
+  }
+
+  // Paged toward from the loaded rows' edge a page at a time, a scroll bar
+  // jump far into the space stood blank for a pass a page while the client
+  // had the rows, or a round trip a page while the server sent them.
+  @Test("a scroll bar jump far past the loaded rows lands on rows in one query")
+  func thumbJumpFarPastTheRows() {
+    let h = Harness(rowCount: 2000) { $0.anchoring = .manual }
+    let view = LayoutScrollView(h)
+    view.settle()
+    // Down the list once and back, so its length is known.
+    while h.core.lastVisibleItem()?.key != "r1999" {
+      view.userScroll(view.scrollOffset + 1500)
+      view.frameDrawn()
+    }
+    view.userScroll(0)
+    view.settle()
+    let end = view.host.contentHeight - view.viewportHeight
+
+    // From the server: shown once the one query reaching the viewport
+    // answers.
+    view.userScroll(end * 0.3, answering: false)
+    view.pass()
+    #expect(view.blank == 0)
+    #expect(h.core.firstVisibleItem()?.key == "r\(Int(end * 0.3 / 20))")
+    view.settle()
+
+    // From the rows the client has, answered in the pass that asks for
+    // them: on screen in the jump's own pass, down and up, and past ten
+    // pages' reach.
+    _ = h.core.subscribe { h.core.setRows(h.answer(h.core.queryInputs)) }
+    for at in [0.9, 0.1, 0.6, 1, 0] {
+      view.userScroll(end * at)
+      #expect(view.blank == 0, "blank at \(at)")
+      view.frameDrawn()
+      view.settle()
+      // And back to a page about the screen.
+      #expect(h.core.snapshot.items.count <= 100)
+    }
+  }
+
+  // A pass lays out what the core publishes during it, up to 8 times; past
+  // that, nothing asked for another pass, and the last snapshot stood
+  // undrawn, as a scroll bar jump paging toward the viewport stopped blank.
+  @Test("a snapshot published after a pass's last layout is laid out the next frame")
+  func passRunsOut() {
+    let host = LayoutHost()
+    var published = 0
+    host.rows = { ([(AnyHashable("v\(published)"), 0)], 0, 0) }
+    host.measure = { _ in 20 }
+    host.afterUpdate = { [unowned host] in
+      guard published < 20 else { return }
+      published += 1
+      host.invalidate()
+    }
+    var frames: [@MainActor () -> Void] = []
+    host.nextFrame = { frames.append($0) }
+    _ = host.layout(offset: 0, viewport: 100)
+    for _ in 0..<10 where !frames.isEmpty {
+      let work = frames
+      frames = []
+      for w in work { w() }
+      _ = host.layout(offset: 0, viewport: 100)
+    }
+    #expect(host.rowFrames().map(\.key) == [AnyHashable("v20")])
   }
 
   @Test("only the rows near the viewport are measured")

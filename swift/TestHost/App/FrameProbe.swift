@@ -586,6 +586,12 @@ final class FrameProbe {
     return a.rows.allSatisfy { abs($0.value.minY - b.rows[$0.key]!.minY) <= 0.5 }
   }
 
+  /// The script found the frame on screen wrong itself.
+  func flag(_ why: String) {
+    guard let previous else { return }
+    flag(previous, why)
+  }
+
   private func flag(_ s: Sample, _ why: String, _ before: Sample? = nil, phase: String? = nil) {
     let phase = phase ?? self.phase
     wrong += 1

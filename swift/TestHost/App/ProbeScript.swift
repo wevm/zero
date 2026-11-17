@@ -115,7 +115,7 @@ enum ProbeScript {
     }
     // Opened at the end, the first flings go up.
     let sign = up ? -1.0 : 1
-    for v in [4000.0, 8000, 16000, 32000].map({ $0 * sign }) {
+    for v in [4000.0, 8000, 16000, 32000].map({ $0 * sign }) where runs("fling") {
       probe.setPhase("fling-\(Int(abs(v) / 1000))k")
       for _ in 0..<3 {
         await probe.fling(velocity: v)
@@ -126,26 +126,26 @@ enum ProbeScript {
         await sleep(0.2)
       }
     }
-    probe.setPhase("drag")
-    for v in [6000.0, 12000].map({ $0 * sign }) {
+    if runs("drag") { probe.setPhase("drag") }
+    for v in [6000.0, 12000].map({ $0 * sign }) where runs("drag") {
       await probe.drag(velocity: v, seconds: 2)
       await probe.drag(velocity: -v, seconds: 2)
     }
     arriving?.cancel()
     await sleep(0.5)
-    probe.setPhase("jump")
-    for id in targets {
+    if runs("jump") { probe.setPhase("jump") }
+    for id in targets where runs("jump") {
       probe.beginJump()
       jump(id)
       await landed()
     }
-    probe.setPhase("thumb")
-    for f in [0.3, 0.8, 0.1, 1, 0.5, 0] {
+    if runs("thumb") { probe.setPhase("thumb") }
+    for f in [0.3, 0.8, 0.1, 1, 0.5, 0] where runs("thumb") {
       await probe.thumb(to: f, frames: 8)
       await sleep(0.8)
     }
-    probe.setPhase("thumb-jump")
-    for f in [0.6, 0.2, 0.9, 0] {
+    if runs("thumb-jump") { probe.setPhase("thumb-jump") }
+    for f in [0.6, 0.2, 0.9, 0] where runs("thumb-jump") {
       probe.beginJump()
       await probe.thumb(to: f, frames: 1)
       await landed()
@@ -182,6 +182,73 @@ enum ProbeScript {
       await landed()
     }
     probe.finish()
+  }
+
+  /// Opens the chat at its latest message, scrolls up `-park-up` points
+  /// from there (none: stays at the bottom), and stops, for `reopen` to
+  /// open it again where it is (`-storage-key`).
+  static func park(latestID: () -> String?) async {
+    probe.setPhase("open")
+    await until(10) { latestID().map { probe.visible.last == $0 } ?? false }
+    await sleep(1)
+    let up = UserDefaults.standard.double(forKey: "park-up")
+    if up > 0 {
+      probe.setPhase("park")
+      await probe.drag(velocity: -2000, seconds: up / 2000)
+      await sleep(1)
+    }
+    UserDefaults.standard.set(rowTops(), forKey: "probe-parked")
+    UserDefaults.standard.set(up == 0, forKey: "probe-parked-bottom")
+    log("PARKED")
+    probe.finish()
+  }
+
+  /// The chat opened again where `park` left it, from the rows the client
+  /// kept: in its first frame, and once the server has confirmed them;
+  /// left at the bottom, at the latest message by then.
+  static func reopen(latestID: () -> String?) async {
+    probe.setPhase("open")
+    await until(10) { !probe.visible.isEmpty }
+    log("OPENED")
+    let parked = UserDefaults.standard.stringArray(forKey: "probe-parked") ?? []
+    if !same(rowTops(), parked) { probe.flag("opened at \(rowTops()), not \(parked)") }
+    // The server's answer: two `-latency` legs away, and then some.
+    await sleep(2 + 3 * UserDefaults.standard.double(forKey: "latency") / 1000)
+    log("SETTLED")
+    if UserDefaults.standard.bool(forKey: "probe-parked-bottom") {
+      if probe.visible.last != latestID() {
+        probe.flag("settled at \(rowTops()), not at \(latestID() ?? "-")")
+      }
+    } else if !same(rowTops(), parked) {
+      probe.flag("settled at \(rowTops()), not \(parked)")
+    }
+    probe.finish()
+  }
+
+  /// The rows on screen and their tops, as `id@top`.
+  private static func rowTops() -> [String] {
+    probe.visible.map { id in "\(id)@\(probe.top(of: id).map { Int($0.rounded()) } ?? 0)" }
+  }
+
+  /// The same rows, each within a point of the same place.
+  private static func same(_ a: [String], _ b: [String]) -> Bool {
+    func split(_ s: String) -> (String, Int) {
+      let p = s.split(separator: "@")
+      return (String(p[0]), Int(p[1]) ?? 0)
+    }
+    return a.count == b.count
+      && zip(a.map(split), b.map(split)).allSatisfy { $0.0 == $1.0 && abs($0.1 - $1.1) <= 1 }
+  }
+
+  private static func log(_ what: String) {
+    print("PROBE \(what) \(rowTops().joined(separator: " "))")
+  }
+
+  /// Whether `blanking` runs its phase `name`: all of them, or those
+  /// `-probe-phases` lists, such as `thumb,thumb-jump`.
+  static func runs(_ name: String) -> Bool {
+    guard let only = UserDefaults.standard.string(forKey: "probe-phases") else { return true }
+    return only.split(separator: ",").contains { $0 == name }
   }
 
   /// The list's start is at its top: the header, or the first row.

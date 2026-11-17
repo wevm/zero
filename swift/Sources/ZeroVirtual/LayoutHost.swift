@@ -167,7 +167,9 @@ package final class LayoutHost: VirtualHost {
       stale = true
       didScroll()
     }
-    if !framePending, !nearRowsMeasured() {
+    // Also when the pass ran out with a snapshot not laid out yet, which
+    // nothing else may ask a pass for: its rows would never be drawn.
+    if !framePending, stale || !nearRowsMeasured() {
       framePending = true
       nextFrame { [weak self] in
         guard let self else { return }

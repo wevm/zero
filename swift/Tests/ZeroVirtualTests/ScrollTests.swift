@@ -75,10 +75,12 @@ import ZeroTesting
     h.userScroll(6000)
     h.settle()
     #expect(h.visibleIndexes == range(300, 319))
+    // One page reached the viewport, and a page about it took its place:
+    // from twice the threshold above the screen.
     let s = h.core.snapshot
-    #expect(s.items.first?.index == 239)
+    #expect(s.items.first?.index == 281)
     #expect(s.items.count == 100)
-    #expect(s.spaceBefore == 239 * 20)
+    #expect(s.spaceBefore == 281 * 20)
     #expect(h.scrollOffset == 6000)
     for item in s.items { #expect(item.row.id == "r\(item.index)") }
   }
@@ -88,7 +90,7 @@ import ZeroTesting
     let h = seenToTheEnd()
     h.userScroll(6000)
     h.settle()
-    #expect(h.items.first?.index == 239)
+    #expect(h.items.first?.index == 281)
     h.userScroll(0)
     h.settle()
     let s = h.core.snapshot
@@ -531,8 +533,13 @@ struct ManualAnchoringTests {
       return
     }
     #expect(start.id.hasPrefix("r"))
+    // Saved, the page from the first row on screen, after the row above it.
     let saved = try #require(persisted.last)
-    #expect(saved.anchor == core.queryInputs.anchor)
+    guard case .forward(_, let savedStart?) = saved.anchor else {
+      Issue.record("expected a page anchor")
+      return
+    }
+    #expect(savedStart.id.hasPrefix("r"))
     let restored = try JSONDecoder().decode(
       VirtualScrollState<Cursor, String>.self, from: JSONEncoder().encode(saved))
     #expect(restored == saved)

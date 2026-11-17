@@ -13,7 +13,11 @@ struct ChatScreen: View {
 
   init(backend: Backend) {
     self.backend = backend
-    _list = State(initialValue: backend.chatList())
+    let (list, restored) = backend.chatList()
+    _list = State(initialValue: list)
+    // Where it was last time: on screen at once, from the rows the client
+    // kept.
+    _started = State(initialValue: restored)
   }
 
   var body: some View {
@@ -21,8 +25,9 @@ struct ChatScreen: View {
       // Off the safe area's edges, the scroll view's frame is its viewport,
       // which the UI tests measure rows against.
       Divider()
-      // On screen once it knows where to open, the latest message: shown
-      // before, it would draw the top of the chat for a frame.
+      // On screen once it knows where to open, the latest message (or
+      // where it was): shown before, it would draw the top of the chat for
+      // a frame.
       if started, Native.enabled {
         NativeVirtualList(list: list) { item, row in
           let m = item.row
@@ -64,6 +69,13 @@ struct ChatScreen: View {
           opened: last, up: true,
           targets: [Backend.messageID(0), last, Backend.messageID(backend.messageCount / 2), last],
           jump: { list.scrollToItem($0, align: .end) }, arrive: { backend.receive() })
+      case "park":
+        await ProbeScript.until(10) { latest != nil }
+        FrameProbe.shared.describe = { [list] in describe(list.snapshot) }
+        await ProbeScript.park(latestID: { latest?.id })
+      case "reopen":
+        FrameProbe.shared.describe = { [list] in describe(list.snapshot) }
+        await ProbeScript.reopen(latestID: { latest?.id })
       case "video":
         await ProbeScript.until(10) { latest != nil }
         await ProbeScript.video(opened: latest!.id, up: true, far: Backend.messageID(0)) {

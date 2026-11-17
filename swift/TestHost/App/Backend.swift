@@ -20,13 +20,18 @@ final class Backend {
     let latency = UserDefaults.standard.double(forKey: "latency")
     server.put("issues", (0..<issues).map(Self.issue))
     server.put("comments", (0..<messages).map { Self.message($0) })
+    // `-storage-key <key>`: the client keeps its rows in SQLite under the
+    // key, from one launch to the next, as an app's client does.
     let options = ZeroOptions(
-      cacheURL: "http://loopback.test", userID: "u", storageKey: UUID().uuidString,
-      storage: .memory)
+      cacheURL: "http://loopback.test", userID: "u",
+      storageKey: Self.storageKey ?? UUID().uuidString,
+      storage: Self.storageKey == nil ? .memory : .sqlite())
     zero = try! Zero(
       schema: .test, options: options,
       socketFactory: latency > 0 ? DelayedSockets(server, seconds: latency / 1000) : server)
   }
+
+  static let storageKey = UserDefaults.standard.string(forKey: "storage-key")
 
   static func issueID(_ i: Int) -> String { "i" + String(format: "%04d", i) }
   static func messageID(_ i: Int) -> String { "m" + String(format: "%04d", i) }
@@ -193,14 +198,27 @@ typealias ChatList = ZeroVirtualizer<Void, TestComment, String, ChatStart, Strin
 typealias IssueList = ZeroVirtualizer<Void, TestIssue, String, String, String>
 
 extension Backend {
-  func chatList() -> ChatList {
-    ChatList(
+  /// The chat, where it was when the app last had it open, when the
+  /// client keeps its rows (`-storage-key`); and whether it was.
+  func chatList() -> (list: ChatList, restored: Bool) {
+    let saved = Self.storageKey.map { "chat-scroll-" + $0 }
+    let state = saved.flatMap { UserDefaults.standard.data(forKey: $0) }.flatMap {
+      try? JSONDecoder().decode(ChatList.ScrollState.self, from: $0)
+    }
+    let list = ChatList(
       zero: zero, listContext: "chat", estimatedRowHeight: 80, rowKey: \.id,
       toStartRow: { ChatStart(createdAt: $0.createdAt, id: $0.id) },
       pageQuery: { r, _ in
         ChatQueries.page(.init(limit: r.limit, start: r.start, backward: r.direction == .backward))
       },
-      rowQuery: { r, _ in ChatQueries.message(r.id) }, minPageSize: 20, stickToBottom: true)
+      rowQuery: { r, _ in ChatQueries.message(r.id) },
+      scrollState: state, minPageSize: 20, stickToBottom: true)
+    if let saved {
+      list.onScrollStateChange = { state in
+        UserDefaults.standard.set(try? JSONEncoder().encode(state), forKey: saved)
+      }
+    }
+    return (list, state != nil)
   }
 
   func issueList() -> IssueList {
