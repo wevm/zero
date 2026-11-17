@@ -11,9 +11,9 @@
   WebSockets on a tokio thread of the app's own (tokio-tungstenite, rustls).
   `zero-client` itself only gets its `sqlite` feature.
 - `src/live.rs`: a typed query kept current in a GPUI view.
-- `src/app.rs`: the issue list (filters, search, the synced count, paging
-  as it scrolls) and the selected issue (markdown, labels, comments,
-  commenting, closing and reopening).
+- `src/app.rs`: the issue list (filters, search, the synced count, a scroll
+  bar, paging as it scrolls) and the selected issue (markdown, labels,
+  comments, commenting, closing and reopening).
 - The local store is SQLite in `~/Library/Application Support/zbugs-gpui`,
   apart from zbugs-swift's.
 

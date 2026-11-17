@@ -5,21 +5,25 @@
 //! Two lists, as `BLANKING=issues` (the default) or `BLANKING=chat` picks:
 //!
 //! - `issues`: zbugs-gpui's issue list, as `app.rs` builds it: a
-//!   `uniform_list` of 56-point rows that asks for 100 more rows when the
-//!   rows it renders near the last loaded, which come a round trip later.
+//!   `uniform_list` of 56-point rows with GPUI Component's scroll bar that
+//!   asks for 100 more rows when the rows it renders near the last loaded,
+//!   which come a round trip later.
 //! - `chat`: a chat in GPUI's `list`, bottom-aligned, of messages from a line
 //!   to a few hundred words, so a row's height isn't known until it renders.
 //!   It opens at the bottom and follows new messages there, loads older ones a
 //!   page at a time as it scrolls up, and gets a new message every 0.3 s
-//!   throughout.
+//!   throughout. It has the same scroll bar.
 //!
-//! `cargo test --example blanking` pushes both, headless: trackpad flings
-//! (momentum, as the platform's scroll events) at 4,000 to 32,000 points a
-//! second, long fast drags, jumps across the list, a scroll bar's drag in the
-//! chat, and paging, checking every frame that the rows painted cover the
+//! `cargo test --example blanking` pushes both, headless: the scroll bar's
+//! thumb dragged back and forth across the track in a second down to a
+//! tenth, and held at the end the list pages at as pages land, clicks in its
+//! track that jump far, trackpad flings (momentum, as the platform's scroll
+//! events) at 4,000 to 32,000 points a second, long fast drags, jumps across
+//! the list, and paging, checking every frame that the rows painted cover the
 //! viewport. `cargo run --example blanking` does the same in a window, on the
 //! display's frames, and prints what it found.
 
+use gpui_kit::component::scroll::{ScrollableElement as _, ScrollbarHandle};
 use gpui_kit::*;
 use std::cell::RefCell;
 use std::ops::Range;
@@ -60,6 +64,8 @@ struct Lists {
     scroll: UniformListScrollHandle,
     state: ListState,
     painted: Rc<RefCell<Painted>>,
+    /// Where the pointer is.
+    pointer: Point<Pixels>,
 }
 
 impl Lists {
@@ -80,6 +86,7 @@ impl Lists {
             scroll: UniformListScrollHandle::new(),
             state,
             painted: Rc::default(),
+            pointer: pointer(),
         }
     }
 
@@ -218,6 +225,67 @@ impl Lists {
         gap + (bottom - y).max(0.)
     }
 
+    /// The list's scroll, as its scroll bar sees it.
+    fn handle(&self) -> &dyn ScrollbarHandle {
+        if self.chat { &self.state } else { &self.scroll }
+    }
+
+    /// How far down the list is scrolled: 0 at the top, 1 at the bottom.
+    fn scrolled(&self) -> f32 {
+        let handle = self.handle();
+        let max = handle.content_size().height - handle.viewport_bounds().size.height;
+        if max <= px(0.) {
+            return 0.;
+        }
+        (-handle.offset().y / max).clamp(0., 1.)
+    }
+
+    /// The middle of the scroll bar's thumb, which GPUI Component draws
+    /// rather than lays out: as long as the share of the list shown, 48
+    /// points at least, down the bar as far as the list is scrolled.
+    fn thumb(&self) -> Point<Pixels> {
+        let viewport = self.handle().viewport_bounds();
+        let track = viewport.size.height;
+        let content = self.handle().content_size().height;
+        let len = (track / content * track).max(px(48.)).min(track);
+        let y = viewport.top() + (track - len) * self.scrolled() + len / 2.;
+        point(viewport.right() - px(8.), y)
+    }
+
+    /// The pointer's input for `step`, if it has one.
+    fn input(&mut self, step: Step) -> Option<PlatformInput> {
+        let (button, modifiers) = (MouseButton::Left, Modifiers::default());
+        let position = match step {
+            Step::Wheel(dy, phase) => return Some(PlatformInput::Scroll(scroll_event(dy, phase))),
+            Step::Jump(_) | Step::Rest => return None,
+            Step::Grab => self.thumb(),
+            Step::Press(at) | Step::Drag(at) => point(self.thumb().x, px(SIZE.1 * at)),
+            Step::Release => self.pointer,
+            Step::Leave => pointer(),
+        };
+        self.pointer = position;
+        Some(match step {
+            Step::Grab | Step::Press(_) => PlatformInput::MouseDown(MouseDownEvent {
+                position,
+                button,
+                modifiers,
+                click_count: 1,
+                first_mouse: false,
+            }),
+            Step::Release => PlatformInput::MouseUp(MouseUpEvent {
+                position,
+                button,
+                modifiers,
+                click_count: 1,
+            }),
+            _ => PlatformInput::MouseMove(MouseMoveEvent {
+                position,
+                pressed_button: matches!(step, Step::Drag(_)).then_some(button),
+                modifiers,
+            }),
+        })
+    }
+
     /// Jumps to the row a fraction `at` of the way down.
     fn jump(&mut self, at: f32) {
         let ix = ((self.ids.len() - 1) as f32 * at) as usize;
@@ -266,12 +334,17 @@ impl Render for Lists {
             .size_full()
             .into_any_element()
         };
-        div()
+        let area = div()
             .relative()
             .size_full()
             .bg(blank_color())
             .child(viewport)
-            .child(list)
+            .child(list);
+        if self.chat {
+            area.vertical_scrollbar(&self.state)
+        } else {
+            area.vertical_scrollbar(&self.scroll)
+        }
     }
 }
 
@@ -310,9 +383,18 @@ enum Step {
     Wheel(f32, TouchPhase),
     /// A jump to the row a fraction of the way down.
     Jump(f32),
-    /// The scroll bar's thumb dragged to a fraction of the way down.
-    Thumb(f32),
-    ThumbEnd,
+    /// The mouse pressed on the scroll bar's thumb, at its middle.
+    Grab,
+    /// The mouse, held, moved down the scroll bar to a fraction of the
+    /// window's height.
+    Drag(f32),
+    /// The mouse pressed in the scroll bar's track a fraction of the
+    /// window's height down: a jump there.
+    Press(f32),
+    /// The mouse let go where it is.
+    Release,
+    /// The mouse moved back over the list's middle.
+    Leave,
     /// No input.
     Rest,
 }
@@ -329,6 +411,45 @@ fn script(chat: bool) -> Vec<(String, Step)> {
         }
     };
     add("open", Step::Rest, 60);
+    // The scroll bar first, from the list's first page, so pages land under
+    // the thumb: dragged end to end and back, in a second down to a tenth of
+    // one each way, as fast as a hand goes, then held at the end the list
+    // pages at (the issues' bottom, the chat's top) as pages land there and
+    // lengthen the track. A scroll brings the bar up first, as on a Mac with
+    // a trackpad.
+    let end: [f32; 2] = if chat { [0., 0.01] } else { [1., 0.99] };
+    let mut from = if chat { 1. } else { 0. };
+    for (name, frames, stops) in [
+        ("thumb-drag", 120, vec![1., 0., 1., 0., 0.5]),
+        ("thumb-drag", 30, vec![1., 0., 1., 0., 0.5]),
+        ("thumb-drag", 12, vec![1., 0., 1., 0., 0.5]),
+        ("thumb-hold", 12, end.repeat(8)),
+    ] {
+        add(name, Step::Wheel(1., TouchPhase::Moved), 1);
+        add(name, Step::Wheel(-1., TouchPhase::Moved), 1);
+        add(name, Step::Grab, 1);
+        for stop in stops {
+            for i in 1..=frames {
+                add(
+                    name,
+                    Step::Drag(from + (stop - from) * i as f32 / frames as f32),
+                    1,
+                );
+            }
+            from = stop;
+        }
+        add(name, Step::Release, 1);
+        add(name, Step::Rest, 30);
+    }
+    // Far jumps: GPUI Component's scroll bar jumps to a click in its track.
+    for at in [0.95, 0.05, 0.6, 0.01, 0.99, 0.3] {
+        add("thumb-jump", Step::Wheel(1., TouchPhase::Moved), 1);
+        add("thumb-jump", Step::Wheel(-1., TouchPhase::Moved), 1);
+        add("thumb-jump", Step::Press(at), 1);
+        add("thumb-jump", Step::Release, 1);
+        add("thumb-jump", Step::Rest, 30);
+    }
+    add("thumb-jump", Step::Leave, 1);
     for v in [4_000., 8_000., 16_000., 32_000.] {
         let name = format!("trackpad-{}k", v as u32 / 1000);
         for sign in [1., 1., 1., -1.] {
@@ -361,20 +482,6 @@ fn script(chat: bool) -> Vec<(String, Step)> {
     for at in [0.9, 0.1, 0.6, 0.0, 1.0, 0.3] {
         add("jump", Step::Jump(at), 1);
         add("jump", Step::Rest, 30);
-    }
-    if chat {
-        for (from, to) in [(1., 0.), (0., 1.), (0.5, 0.05)] {
-            for i in 0..=60 {
-                add("thumb", Step::Thumb(from + (to - from) * i as f32 / 60.), 1);
-            }
-            add("thumb", Step::ThumbEnd, 1);
-            add("thumb", Step::Rest, 30);
-        }
-        for at in [0.2, 0.9, 0.0] {
-            add("thumb-jump", Step::Thumb(at), 1);
-            add("thumb-jump", Step::ThumbEnd, 1);
-            add("thumb-jump", Step::Rest, 30);
-        }
     }
     steps
 }
@@ -431,24 +538,6 @@ fn scroll_event(dy: f32, phase: TouchPhase) -> ScrollEvent {
     }
 }
 
-/// A step's input that goes to the list's state rather than the window.
-fn apply(lists: &mut Lists, step: Step) {
-    match step {
-        Step::Jump(at) => lists.jump(at),
-        Step::Thumb(at) => {
-            if !lists.state.is_scrollbar_dragging() {
-                lists.state.scrollbar_drag_started();
-            }
-            let max = lists.state.max_offset_for_scrollbar();
-            lists
-                .state
-                .set_offset_from_scrollbar(point(px(0.), -max.y * at));
-        }
-        Step::ThumbEnd => lists.state.scrollbar_drag_ended(),
-        Step::Wheel(..) | Step::Rest => {}
-    }
-}
-
 /// Runs the script in a window, a step a frame, and prints the tally.
 fn drive(view: Entity<Lists>, window: &mut Window, cx: &mut App) {
     let steps = script(view.read(cx).chat);
@@ -484,11 +573,13 @@ fn next(
             cx.quit();
             return;
         };
-        if let Step::Wheel(dy, phase) = step {
-            window.dispatch_event(PlatformInput::Scroll(scroll_event(dy, phase)), cx);
+        if let Some(input) = view.update(cx, |lists, _| lists.input(step)) {
+            window.dispatch_event(input, cx);
         }
         view.update(cx, |lists, cx| {
-            apply(lists, step);
+            if let Step::Jump(at) = step {
+                lists.jump(at);
+            }
             lists.tick(start.elapsed(), cx);
             cx.notify();
         });
@@ -520,7 +611,8 @@ mod tests {
     use super::*;
 
     /// The script headless, a frame a step, on a clock that moves a frame
-    /// a step.
+    /// a step. The scroll bar's drags must reach both ends, held at the end
+    /// it must page, and its jumps must land where clicked.
     fn run(chat: bool) -> (Tally, usize) {
         let mut app = TestApp::new();
         let mut window = app.open_window_with_options(
@@ -536,18 +628,49 @@ mod tests {
         window.draw();
         window.simulate_mouse_move(pointer());
         let mut tally = Tally::default();
+        let (mut least, mut most, mut held) = (1f32, 0f32, (0, 0));
         for (i, (name, step)) in script(chat).into_iter().enumerate() {
-            if let Step::Wheel(dy, phase) = step {
-                window.simulate_event(scroll_event(dy, phase));
+            match window.update(|lists, _, _| lists.input(step)) {
+                Some(PlatformInput::Scroll(e)) => window.simulate_event(e),
+                Some(PlatformInput::MouseDown(e)) => window.simulate_event(e),
+                Some(PlatformInput::MouseMove(e)) => window.simulate_event(e),
+                Some(PlatformInput::MouseUp(e)) => window.simulate_event(e),
+                Some(_) => unreachable!("the script's input"),
+                None => {}
             }
             let now = FRAME * i as u32;
             window.update(|lists, _, cx| {
-                apply(lists, step);
+                if let Step::Jump(at) = step {
+                    lists.jump(at);
+                }
                 lists.tick(now, cx);
                 cx.notify();
             });
             window.draw();
             tally.count(&name, window.read(|lists, _| lists.blank()));
+            let (at, rows, first) =
+                window.read(|lists, _| (lists.scrolled(), lists.ids.len(), lists.ids[0]));
+            match (name.as_str(), step) {
+                ("thumb-drag", Step::Drag(_)) => (least, most) = (least.min(at), most.max(at)),
+                ("thumb-drag", Step::Release) => {
+                    assert!(
+                        least < 0.02 && most > 0.98,
+                        "a thumb drag showed {least}..{most}"
+                    );
+                    (least, most) = (1., 0.);
+                }
+                ("thumb-hold", Step::Grab) => held = (rows, first),
+                ("thumb-hold", Step::Release) => assert!(
+                    rows >= held.0 + 3 * PAGE || rows == ISSUES || first == 0,
+                    "held at the end, paged from {held:?} to {:?}",
+                    (rows, first)
+                ),
+                (_, Step::Press(to)) => assert!(
+                    (at - to).abs() < 0.2,
+                    "a jump to {to} of the track showed {at}"
+                ),
+                _ => {}
+            }
         }
         let rows = window.read(|lists, _| lists.ids.len());
         (tally, rows)
