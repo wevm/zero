@@ -69,7 +69,11 @@ public final class LoopbackServer: SocketFactory {
     -> any SocketConnection
   {
     sockets.removeAll { $0.closed }
-    let socket = LoopbackSocket(secProtocol: secProtocol, events: events)
+    // A client that kept its rows (in SQLite, from an earlier launch)
+    // connects from the cookie it has: the server goes on from there, or
+    // the client takes the poke for another history and drops it.
+    let socket = LoopbackSocket(
+      secProtocol: secProtocol, events: events, cookie: Self.baseCookie(url))
     sockets.append(socket)
     socket.later {
       socket.events?.socketDidOpen()
@@ -81,6 +85,15 @@ public final class LoopbackServer: SocketFactory {
         queries: socket.got.sorted())
     }
     return socket
+  }
+
+  /// The cookie a connect URL carries, one this server gave out.
+  private static func baseCookie(_ url: String) -> Int {
+    guard let query = url.split(separator: "?", maxSplits: 1).last else { return 0 }
+    for param in query.split(separator: "&") where param.hasPrefix("baseCookie=") {
+      return Int(param.dropFirst("baseCookie=".count)) ?? 0
+    }
+    return 0
   }
 
   private static func put(_ table: String, _ value: JSONValue) -> JSONValue {
@@ -101,8 +114,9 @@ private final class LoopbackSocket: SocketConnection {
   private(set) var got: Set<String> = []
   private var cookie = 0
 
-  init(secProtocol: String?, events: any SocketEvents) {
+  init(secProtocol: String?, events: any SocketEvents, cookie: Int) {
     self.events = events
+    self.cookie = cookie
     // The first queries can ride in the connection's protocol header.
     if let secProtocol, let decoded = try? SecProtocols.decode(secProtocol) {
       later { self.receiveFromClient(decoded) }

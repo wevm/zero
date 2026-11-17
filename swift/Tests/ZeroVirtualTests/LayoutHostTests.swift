@@ -115,6 +115,19 @@ final class LayoutScrollView {
   func rowTop(_ key: String) -> Double? { drawn[AnyHashable(key)] }
 
   var bottomGap: Double { host.contentHeight - offset - viewportHeight }
+
+  /// The space the last pass showed: in the viewport, within the content,
+  /// no row.
+  var blank: Double {
+    let bottom = min(offset + viewportHeight, host.contentHeight)
+    var y = offset
+    var gap = 0.0
+    for f in host.rowFrames() where f.maxY > y && f.minY < bottom {
+      gap += max(0, f.minY - y)
+      y = f.maxY
+    }
+    return gap + max(0, bottom - y)
+  }
 }
 
 @MainActor
@@ -397,6 +410,69 @@ final class LayoutScrollView {
     h.data += (63..<66).map { TestRow(id: "r\($0)") }
     view.settle()
     #expect(view.scrollOffset == offset)
+  }
+
+  // As a chat opens on its latest message: the jump looks the row up
+  // first, which takes the server a round trip. Following the bottom of the
+  // rows the list had until then paged through the whole list, a new query
+  // each pass, and the jump waited for it to reach the end.
+  @Test("a jump waiting on its row's lookup doesn't page after the bottom")
+  func jumpWaitsInPlace() {
+    let h = Harness(rowCount: 2000, rowHeight: 80) {
+      $0.anchoring = .manual
+      $0.stickToBottom = true
+      $0.minPageSize = 20
+    }
+    let view = LayoutScrollView(h)
+    h.offline = true
+    h.probePending = true
+    view.pass()
+    h.core.scrollToItem("r1999", align: .end)
+    view.pass()
+    let query = h.queryKey(h.core.queryInputs)
+    for _ in 0..<10 {
+      view.frameDrawn()
+      view.pass()
+    }
+    #expect(h.queryKey(h.core.queryInputs) == query)
+    h.offline = false
+    h.probePending = false
+    view.settle()
+    #expect(h.core.lastVisibleItem()?.key == "r1999")
+    #expect(view.bottomGap == 0)
+    #expect(view.blank == 0)
+  }
+
+  // As a chat opening on its latest message with the server a second away:
+  // the jump puts its row on screen from the rows the client has, and the
+  // user scrolls before the server confirms them. The jump used to put the
+  // viewport back on its row until they settled.
+  @Test("a scroll once a jump's row is on screen stays while its rows settle")
+  func scrollAfterJump() {
+    let h = Harness(rowCount: 2000, rowHeight: 80) {
+      $0.anchoring = .manual
+      $0.stickToBottom = true
+      $0.minPageSize = 20
+    }
+    let view = LayoutScrollView(h)
+    view.pass()
+    h.offline = true
+    h.core.scrollToItem("r1999", align: .end)
+    for _ in 0..<3 {
+      view.pass()
+      view.frameDrawn()
+    }
+    #expect(h.core.lastVisibleItem()?.key == "r1999")
+    #expect(!h.core.snapshot.complete)
+    let y = view.scrollOffset - 50
+    view.userScroll(y)
+    view.frameDrawn()
+    view.pass()
+    #expect(view.scrollOffset == y)
+    h.offline = false
+    view.settle()
+    #expect(view.scrollOffset == y)
+    #expect(view.bottomGap == 50)
   }
 
   // As when the keyboard comes up under a chat. The re-pin to the bottom
@@ -829,18 +905,6 @@ final class LayoutScrollView {
     h.scheduler.advance(by: 3000)
     view.settle()
 
-    // The space a pass shows: in the viewport, within the content, no row.
-    func blank() -> Double {
-      let top = view.scrollOffset
-      let bottom = min(top + view.viewportHeight, view.host.contentHeight)
-      var y = top
-      var gap = 0.0
-      for f in view.host.rowFrames() where f.maxY > y && f.minY < bottom {
-        gap += max(0, f.minY - y)
-        y = f.maxY
-      }
-      return gap + max(0, bottom - y)
-    }
     h.pagesPending = true
     // As `ZeroVirtualizer` does, a new page is answered in the pass that
     // asks for it, from the rows the client has.
@@ -849,7 +913,7 @@ final class LayoutScrollView {
     func frame(_ y: Double) {
       view.userScroll(y)
       view.frameDrawn()
-      if blank() > 0.5 { gaps.append("\(blank()) at \(view.scrollOffset)") }
+      if view.blank > 0.5 { gaps.append("\(view.blank) at \(view.scrollOffset)") }
     }
     // About 40,000 points a second, a frame each pass, down and back up.
     for _ in 0..<200 where view.bottomGap > 0.5 { frame(view.scrollOffset + 700) }
@@ -858,6 +922,71 @@ final class LayoutScrollView {
     #expect(gaps.isEmpty, "\(gaps.count) passes showed space: \(gaps.prefix(5))")
     #expect(view.scrollOffset == 0)
     #expect(view.rowTop("r0") == 0)
+  }
+
+  // Paged toward from the loaded rows' edge a page at a time, a scroll bar
+  // jump far into the space stood blank for a pass a page while the client
+  // had the rows, or a round trip a page while the server sent them.
+  @Test("a scroll bar jump far past the loaded rows lands on rows in one query")
+  func thumbJumpFarPastTheRows() {
+    let h = Harness(rowCount: 2000) { $0.anchoring = .manual }
+    let view = LayoutScrollView(h)
+    view.settle()
+    // Down the list once and back, so its length is known.
+    while h.core.lastVisibleItem()?.key != "r1999" {
+      view.userScroll(view.scrollOffset + 1500)
+      view.frameDrawn()
+    }
+    view.userScroll(0)
+    view.settle()
+    let end = view.host.contentHeight - view.viewportHeight
+
+    // From the server: shown once the one query reaching the viewport
+    // answers.
+    view.userScroll(end * 0.3, answering: false)
+    view.pass()
+    #expect(view.blank == 0)
+    #expect(h.core.firstVisibleItem()?.key == "r\(Int(end * 0.3 / 20))")
+    view.settle()
+
+    // From the rows the client has, answered in the pass that asks for
+    // them: on screen in the jump's own pass, down and up, and past ten
+    // pages' reach.
+    _ = h.core.subscribe { h.core.setRows(h.answer(h.core.queryInputs)) }
+    for at in [0.9, 0.1, 0.6, 1, 0] {
+      view.userScroll(end * at)
+      #expect(view.blank == 0, "blank at \(at)")
+      view.frameDrawn()
+      view.settle()
+      // And back to a page about the screen.
+      #expect(h.core.snapshot.items.count <= 100)
+    }
+  }
+
+  // A pass lays out what the core publishes during it, up to 8 times; past
+  // that, nothing asked for another pass, and the last snapshot stood
+  // undrawn, as a scroll bar jump paging toward the viewport stopped blank.
+  @Test("a snapshot published after a pass's last layout is laid out the next frame")
+  func passRunsOut() {
+    let host = LayoutHost()
+    var published = 0
+    host.rows = { ([(AnyHashable("v\(published)"), 0)], 0, 0) }
+    host.measure = { _ in 20 }
+    host.afterUpdate = { [unowned host] in
+      guard published < 20 else { return }
+      published += 1
+      host.invalidate()
+    }
+    var frames: [@MainActor () -> Void] = []
+    host.nextFrame = { frames.append($0) }
+    _ = host.layout(offset: 0, viewport: 100)
+    for _ in 0..<10 where !frames.isEmpty {
+      let work = frames
+      frames = []
+      for w in work { w() }
+      _ = host.layout(offset: 0, viewport: 100)
+    }
+    #expect(host.rowFrames().map(\.key) == [AnyHashable("v20")])
   }
 
   @Test("only the rows near the viewport are measured")

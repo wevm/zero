@@ -39,7 +39,12 @@ extension VirtualItem: Sendable where Row: Sendable, Key: Sendable {}
 public struct VirtualScrollState<StartRow: Equatable & Sendable, ListContext: Equatable & Sendable>:
   Equatable, Sendable
 {
+  /// The page to load: from the row at the top of the viewport.
   public var anchor: VirtualAnchor<StartRow>
+  /// How far down the viewport is: into the page's first row, from the
+  /// list's start as if the rows above it stood at the estimated row
+  /// height. Past the end, as a list stuck to its bottom saves it: the
+  /// bottom.
   public var scrollOffset: Double
   public var estimatedTotal: Int
   public var hasReachedStart: Bool
@@ -251,6 +256,11 @@ package final class VirtualizerCore<
   private var rows: RowsSnapshot<Row, StartRow> = .empty
   private var paging: Paging
   private var pageSize: Int
+  // Rows the page reads past the page size to reach a viewport far into
+  // the space past the loaded rows, as a scroll bar's jump goes: the rows
+  // there load in one query, not a page a pass (or a round trip) at a time.
+  // Back to none once rows are on screen.
+  private var reach = 0
   private(set) package var settled = false
 
   private var listeners: [Int: () -> Void] = [:]
@@ -549,7 +559,7 @@ package final class VirtualizerCore<
     var probe: String?
     if case .probe(let p) = target { probe = p.id }
     return RowsQueryInputs(
-      pageSize: pageSize, anchor: effectiveAnchor, settled: settled, probeID: probe)
+      pageSize: pageSize + reach, anchor: effectiveAnchor, settled: settled, probeID: probe)
   }
 
   /// Calls `listener` whenever the snapshot or the query inputs change.
@@ -730,7 +740,10 @@ package final class VirtualizerCore<
   }
 
   private func repinToBottom() {
-    guard options.stickToBottom, stuck, !landing, let host else { return }
+    // Nor while a jump looks up its row: it goes where the row is, and
+    // following the bottom of the rows there until then pages through
+    // them all, a new query each pass, which its lookup waits behind.
+    guard options.stickToBottom, stuck, target == nil, let host else { return }
     setScrollOffset(host.contentHeight - host.viewportHeight)
     stuck = true
   }
@@ -848,6 +861,8 @@ package final class VirtualizerCore<
   }
 
   private func setPaging(_ next: Paging) {
+    // Renumbered, the page still reaches the viewport; another page doesn't.
+    if next.anchor.with(index: 0) != paging.anchor.with(index: 0) { reach = 0 }
     paging = next
     if next.anchor == .top || next.hasReachedStart {
       openedAway = false
@@ -857,12 +872,19 @@ package final class VirtualizerCore<
     version += 1
   }
 
-  private func setAnchor(_ anchor: Anchor) {
+  private func setAnchor(_ anchor: Anchor, reach: Int = 0) {
     // Paging can pick the same anchor every commit.
-    if paging.anchor == anchor { return }
+    if paging.anchor == anchor {
+      if self.reach != reach {
+        self.reach = reach
+        version += 1
+      }
+      return
+    }
     var next = paging
     next.anchor = anchor
     setPaging(next)
+    self.reach = reach
   }
 
   // MARK: - Geometry
@@ -1047,7 +1069,7 @@ package final class VirtualizerCore<
 
   // The rows answer the query as it is now: its anchor and page size.
   private var rowsAnswerQuery: Bool {
-    isListContextCurrent && rows.pageSize == pageSize && rows.anchor == paging.anchor
+    isListContextCurrent && rows.pageSize == pageSize + reach && rows.anchor == paging.anchor
   }
 
   private var rowsSettled: Bool { rowsAnswerQuery && rows.complete }
@@ -1068,7 +1090,15 @@ package final class VirtualizerCore<
   private func onScroll() {
     let programmatic = programmaticScroll
     programmaticScroll = false
-    if !programmatic, case .offset = target { target = nil }
+    // The user takes over from a restore, and from a jump on screen: one
+    // still settling its rows would put the viewport back on its row.
+    if !programmatic, let t = target {
+      switch t {
+      case .offset: target = nil
+      case .row where placed: target = nil
+      default: break
+      }
+    }
     if !programmatic {
       realign = nil
       heldShort = nil
@@ -1283,7 +1313,23 @@ package final class VirtualizerCore<
     case .probe: return
     case .offset(let offset):
       guard rowsAnswerQuery else { return }
-      setScrollOffset(offset)
+      // The offset counts the rows above the page at the estimate: from
+      // its first row, wherever the space as estimated puts it. A restore
+      // owns the position, so the space is as estimated: none carried from
+      // its first answers, which can leave none at all.
+      let adjust = spaceAdjust
+      if adjust != 0 {
+        spaceAdjust = 0
+        version += 1
+      }
+      let first = host?.rowFrames().first
+      setScrollOffset(
+        first.map { $0.minY - adjust + offset - Double($0.index) * rowEstimate } ?? offset)
+      // Lands once laid out without it.
+      if adjust != 0 {
+        placed = true
+        return
+      }
     case .row(let pending):
       guard let moved = landRow(pending) else { return }
       // A host that lays out with its scroll measures the rows it scrolled
@@ -1366,38 +1412,55 @@ package final class VirtualizerCore<
     let visible = visibleIndexRange(host)
     let threshold = max(options.overscan, nearPageEdgeThreshold(pageSize))
 
-    func updateAnchorForEdge(_ targetIndex: Int, _ direction: VirtualDirection, _ offset: Int) {
+    func updateAnchorForEdge(
+      _ targetIndex: Int, _ direction: VirtualDirection, _ offset: Int, reach: Int = 0
+    ) {
       let index = boundIndex(targetIndex, rows.firstRowIndex, rows.rowsLength)
       let row = rows.rowAt(index)
       switch direction {
       case .forward where rows.atStart && index == rows.firstRowIndex && offset == 1:
         // The page after the list's first row would drop it: page from the
         // start instead.
-        setAnchor(.top)
+        setAnchor(.top, reach: reach)
       case .forward:
-        setAnchor(.forward(index: index + offset, startRow: row.map(options.toStartRow)))
+        setAnchor(
+          .forward(index: index + offset, startRow: row.map(options.toStartRow)), reach: reach)
       case .backward where rows.atEnd && index == rows.firstRowIndex + rows.rowsLength - 1:
         // The page before the list's last row would drop it, and the space
         // estimated in its place moves the bottom: page from the end
         // instead. (Zero-virtual's backward anchor always has a start row.)
-        setAnchor(.backward(index: index + 1, startRow: nil))
+        setAnchor(.backward(index: index + 1, startRow: nil), reach: reach)
       case .backward:
         guard let row else { preconditionFailure("a backward page starts at a loaded row") }
-        setAnchor(.backward(index: index + offset, startRow: options.toStartRow(row)))
+        setAnchor(
+          .backward(index: index + offset, startRow: options.toStartRow(row)), reach: reach)
       }
+    }
+
+    // A page from the rows' edge that takes in the `away` rows the space
+    // estimates between it and the viewport's far side, and room past
+    // them, up to `maxReachPages` pages.
+    func reachFor(_ away: Double) -> Int {
+      let rows = Int(min(away / rowEstimate, Double(maxReachPages * pageSize)).rounded(.up))
+      return min(makeEven(max(0, rows + 2 * threshold - pageSize)), maxReachPages * pageSize)
     }
 
     guard let visible else {
       // A jump into the unloaded space pages toward it.
-      guard let top = host.rowFrames().first?.minY else { return }
-      if top >= host.scrollOffset + host.viewportHeight {
+      let frames = host.rowFrames()
+      guard let first = frames.first, let last = frames.last else { return }
+      let bottom = host.scrollOffset + host.viewportHeight
+      if first.minY >= bottom {
         if host.scrollOffset <= 0 || rows.atStart {
           setAnchor(.top)
         } else if !noneBefore {
-          updateAnchorForEdge(rows.firstRowIndex, .backward, 0)
+          updateAnchorForEdge(
+            rows.firstRowIndex, .backward, 0, reach: reachFor(first.minY - host.scrollOffset))
         }
       } else if !noneAfter {
-        updateAnchorForEdge(rows.firstRowIndex + rows.rowsLength - 1, .forward, 1)
+        updateAnchorForEdge(
+          rows.firstRowIndex + rows.rowsLength - 1, .forward, 1, reach: reachFor(bottom - last.maxY)
+        )
       }
       return
     }
@@ -1416,6 +1479,17 @@ package final class VirtualizerCore<
       return
     }
 
+    // A page that reached the viewport: a page about what's on screen in
+    // its place, from the rows it read.
+    if reach > 0 {
+      if case .backward = paging.anchor {
+        updateAnchorForEdge(visible.last + 2 * threshold, .backward, 0)
+      } else {
+        updateAnchorForEdge(visible.first - 2 * threshold, .forward, 1)
+      }
+      return
+    }
+
     let fromStart = visible.first - rows.firstRowIndex
     let fromEnd = rows.firstRowIndex + rows.rowsLength - 1 - visible.last
     if !noneBefore && fromStart <= threshold {
@@ -1429,25 +1503,65 @@ package final class VirtualizerCore<
 
   // MARK: - Persistence
 
-  private var persistState: PersistState {
-    PersistState(
-      anchor: paging.anchor, estimatedTotal: effectiveEstimatedTotal,
-      hasReachedStart: paging.hasReachedStart, hasReachedEnd: paging.hasReachedEnd)
+  // Where the list is, as a restore puts it back: the page from the first
+  // row on screen, and how far the viewport is into it, counted from the
+  // list's start as if the rows above stood at the estimate (`land` lines
+  // it up against the page's first row). The page starts at the row on
+  // screen: rows above it stand at heights measured or estimated as they
+  // came, and a restore, measuring every row of its page, wouldn't find
+  // them so. Stuck to the bottom of a list that follows it, the bottom:
+  // the page before the end, whatever has come there by then, scrolled as
+  // far as it goes.
+  private func position(_ host: any VirtualHost) -> (state: PersistState, offset: Double) {
+    let total = effectiveEstimatedTotal
+    if options.stickToBottom, stuck {
+      return (
+        PersistState(
+          anchor: .backward(index: total, startRow: nil), estimatedTotal: total,
+          hasReachedStart: paging.hasReachedStart, hasReachedEnd: true),
+        .greatestFiniteMagnitude
+      )
+    }
+    var anchor = paging.anchor
+    let frames = host.rowFrames()
+    var first = frames.first
+    if let row = frames.first(where: { $0.maxY > host.scrollOffset + 0.5 }) {
+      let pageFromIt: Bool
+      if case .forward(let index, _) = anchor {
+        pageFromIt = index == row.index
+      } else {
+        pageFromIt = false
+      }
+      if pageFromIt {
+        first = row
+      } else if rows.atStart && row.index == rows.firstRowIndex && row.index == 0 {
+        anchor = .top
+        first = row
+      } else if row.index > rows.firstRowIndex, let above = rows.rowAt(row.index - 1) {
+        anchor = .forward(index: row.index, startRow: options.toStartRow(above))
+        first = row
+      }
+    }
+    let offset = first.map { Double($0.index) * rowEstimate + host.scrollOffset - $0.minY } ?? 0
+    return (
+      PersistState(
+        anchor: anchor, estimatedTotal: total, hasReachedStart: paging.hasReachedStart,
+        hasReachedEnd: paging.hasReachedEnd),
+      offset
+    )
   }
 
   // Scrolls report every time; updates only when paging changed.
   private func persist(onlyIfChanged: Bool = false) {
-    if landing { return }
-    let next = persistState
-    if onlyIfChanged && lastPersisted == next { return }
+    // Nor while a page reaches the viewport: restored, the page would be
+    // only a page from far above (or below) it.
+    if landing || reach > 0 { return }
     guard let host, isListContextCurrent, let report = options.onScrollStateChange else { return }
+    let (next, offset) = position(host)
+    if onlyIfChanged && lastPersisted == next { return }
     lastPersisted = next
     let state = ScrollState(
-      // Where the list would be with the space as estimated, as a restore
-      // lays it out.
-      anchor: next.anchor,
-      scrollOffset: host.scrollOffset - (snapshot.spaceBefore - estimatedSpaceBefore),
-      estimatedTotal: next.estimatedTotal,
+      anchor: next.anchor, scrollOffset: offset, estimatedTotal: next.estimatedTotal,
       hasReachedStart: next.hasReachedStart, hasReachedEnd: next.hasReachedEnd,
       listContext: options.listContext)
     lastWritten = state
@@ -1459,6 +1573,10 @@ private func boundIndex(_ target: Int, _ first: Int, _ length: Int) -> Int {
   if length == 0 { return first }
   return max(first, min(first + length - 1, target))
 }
+
+// The most pages a page reaching a viewport far into the space reads at
+// once. Farther, it goes as far as that, and on from there.
+private let maxReachPages = 10
 
 private func nearPageEdgeThreshold(_ pageSize: Int) -> Int {
   (pageSize + 9) / 10

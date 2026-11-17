@@ -49,6 +49,13 @@ pass it back, or call ``ZeroVirtualizer/restore(_:)``. A state is
 `Codable` when the start row and list context are, so it can be encoded
 into `@SceneStorage`.
 
+Restored, the list draws the rows the client already has (from its SQLite
+store, after a relaunch) in its first frame, with the row that was at the
+top at the same height. Rows the server confirms or changes then come in
+around it without moving it. A list that sticks to its bottom and was at
+its bottom opens at its bottom, and follows the rows that came while it was
+closed.
+
 A state belongs to one `listContext` and is ignored by any other. To bring
 each of several lists back where it was, such as the folders of a mail
 app, keep a state and a selection for each:

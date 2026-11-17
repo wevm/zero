@@ -72,6 +72,36 @@ class FrameProbeUITests: XCTestCase {
     runScript("chat", phases: ["open", "older", "latest", "far-up", "receive-latest"])
   }
 
+  /// Relaunched, the chat opens where it was, from the rows the client
+  /// kept: in its first frame, and with no frame wrong or blank as the
+  /// server, a second away (so its rows can't come first), confirms them.
+  /// Left at the bottom, it follows the messages that came while it was
+  /// closed.
+  func testChatReopensWhereItWas() {
+    for (up, messages) in [(3000, 200), (0, 210)] {
+      let key = UUID().uuidString
+      for (script, args) in [
+        ("park", ["-park-up", "\(up)"]), ("reopen", ["-messages", "\(messages)"]),
+      ] {
+        app = XCUIApplication()
+        app.launchArguments =
+          ["-screen", "chat", "-probe-script", script, "-probe", "1"]
+          + ["-native", native ? "1" : "0", "-storage-key", key, "-latency", "1000"] + args
+        app.launch()
+        let end = Date().addingTimeInterval(60)
+        while Date() < end, !summary.hasSuffix(" done") {
+          RunLoop.current.run(until: Date().addingTimeInterval(1))
+        }
+        let s = summary
+        XCTAssertTrue(s.hasSuffix(" done"), "\(script) didn't finish: \(s)")
+        XCTAssertEqual(wrong(s), 0, "\(script), \(up) up: \(s)")
+        if script == "reopen" { XCTAssertTrue(s.contains(" blank=0 "), "\(up) up: \(s)") }
+        // Its rows and where it was saved, before the next launch.
+        RunLoop.current.run(until: Date().addingTimeInterval(2))
+      }
+    }
+  }
+
   func testIssuesShowNoWrongFrame() {
     #if os(macOS)
       runScript("issues", phases: ["open", "header", "down", "up", "keys"])
