@@ -1090,7 +1090,15 @@ package final class VirtualizerCore<
   private func onScroll() {
     let programmatic = programmaticScroll
     programmaticScroll = false
-    if !programmatic, case .offset = target { target = nil }
+    // The user takes over from a restore, and from a jump on screen: one
+    // still settling its rows would put the viewport back on its row.
+    if !programmatic, let t = target {
+      switch t {
+      case .offset: target = nil
+      case .row where placed: target = nil
+      default: break
+      }
+    }
     if !programmatic {
       realign = nil
       heldShort = nil

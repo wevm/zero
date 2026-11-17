@@ -443,6 +443,38 @@ final class LayoutScrollView {
     #expect(view.blank == 0)
   }
 
+  // As a chat opening on its latest message with the server a second away:
+  // the jump puts its row on screen from the rows the client has, and the
+  // user scrolls before the server confirms them. The jump used to put the
+  // viewport back on its row until they settled.
+  @Test("a scroll once a jump's row is on screen stays while its rows settle")
+  func scrollAfterJump() {
+    let h = Harness(rowCount: 2000, rowHeight: 80) {
+      $0.anchoring = .manual
+      $0.stickToBottom = true
+      $0.minPageSize = 20
+    }
+    let view = LayoutScrollView(h)
+    view.pass()
+    h.offline = true
+    h.core.scrollToItem("r1999", align: .end)
+    for _ in 0..<3 {
+      view.pass()
+      view.frameDrawn()
+    }
+    #expect(h.core.lastVisibleItem()?.key == "r1999")
+    #expect(!h.core.snapshot.complete)
+    let y = view.scrollOffset - 50
+    view.userScroll(y)
+    view.frameDrawn()
+    view.pass()
+    #expect(view.scrollOffset == y)
+    h.offline = false
+    view.settle()
+    #expect(view.scrollOffset == y)
+    #expect(view.bottomGap == 50)
+  }
+
   // As when the keyboard comes up under a chat. The re-pin to the bottom
   // used to be taken back by the offset the view passed in, from before the
   // resize, as if the user had scrolled, and the list stopped following.
