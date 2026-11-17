@@ -18,6 +18,7 @@ use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, Textar
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::scroll::ScrollableElement as _;
+use gpui_kit::component::skeleton::Skeleton;
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::text::TextView;
 use gpui_kit::component::tooltip::Tooltip;
@@ -55,6 +56,10 @@ fn tints_blank() -> bool {
 /// Rows the list asks for at a time, as zbugs' list pages.
 const PAGE: i64 = 100;
 const ROW_HEIGHT: f32 = 56.;
+/// The list's height setting's file in the app's directory: `full`, the
+/// list as tall as its count (the default), or `paged`, as tall as the rows
+/// loaded so far.
+const LIST_HEIGHT: &str = "list-height";
 /// The columns' toolbars, together the window's toolbar.
 const TOOLBAR_HEIGHT: f32 = 52.;
 /// The room the window's traffic lights take at the toolbar's start.
@@ -379,6 +384,11 @@ pub struct ZbugsApp {
     search: Entity<InputState>,
     comment: Entity<TextareaState>,
     scroll: UniformListScrollHandle,
+    /// The list as tall as the issues it has in all, from their synced
+    /// count, so the scroll bar spans them all, with a placeholder for each
+    /// row not loaded yet. Otherwise as tall as the rows loaded so far,
+    /// which grows a page at a time as it scrolls.
+    full_height: bool,
     connection: Rc<RefCell<ConnectionState>>,
     error: Option<String>,
     /// Marks the selected issue viewed after a second (`mark_viewed`).
@@ -517,6 +527,9 @@ impl ZbugsApp {
             search,
             comment,
             scroll: UniformListScrollHandle::new(),
+            full_height: std::fs::read_to_string(app_dir().join(LIST_HEIGHT))
+                .ok()
+                .is_none_or(|s| s.trim() != "paged"),
             connection,
             error,
             view_timer: None,
@@ -794,6 +807,7 @@ impl ZbugsApp {
             .and_then(|me| (*me.value()).clone())
             .map(|u| u.login);
         let logged_in = self.session.auth.is_some();
+        let full_height = self.full_height;
         let app = cx.entity().downgrade();
         Button::new("account")
             .small()
@@ -801,7 +815,7 @@ impl ZbugsApp {
             .icon(Lucide::CircleUser)
             .tooltip("Account")
             .dropdown_menu(move |menu: PopupMenu, _, _| {
-                let (a, b, c) = (app.clone(), app.clone(), app.clone());
+                let (a, b, c, d) = (app.clone(), app.clone(), app.clone(), app.clone());
                 let menu = if logged_in {
                     menu.label(match &login {
                         Some(login) => format!("Logged in as {login}"),
@@ -827,7 +841,21 @@ impl ZbugsApp {
                         ),
                     )
                 };
+                // How tall the issue list is, and so what its scroll bar
+                // spans.
+                let height = |full: bool, label: &'static str| {
+                    let d = d.clone();
+                    PopupMenuItem::new(label)
+                        .checked(full_height == full)
+                        .on_click(move |_, _, cx| {
+                            let _ = d.update(cx, |this, cx| this.set_full_height(full, cx));
+                        })
+                };
                 menu.separator()
+                    .label("Issue List")
+                    .item(height(true, "Estimated Full Height"))
+                    .item(height(false, "Pages as You Scroll"))
+                    .separator()
                     .item(
                         PopupMenuItem::new("Servers…").on_click(move |_, window, cx| {
                             let _ = b.update(cx, |this, cx| this.open_servers(window, cx));
@@ -995,14 +1023,20 @@ impl ZbugsApp {
         cx.notify();
     }
 
-    /// Near the end of what's loaded: ask for the next page. The rows
-    /// loaded so far stay where they are, so the list doesn't move.
-    fn grow(&mut self, cx: &mut Context<Self>) {
+    /// The list shows rows up to `end`: when that's near the end of what's
+    /// loaded, ask for the rows up to it and a page past. The rows loaded so
+    /// far stay where they are, so the list doesn't move. A list as tall as
+    /// its count doesn't wait for the page asked for last: a drag or jump of
+    /// the thumb far past the rows loaded asks for all the rows up to where
+    /// it went at once, which the client answers from the rows it has, and
+    /// placeholders stand in for those still to come.
+    fn grow(&mut self, end: usize, cx: &mut Context<Self>) {
         let loaded = self.list.value().len() as i64;
-        if loaded < self.limit {
+        let want = ((end as i64 + 20) / PAGE + 1) * PAGE;
+        if want <= self.limit || (loaded < self.limit && !self.full_height) {
             return;
         }
-        self.limit += PAGE;
+        self.limit = want;
         self.save();
         let (list, _) = Self::queries(&self.session, &self.filters, self.limit, cx);
         self.list = list;
@@ -2245,11 +2279,19 @@ impl ZbugsApp {
             })
     }
 
+    /// Switches the list between as tall as its count and as tall as the
+    /// rows loaded, and keeps the choice.
+    fn set_full_height(&mut self, full: bool, cx: &mut Context<Self>) {
+        self.full_height = full;
+        save_setting(LIST_HEIGHT, Some(if full { "full" } else { "paged" }));
+        cx.notify();
+    }
+
     fn render_list(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let rows = (*self.list.value()).clone();
-        let len = rows.len();
+        let loaded = rows.len();
         let rows = Rc::new(rows);
-        if len == 0 {
+        if loaded == 0 {
             let synced = self.list.is_synced();
             return div()
                 .flex_1()
@@ -2258,15 +2300,26 @@ impl ZbugsApp {
                 .child(if synced { "No issues" } else { "Loading…" })
                 .into_any_element();
         }
+        // The count can trail the rows for a moment, as when an issue
+        // comes.
+        let len = if self.full_height {
+            loaded.max(usize::try_from(*self.count.value()).unwrap_or(0))
+        } else {
+            loaded
+        };
         let list = uniform_list(
             "issues",
             len,
             cx.processor(move |this, range: Range<usize>, window, cx| {
-                if range.end + 20 >= len {
-                    cx.on_next_frame(window, |this, _, cx| this.grow(cx));
+                if range.end + 20 >= loaded {
+                    let end = range.end;
+                    cx.on_next_frame(window, move |this, _, cx| this.grow(end, cx));
                 }
                 range
-                    .map(|ix| this.render_row(&rows[ix], cx).into_any_element())
+                    .map(|ix| match rows.get(ix) {
+                        Some(row) => this.render_row(row, cx).into_any_element(),
+                        None => this.render_placeholder(cx).into_any_element(),
+                    })
                     .collect::<Vec<_>>()
             }),
         )
@@ -2298,6 +2351,32 @@ impl ZbugsApp {
             // bars. Its thumb drags, and a click in its track jumps there.
             .vertical_scrollbar(&self.scroll)
             .into_any_element()
+    }
+
+    /// A row the list has no issue for yet, while its rows come: GPUI
+    /// Component's skeleton, where the row's icon, title, and line under it
+    /// go.
+    fn render_placeholder(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .w_full()
+            .h(px(ROW_HEIGHT))
+            .px_2()
+            .py_0p5()
+            .when(tints_blank(), |d| d.bg(cx.theme().background))
+            .child(
+                h_flex()
+                    .size_full()
+                    .px_2()
+                    .gap_2()
+                    .child(Skeleton::new().flex_none().size(px(14.)).rounded_full())
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .gap_2()
+                            .child(Skeleton::new().w_3_4().h(px(12.)).rounded_md())
+                            .child(Skeleton::new().secondary().w_1_2().h(px(10.)).rounded_md()),
+                    ),
+            )
     }
 
     fn render_row(&self, issue: &Issue, cx: &mut Context<Self>) -> impl IntoElement {

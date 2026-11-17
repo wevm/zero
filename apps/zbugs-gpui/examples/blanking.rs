@@ -2,12 +2,17 @@
 //! background because no row is painted there yet. The background behind the
 //! rows is orange, so any blank shows.
 //!
-//! Two lists, as `BLANKING=issues` (the default) or `BLANKING=chat` picks:
+//! Three lists, as `BLANKING=issues` (the default), `BLANKING=full`, or
+//! `BLANKING=chat` picks:
 //!
 //! - `issues`: zbugs-gpui's issue list, as `app.rs` builds it: a
 //!   `uniform_list` of 56-point rows with GPUI Component's scroll bar that
 //!   asks for 100 more rows when the rows it renders near the last loaded,
 //!   which come a round trip later.
+//! - `full`: the same list under its Estimated Full Height setting: as tall
+//!   as all its rows, with a placeholder for each row not loaded yet. Rows
+//!   shown past the last loaded ask at once for the rows up to them and a
+//!   page past.
 //! - `chat`: a chat in GPUI's `list`, bottom-aligned, of messages from a line
 //!   to a few hundred words, so a row's height isn't known until it renders.
 //!   It opens at the bottom and follows new messages there, loads older ones a
@@ -44,22 +49,25 @@ const SIZE: (f32, f32) = (420., 760.);
 /// One frame, at 120 Hz.
 const FRAME: Duration = Duration::from_micros(8333);
 
-/// What the last frame painted: the viewport, and each row's bounds.
+/// What the last frame painted: the viewport, and each row's bounds and
+/// whether it's a placeholder.
 #[derive(Default)]
 struct Painted {
     viewport: Option<Bounds<Pixels>>,
-    rows: Vec<(usize, Bounds<Pixels>)>,
+    rows: Vec<(usize, Bounds<Pixels>, bool)>,
 }
 
 struct Lists {
     chat: bool,
+    /// The issue list as tall as all its rows (`full`).
+    full: bool,
     /// Issue numbers, or message ids oldest first, as loaded.
     ids: Vec<u64>,
     /// The issue query's limit.
     limit: usize,
-    /// Rows asked for, and when they come.
-    due: Option<Duration>,
-    asked: bool,
+    /// The rows asked for: when each request's come (once the next tick
+    /// has timed it), and the limit it asked for.
+    asked: Vec<(Option<Duration>, usize)>,
     next_message: Duration,
     scroll: UniformListScrollHandle,
     state: ListState,
@@ -69,7 +77,7 @@ struct Lists {
 }
 
 impl Lists {
-    fn new(chat: bool) -> Lists {
+    fn new(chat: bool, full: bool) -> Lists {
         let (ids, next_message) = if chat {
             ((MESSAGES - PAGE as u64..MESSAGES).collect(), ARRIVAL)
         } else {
@@ -78,10 +86,10 @@ impl Lists {
         let state = ListState::new(PAGE, ListAlignment::Bottom, px(1000.));
         Lists {
             chat,
+            full,
             ids,
             limit: PAGE,
-            due: None,
-            asked: false,
+            asked: Vec::new(),
             next_message,
             scroll: UniformListScrollHandle::new(),
             state,
@@ -90,22 +98,25 @@ impl Lists {
         }
     }
 
-    /// Near the loaded rows' end (in the chat, their start): ask for the
-    /// next page, as zbugs-gpui's `grow` does.
+    /// The rows the list has room for: all of them in `full`.
+    fn rows(&self) -> usize {
+        if self.full { ISSUES } else { self.ids.len() }
+    }
+
+    /// Near the loaded rows' end (in the chat, their start): ask for more,
+    /// as zbugs-gpui's `grow` does: the rows up to the last shown and a page
+    /// past, once the last asked for have come, or at once in `full`.
     fn visible(&mut self, range: Range<usize>) {
-        if self.asked || self.due.is_some() {
+        if self.chat {
+            if self.asked.is_empty() && range.start < 20 && self.ids[0] > 0 {
+                self.asked.push((None, 0));
+            }
             return;
         }
-        let more = if self.chat {
-            range.start < 20 && self.ids[0] > 0
-        } else {
-            self.ids.len() >= self.limit
-                && range.end + 20 >= self.ids.len()
-                && self.ids.len() < ISSUES
-        };
-        if more {
-            self.limit += PAGE;
-            self.asked = true;
+        let (loaded, want) = (self.ids.len(), ((range.end + 20) / PAGE + 1) * PAGE);
+        if want > self.limit && (loaded >= self.limit || self.full) && loaded < ISSUES {
+            self.limit = want;
+            self.asked.push((None, want));
         }
     }
 
@@ -116,19 +127,24 @@ impl Lists {
             let top = self.state.logical_scroll_top().item_ix;
             self.visible(top..top + 1);
         }
-        if std::mem::take(&mut self.asked) {
-            self.due = Some(now + LATENCY);
+        for (due, _) in &mut self.asked {
+            due.get_or_insert(now + LATENCY);
         }
-        if self.due.is_some_and(|due| due <= now) {
-            self.due = None;
+        let came: Vec<usize> = (self.asked.iter())
+            .filter(|(due, _)| due.is_some_and(|due| due <= now))
+            .map(|&(_, limit)| limit)
+            .collect();
+        self.asked
+            .retain(|(due, _)| due.is_some_and(|due| due > now));
+        for limit in came {
             if self.chat {
                 let first = self.ids[0];
                 let older: Vec<u64> = (first.saturating_sub(PAGE as u64)..first).collect();
                 self.state.splice(0..0, older.len());
                 self.ids.splice(0..0, older);
-            } else {
+            } else if limit > self.ids.len() {
                 let from = self.ids.len() as u64;
-                self.ids.extend(from..self.limit.min(ISSUES) as u64);
+                self.ids.extend(from..limit.min(ISSUES) as u64);
             }
             cx.notify();
         }
@@ -142,11 +158,11 @@ impl Lists {
         }
     }
 
-    /// Records where a row paints.
-    fn recorder(&self, ix: usize) -> impl IntoElement + use<> {
+    /// Records where a row, or a placeholder, paints.
+    fn recorder(&self, ix: usize, placeholder: bool) -> impl IntoElement + use<> {
         let painted = self.painted.clone();
         canvas(
-            move |bounds, _, _| painted.borrow_mut().rows.push((ix, bounds)),
+            move |bounds, _, _| painted.borrow_mut().rows.push((ix, bounds, placeholder)),
             |_, _, _, _| {},
         )
         .absolute()
@@ -171,7 +187,25 @@ impl Lists {
             .text_size(px(13.))
             .child(div().truncate().child(title.join(" ")))
             .child(format!("ZB-{n} · user{} · {}d", n % 7, n % 30))
-            .child(self.recorder(ix))
+            .child(self.recorder(ix, false))
+    }
+
+    /// An issue not loaded yet, as zbugs-gpui's `render_placeholder`.
+    fn placeholder(&self, ix: usize) -> impl IntoElement + use<> {
+        let bar = |w: f32| div().w(px(w)).h(px(9.)).rounded_md().bg(rgb(0xe5e5e5));
+        div()
+            .relative()
+            .w_full()
+            .h(px(ROW_HEIGHT))
+            .px_3()
+            .py_3()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .bg(page())
+            .child(bar(180.))
+            .child(bar(110.))
+            .child(self.recorder(ix, true))
     }
 
     fn message(&self, ix: usize) -> impl IntoElement + use<> {
@@ -190,7 +224,7 @@ impl Lists {
             .text_size(px(13.))
             .child(format!("user{}", id % 7))
             .child(body.join(" "))
-            .child(self.recorder(ix))
+            .child(self.recorder(ix, false))
     }
 
     /// Points of the viewport, within the rows' extent, that the last frame
@@ -198,10 +232,10 @@ impl Lists {
     fn blank(&self) -> f32 {
         let painted = self.painted.borrow();
         let viewport = painted.viewport.expect("the list's viewport painted");
-        let len = self.ids.len();
+        let len = self.rows();
         let mut rows: Vec<(f32, f32)> = Vec::new();
         let (mut top, mut bottom) = (viewport.top(), viewport.bottom());
-        for (ix, b) in &painted.rows {
+        for (ix, b, _) in &painted.rows {
             if *ix == 0 {
                 top = top.max(b.top());
             }
@@ -223,6 +257,17 @@ impl Lists {
             }
         }
         gap + (bottom - y).max(0.)
+    }
+
+    /// Placeholders the last frame painted in the viewport.
+    fn placeholders(&self) -> usize {
+        let painted = self.painted.borrow();
+        let viewport = painted.viewport.expect("the list's viewport painted");
+        (painted.rows.iter())
+            .filter(|(_, b, placeholder)| {
+                *placeholder && b.top() < viewport.bottom() && b.bottom() > viewport.top()
+            })
+            .count()
     }
 
     /// The list's scroll, as its scroll bar sees it.
@@ -288,7 +333,7 @@ impl Lists {
 
     /// Jumps to the row a fraction `at` of the way down.
     fn jump(&mut self, at: f32) {
-        let ix = ((self.ids.len() - 1) as f32 * at) as usize;
+        let ix = ((self.rows() - 1) as f32 * at) as usize;
         if self.chat {
             self.state.scroll_to_reveal_item(ix);
         } else {
@@ -321,13 +366,17 @@ impl Render for Lists {
             .size_full()
             .into_any_element()
         } else {
-            let len = self.ids.len();
             uniform_list(
                 "issues",
-                len,
+                self.rows(),
                 cx.processor(move |this, range: Range<usize>, _, _| {
                     this.visible(range.clone());
-                    range.map(|ix| this.issue(ix)).collect::<Vec<_>>()
+                    range
+                        .map(|ix| match ix < this.ids.len() {
+                            true => this.issue(ix).into_any_element(),
+                            false => this.placeholder(ix).into_any_element(),
+                        })
+                        .collect::<Vec<_>>()
                 }),
             )
             .track_scroll(&self.scroll)
@@ -491,11 +540,19 @@ fn script(chat: bool) -> Vec<(String, Step)> {
 struct Tally {
     frames: usize,
     blanks: Vec<(String, usize, f32)>,
+    /// Frames with a placeholder in the viewport, by push.
+    placeholders: Vec<(String, usize)>,
 }
 
 impl Tally {
-    fn count(&mut self, name: &str, gap: f32) {
+    fn count(&mut self, name: &str, (gap, placeholders): (f32, usize)) {
         self.frames += 1;
+        if placeholders > 0 {
+            match self.placeholders.iter_mut().find(|p| p.0 == name) {
+                Some(p) => p.1 += 1,
+                None => self.placeholders.push((name.to_owned(), 1)),
+            }
+        }
         if gap <= 0.5 {
             return;
         }
@@ -515,10 +572,15 @@ impl Tally {
             .iter()
             .map(|(d, n, pts)| format!("{d}:{n}/{pts:.0}pt"))
             .collect();
+        let shown: usize = self.placeholders.iter().map(|p| p.1).sum();
+        let by_push: Vec<String> = (self.placeholders.iter())
+            .map(|(d, n)| format!("{d}:{n}"))
+            .collect();
         format!(
-            "BLANKING {list} frames={} blank={blank} blanks=[{}] rows={rows}",
+            "BLANKING {list} frames={} blank={blank} blanks=[{}] placeholder-frames={shown} [{}] rows={rows}",
             self.frames,
-            by.join(",")
+            by.join(","),
+            by_push.join(",")
         )
     }
 }
@@ -564,11 +626,16 @@ fn next(
     window.on_next_frame(move |window, cx| {
         // What the frame before this one painted.
         if i > 0 {
-            tally.count(&steps[i - 1].0, view.read(cx).blank());
+            let lists = view.read(cx);
+            tally.count(&steps[i - 1].0, (lists.blank(), lists.placeholders()));
         }
         let Some((_, step)) = steps.get(i).cloned() else {
             let lists = view.read(cx);
-            let list = if lists.chat { "chat" } else { "issues" };
+            let list = match (lists.chat, lists.full) {
+                (true, _) => "chat",
+                (false, true) => "full-height issues",
+                (false, false) => "issues",
+            };
             println!("{}", tally.report(list, lists.ids.len()));
             cx.quit();
             return;
@@ -588,7 +655,8 @@ fn next(
 }
 
 fn main() {
-    let chat = std::env::var("BLANKING").as_deref() == Ok("chat");
+    let list = std::env::var("BLANKING");
+    let (chat, full) = (list.as_deref() == Ok("chat"), list.as_deref() == Ok("full"));
     gpui_kit::application().run(move |cx| {
         let bounds = Bounds::centered(None, size(px(SIZE.0), px(SIZE.1)), cx);
         let options = WindowOptions {
@@ -596,7 +664,7 @@ fn main() {
             ..Default::default()
         };
         cx.open_window(options, |window, cx| {
-            let view = cx.new(|_| Lists::new(chat));
+            let view = cx.new(|_| Lists::new(chat, full));
             let driven = view.clone();
             window.on_next_frame(move |window, cx| drive(driven, window, cx));
             view
@@ -612,8 +680,9 @@ mod tests {
 
     /// The script headless, a frame a step, on a clock that moves a frame
     /// a step. The scroll bar's drags must reach both ends, held at the end
-    /// it must page, and its jumps must land where clicked.
-    fn run(chat: bool) -> (Tally, usize) {
+    /// it must page, and its jumps must land where clicked. Each rest after
+    /// a push must end with rows, not placeholders, on screen.
+    fn run(chat: bool, full: bool) -> (Tally, usize) {
         let mut app = TestApp::new();
         let mut window = app.open_window_with_options(
             WindowOptions {
@@ -623,13 +692,14 @@ mod tests {
                 ))),
                 ..Default::default()
             },
-            |_, _| Lists::new(chat),
+            |_, _| Lists::new(chat, full),
         );
         window.draw();
         window.simulate_mouse_move(pointer());
         let mut tally = Tally::default();
         let (mut least, mut most, mut held) = (1f32, 0f32, (0, 0));
-        for (i, (name, step)) in script(chat).into_iter().enumerate() {
+        let steps = script(chat);
+        for (i, (name, step)) in steps.iter().cloned().enumerate() {
             match window.update(|lists, _, _| lists.input(step)) {
                 Some(PlatformInput::Scroll(e)) => window.simulate_event(e),
                 Some(PlatformInput::MouseDown(e)) => window.simulate_event(e),
@@ -647,7 +717,16 @@ mod tests {
                 cx.notify();
             });
             window.draw();
-            tally.count(&name, window.read(|lists, _| lists.blank()));
+            let (gap, placeholders) = window.read(|lists, _| (lists.blank(), lists.placeholders()));
+            tally.count(&name, (gap, placeholders));
+            let rests = matches!(step, Step::Rest)
+                && !steps
+                    .get(i + 1)
+                    .is_some_and(|(_, s)| matches!(s, Step::Rest));
+            assert!(
+                !rests || placeholders == 0,
+                "{name}: placeholders on screen at rest"
+            );
             let (at, rows, first) =
                 window.read(|lists, _| (lists.scrolled(), lists.ids.len(), lists.ids[0]));
             match (name.as_str(), step) {
@@ -678,15 +757,31 @@ mod tests {
 
     #[core::prelude::v1::test]
     fn issues_cover_the_viewport_every_frame() {
-        let (tally, rows) = run(false);
+        let (tally, rows) = run(false, false);
         println!("{}", tally.report("issues", rows));
         assert!(rows > 1000, "paged to {rows} rows");
         assert!(tally.blanks.is_empty(), "{}", tally.report("issues", rows));
+        assert!(
+            tally.placeholders.is_empty(),
+            "placeholders in a paged list"
+        );
+    }
+
+    /// The issue list under Estimated Full Height: the thumb's drags and
+    /// jumps go straight to rows not loaded, which show placeholders until
+    /// they come.
+    #[core::prelude::v1::test]
+    fn a_full_height_issue_list_covers_the_viewport_every_frame() {
+        let (tally, rows) = run(false, true);
+        let report = tally.report("full-height issues", rows);
+        println!("{report}");
+        assert_eq!(rows, ISSUES, "loaded {rows} rows");
+        assert!(tally.blanks.is_empty(), "{report}");
     }
 
     #[core::prelude::v1::test]
     fn a_chat_covers_the_viewport_every_frame() {
-        let (tally, rows) = run(true);
+        let (tally, rows) = run(true, false);
         println!("{}", tally.report("chat", rows));
         assert!(rows > 500, "paged back to {rows} rows");
         assert!(tally.blanks.is_empty(), "{}", tally.report("chat", rows));

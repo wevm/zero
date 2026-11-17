@@ -21,14 +21,19 @@ both), and Windows is next.
   with its Markdown, comments, and reactions, its assignee, visibility,
   notifications, and labels, and sheets to create, edit, and delete an
   issue, edit and delete comments, create a label, log in, and set the
-  servers.
+  servers. Issue List in the account menu sets how tall the list is:
+  Estimated Full Height (the default) makes it as tall as the synced count,
+  so the scroll bar spans every issue and a drag or click of it pages
+  straight there, with placeholders for rows still to come; Pages as You
+  Scroll makes it as tall as the rows loaded so far.
 - `src/images.rs` fetches avatars and the images in issues and comments
   (`ureq`, over rustls) for Rune's image cache to decode, as the web app
   shows them.
 - `src/login.rs` logs in through GitHub in the browser: the API server
   redirects back to a listener the app opens on 127.0.0.1 for that one
   login (a loopback redirect, RFC 8252 §7.3).
-- `src/settings.rs` keeps the servers and the selected issue in
+- `src/settings.rs` keeps the servers, the selected issue, and the list's
+  height in
   `~/Library/Application Support/zbugs-rune/settings.json`; the replica is
   SQLite, beside it in `replica/`.
 - `src/token.rs` keeps the login token in the Keychain (service
@@ -108,4 +113,5 @@ cargo run --example blanking -- --script examples/blanking.json \
   --video blanking.mp4 --size 420x760 --fps 60
 ```
 
-with `BLANKING=chat` for the chat.
+with `BLANKING=full` for the list at its Estimated Full Height and
+`BLANKING=chat` for the chat.

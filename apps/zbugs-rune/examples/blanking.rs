@@ -2,18 +2,23 @@
 //! the list's background because no row is drawn there yet. The background
 //! behind the rows is orange, so any blank shows.
 //!
-//! Two lists, as `BLANKING=issues` (the default) or `BLANKING=chat` picks:
+//! Three lists, as `BLANKING=issues` (the default), `BLANKING=full`, or
+//! `BLANKING=chat` picks:
 //!
 //! - `issues`: zbugs-rune's issue list, as `view.rs` builds it: rows of about
 //!   58 points under that estimate, with rune-kit's scroll bar, paged as
 //!   zbugs-rune pages, 100 more rows asked for when the last visible row nears
 //!   the last loaded, which come a round trip later.
+//! - `full`: the same list under its Estimated Full Height setting: as tall
+//!   as all its rows, with a placeholder for each row not loaded yet. Rows
+//!   shown past the last loaded ask at once for the rows up to them and a
+//!   page past.
 //! - `chat`: a chat's messages, from a line to a few hundred words, so a
 //!   row's height isn't known until it's measured. It opens at the bottom and
 //!   follows new messages there (`stick_bottom`), loads older ones a page at a
 //!   time as it scrolls up, and gets a new message every 0.3 s throughout.
 //!
-//! `cargo test --example blanking` pushes both, at 120 and at 60 frames a
+//! `cargo test --example blanking` pushes all three, at 120 and at 60 frames a
 //! second: trackpad flings (macOS momentum, as wheel deltas) and Rune's own
 //! flings at 4,000 to 32,000 points a second, swipes released into them, long
 //! fast drags, jumps and glides across the list, the scroll bar's thumb
@@ -73,13 +78,17 @@ fn blank() -> Color {
 
 struct Lists {
     chat: bool,
+    /// The issue list as tall as its count, with a placeholder for each row
+    /// not loaded yet, as zbugs-rune's Estimated Full Height.
+    full: bool,
     /// Issue numbers, or message ids oldest first, as loaded.
     ids: Vec<u64>,
     keys: Vec<String>,
     /// The issue query's limit.
     limit: usize,
-    /// When the rows asked for come.
-    due: Option<f64>,
+    /// The rows asked for: when each request's come, and the limit it
+    /// asked for.
+    asked: Vec<(f64, usize)>,
     next_message: f64,
     /// How far down the list is scrolled, and the most it scrolls, which
     /// its viewport reports, as zbugs-rune's `list_offset`.
@@ -87,13 +96,14 @@ struct Lists {
 }
 
 impl Lists {
-    fn issues() -> Lists {
+    fn issues(full: bool) -> Lists {
         let mut s = Lists {
             chat: false,
+            full,
             ids: Vec::new(),
             keys: Vec::new(),
             limit: PAGE,
-            due: None,
+            asked: Vec::new(),
             next_message: f64::INFINITY,
             scrolled: Rc::default(),
         };
@@ -104,10 +114,11 @@ impl Lists {
     fn chat() -> Lists {
         let mut s = Lists {
             chat: true,
+            full: false,
             ids: Vec::new(),
             keys: Vec::new(),
             limit: 0,
-            due: None,
+            asked: Vec::new(),
             next_message: ARRIVAL,
             scrolled: Rc::default(),
         };
@@ -122,52 +133,56 @@ impl Lists {
         self.ids.splice(at..at, ids);
     }
 
-    /// Asks for the next page near the loaded rows' end (or, in the chat,
-    /// their start), as zbugs-rune's `list_visible` does.
+    /// Asks for rows near the loaded rows' end (or, in the chat, their
+    /// start), as zbugs-rune's `list_visible` does: the rows up to the last
+    /// shown and a page past, once the last asked for have come, or at once
+    /// in a list as tall as its count. Timed at the next tick, which knows
+    /// the time.
     fn visible(&mut self, range: Range<usize>) -> bool {
-        if self.due.is_some() {
+        if self.chat {
+            if self.asked.is_empty() && range.start < 20 && self.ids[0] > 0 {
+                self.asked.push((f64::INFINITY, 0));
+            }
             return false;
         }
-        let more = if self.chat {
-            range.start < 20 && self.ids[0] > 0
-        } else {
-            self.ids.len() >= self.limit
-                && range.end + 20 >= self.ids.len()
-                && self.ids.len() < ISSUES
-        };
-        if more {
-            self.limit += PAGE;
-            // Timed at the next tick, which knows the time.
-            self.due = Some(f64::INFINITY);
+        let (loaded, want) = (self.ids.len(), ((range.end + 20) / PAGE + 1) * PAGE);
+        if want > self.limit && (loaded >= self.limit || self.full) && loaded < ISSUES {
+            self.limit = want;
+            self.asked.push((f64::INFINITY, want));
         }
         false
     }
 
     /// Whether `tick` has something to do at `now`.
     fn ticks(&self, now: f64) -> bool {
-        self.due
-            .is_some_and(|due| due == f64::INFINITY || due <= now)
+        self.asked
+            .iter()
+            .any(|&(due, _)| due == f64::INFINITY || due <= now)
             || self.next_message <= now
     }
 
     /// The rows asked for come, and messages arrive. True when the rows
     /// changed.
     fn tick(&mut self, now: f64) -> bool {
-        let mut changed = false;
-        match self.due {
-            Some(due) if due == f64::INFINITY => self.due = Some(now + LATENCY),
-            Some(due) if due <= now => {
-                self.due = None;
-                changed = true;
-                if self.chat {
-                    let first = self.ids[0];
-                    self.splice(0, first.saturating_sub(PAGE as u64)..first);
-                } else {
-                    let from = self.ids.len() as u64;
-                    self.splice(self.ids.len(), from..self.limit.min(ISSUES) as u64);
-                }
+        for (due, _) in &mut self.asked {
+            if *due == f64::INFINITY {
+                *due = now + LATENCY;
             }
-            _ => {}
+        }
+        let came: Vec<usize> = (self.asked.iter())
+            .filter(|&&(due, _)| due <= now)
+            .map(|&(_, limit)| limit)
+            .collect();
+        self.asked.retain(|&(due, _)| due > now);
+        let mut changed = !came.is_empty();
+        for limit in came {
+            if self.chat {
+                let first = self.ids[0];
+                self.splice(0, first.saturating_sub(PAGE as u64)..first);
+            } else if limit > self.ids.len() {
+                let from = self.ids.len() as u64;
+                self.splice(self.ids.len(), from..limit.min(ISSUES) as u64);
+            }
         }
         if self.next_message <= now {
             self.next_message += ARRIVAL;
@@ -248,7 +263,29 @@ fn issue(n: u64) -> El {
 }
 
 fn key(s: &Lists, i: usize) -> Cow<'_, str> {
-    Cow::Borrowed(s.keys[i].as_str())
+    match s.keys.get(i) {
+        Some(k) => Cow::Borrowed(k.as_str()),
+        None => Cow::Owned(format!("p{i}")),
+    }
+}
+
+/// An issue not loaded yet, as zbugs-rune's `placeholder_row`: bars in
+/// lines as tall as an issue row's.
+fn placeholder() -> El {
+    let line = |size: f32, weight: f32, w: f32| {
+        row()
+            .center_y()
+            .child(text("\u{a0}").font(TextStyle::new(size, weight)))
+            .child(rune::el().w(w).h(8.0).radius(4.0).fill(ink().alpha(0.1)))
+    };
+    col()
+        .w_full()
+        .px(12.0)
+        .py(9.0)
+        .gap(3.0)
+        .fill(page())
+        .child(line(13.0, 500.0, 180.0))
+        .child(line(12.0, 400.0, 110.0))
 }
 
 fn kit() -> &'static Kit {
@@ -263,8 +300,10 @@ fn view(s: &Lists, _: &mut Cx<Lists>) -> El {
             memo(s.keys[i].as_str(), 0, || message(s.ids[i]))
         })
     } else {
-        rows.virtual_rows(s.ids.len(), ROW, key, |s: &Lists, i| {
-            memo(s.keys[i].as_str(), 0, || issue(s.ids[i]))
+        let n = if s.full { ISSUES } else { s.ids.len() };
+        rows.virtual_rows(n, ROW, key, |s: &Lists, i| match s.keys.get(i) {
+            Some(k) => memo(k.as_str(), 0, || issue(s.ids[i])),
+            None => placeholder(),
         })
     };
     let scroll = col()
@@ -299,10 +338,10 @@ fn on_key(s: &mut Lists, event: &KeyEvent, tx: &mut Tx) -> bool {
 }
 
 fn init() -> Lists {
-    if std::env::var("BLANKING").as_deref() == Ok("chat") {
-        Lists::chat()
-    } else {
-        Lists::issues()
+    match std::env::var("BLANKING").as_deref() {
+        Ok("chat") => Lists::chat(),
+        Ok("full") => Lists::issues(true),
+        _ => Lists::issues(false),
     }
 }
 
@@ -336,6 +375,8 @@ mod tests {
         frames: usize,
         /// Frames with blank space in the viewport, and its points, by drive.
         blanks: Vec<(String, usize, f32)>,
+        /// Frames with a placeholder in the viewport, by drive.
+        placeholders: Vec<(String, usize)>,
         drive: String,
     }
 
@@ -349,6 +390,7 @@ mod tests {
                 now: 0.0,
                 frames: 0,
                 blanks: Vec::new(),
+                placeholders: Vec::new(),
                 drive: "open".into(),
             };
             run.frames(60);
@@ -381,6 +423,12 @@ mod tests {
                     None => self.blanks.push((self.drive.clone(), 1, gap)),
                 }
             }
+            if placeholders_in(&self.rt) > 0 {
+                match self.placeholders.iter_mut().find(|p| p.0 == self.drive) {
+                    Some(p) => p.1 += 1,
+                    None => self.placeholders.push((self.drive.clone(), 1)),
+                }
+            }
             moving
         }
 
@@ -391,12 +439,20 @@ mod tests {
         }
 
         /// Frames until the list rests, and a little more.
+        /// The rows asked for come, and the list shows rows, not
+        /// placeholders.
         fn settle(&mut self) {
             let mut n = 0;
-            while self.frame() && n < 1200 {
+            while (self.frame() || !self.rt.state.asked.is_empty()) && n < 1200 {
                 n += 1;
             }
             self.frames(12);
+            assert_eq!(
+                placeholders_in(&self.rt),
+                0,
+                "{}: placeholders on screen at rest",
+                self.drive
+            );
         }
 
         fn wheel(&mut self, dy: f32, phase: GesturePhase) {
@@ -547,13 +603,39 @@ mod tests {
                 .iter()
                 .map(|(d, n, pts)| format!("{d}:{n}/{pts:.0}pt"))
                 .collect();
+            let shown: usize = self.placeholders.iter().map(|p| p.1).sum();
+            let by_drive: Vec<String> = (self.placeholders.iter())
+                .map(|(d, n)| format!("{d}:{n}"))
+                .collect();
             println!(
-                "BLANKING {list} frames={} blank={blank} blanks=[{}] rows={}",
+                "BLANKING {list} frames={} blank={blank} blanks=[{}] placeholder-frames={shown} [{}] rows={}",
                 self.frames,
                 by.join(","),
+                by_drive.join(","),
                 self.rt.state.ids.len()
             );
         }
+    }
+
+    /// The list's rows the last frame drew, by key, and where.
+    fn rows_in(rt: &Runtime<Lists>) -> Vec<(String, [f32; 4])> {
+        (rt.elements().into_iter())
+            .filter(|e| !e.exiting)
+            .filter_map(|e| {
+                let k = e.path.strip_prefix(ROWS)?.strip_prefix('/')?;
+                (!k.contains('/')).then(|| (k.to_owned(), e.rect))
+            })
+            .collect()
+    }
+
+    /// Placeholders in the viewport.
+    fn placeholders_in(rt: &Runtime<Lists>) -> usize {
+        let elements = rt.elements();
+        let viewport = elements.iter().find(|e| e.path == VIEWPORT).map(|e| e.rect);
+        let [_, top, _, h] = viewport.expect("the list's viewport");
+        (rows_in(rt).into_iter())
+            .filter(|(k, r)| k.starts_with('p') && r[1] < top + h && r[1] + r[3] > top)
+            .count()
     }
 
     /// Points of the viewport, within the rows' extent, that no row covers.
@@ -564,16 +646,8 @@ mod tests {
         let content = rect(ROWS).expect("the list's rows");
         let top = viewport[1].max(content[1]);
         let bottom = (viewport[1] + viewport[3]).min(content[1] + content[3]);
-        let mut rows: Vec<(f32, f32)> = elements
-            .iter()
-            .filter(|e| {
-                !e.exiting
-                    && e.path
-                        .strip_prefix(ROWS)
-                        .and_then(|k| k.strip_prefix('/'))
-                        .is_some_and(|k| !k.contains('/'))
-            })
-            .map(|e| (e.rect[1], e.rect[1] + e.rect[3]))
+        let mut rows: Vec<(f32, f32)> = (rows_in(rt).into_iter())
+            .map(|(_, r)| (r[1], r[1] + r[3]))
             .collect();
         rows.sort_by(|a, b| a.0.total_cmp(&b.0));
         let (mut y, mut gap) = (top, 0.0);
@@ -689,10 +763,28 @@ mod tests {
 
     #[test]
     fn issues_cover_the_viewport_every_frame() {
+        issues(false);
+    }
+
+    /// The issue list as tall as its count, as zbugs-rune's Estimated Full
+    /// Height: the thumb's drags and jumps go straight to rows not loaded,
+    /// which show placeholders until they come.
+    #[test]
+    fn a_full_height_issue_list_covers_the_viewport_every_frame() {
+        issues(true);
+    }
+
+    fn issues(full: bool) {
+        let name = if full { "full-height issues" } else { "issues" };
         for hz in [120.0, 60.0] {
-            let mut run = Run::new(Lists::issues(), hz);
+            let mut run = Run::new(Lists::issues(full), hz);
             push(&mut run, -1.0);
-            run.report(&format!("issues {hz} Hz"));
+            run.report(&format!("{name} {hz} Hz"));
+            assert!(
+                full || run.placeholders.is_empty(),
+                "placeholders in a paged list: {:?}",
+                run.placeholders
+            );
             assert!(
                 run.rt.state.ids.len() > 1000,
                 "paged to {} rows",
