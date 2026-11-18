@@ -140,6 +140,10 @@ package final class LayoutHost: VirtualHost {
       scrollOffset = offset
       didScroll()
     }
+    // How far past the content's end the view itself took the offset, as
+    // laid out last: its bounce, as a fling or a pull carries it past the
+    // last row. The view springs back from it, as at the top.
+    let bounce = max(0, scrollOffset - max(0, contentHeight - viewportHeight))
     // After the user's scroll, which was at the viewport it had: the core's
     // scroll about the new size (back to the bottom, stuck there) is the
     // offset this pass applies.
@@ -160,8 +164,8 @@ package final class LayoutHost: VirtualHost {
       // there went or got shorter, or the viewport got taller: the offset
       // comes back within it, as a browser clamps it, reported as a scroll.
       // The platform's scroll view wouldn't: it keeps the offset, and blank
-      // space below the rows, until the user scrolls.
-      let end = max(0, contentHeight - viewportHeight)
+      // space below the rows, until the user scrolls. Its bounce stays.
+      let end = max(0, contentHeight - viewportHeight) + bounce
       guard scrollOffset > end else { break }
       scrollOffset = end
       stale = true
