@@ -1,5 +1,18 @@
 # zero-swift
 
+## 0.9.0
+
+### Minor Changes
+
+- e865bb3: `ZeroStorage.sqlite()` now keeps each app's databases in a folder of its own, as IndexedDB keeps each origin's in JS. Unsandboxed Mac apps, and apps on Linux, shared one folder, `~/Library/Application Support/Zero` or `$XDG_DATA_HOME/zero`, so one app's cleanup of databases unused for two days, or its `dropAllDatabases()`, deleted other apps' databases, pending mutations included, and every app reported the same profile ID. The default folder is now `~/Library/Application Support/<bundle ID>/Zero` for an unsandboxed Mac app (Mac Catalyst too), named for the executable when there's no bundle ID, and `$XDG_DATA_HOME/<executable>/zero` (or `~/.local/share/<executable>/zero`) on Linux. iOS apps and sandboxed Mac apps keep `Library/Application Support/Zero` in their container, which is theirs already. On Apple platforms the folder is excluded from backups (Time Machine, iCloud and device backups) each time it's opened, since the server can sync it again.
+
+  The first time an updated app opens its default storage, it moves that database from the old folder into its own, with its pending mutations, so its user doesn't sync again. The app's other databases there, such as another user's, stay behind and sync again from scratch when they're next used. A `directory` the app passes to `.sqlite(directory:)` is used as before.
+
+### Patch Changes
+
+- 591954b: `AST` is now `Codable`, and `AST.json` is public, so an app can check its Swift queries against the ASTs its server builds for them, as with custom queries whose rows the server's AST decides. Decode a server's AST JSON with `JSONDecoder` (or `JSONValueDecoder`) and compare it with `query.ast`; JSON that isn't an AST throws `DecodingError.dataCorrupted`, saying where. `json` writes the protocol's JSON, and for a normalized AST the same text as JS's `JSON.stringify(normalizeAST(ast))`: a relationship's `hidden` now comes before its `subquery`, as in JS. Query hashes don't change.
+- 0a81101: Add `Zero.setVisible(_:)` and `Zero.pendingSettled(timeout:)`, for a part of the app that can be out of sight while the app is in the foreground, such as a Mac window, a menu bar app's popover, or a screen that only sometimes needs to sync. `setVisible(false)` disconnects the client until `setVisible(true)`, while its views and local queries and mutations keep working; the client is visible only when both the app and its lifecycle say so, so one the app hid stays hidden after the Mac wakes or the app comes back to the foreground. `await pendingSettled(timeout:)` waits for the server to confirm the pending mutations, as before hiding the client, and returns whether none are left; it returns at once when the client isn't connected. Until now an app could only `close()` the client and make a new one, which queried everything again.
+
 ## 0.8.4
 
 ### Patch Changes

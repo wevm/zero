@@ -1,5 +1,24 @@
 # zero-rust
 
+## 0.4.0
+
+### Minor Changes
+
+- 65128ca: `ZeroStorage::Sqlite { directory: None }` now keeps each app's databases in a folder of its own. On macOS and Mac Catalyst it is `~/Library/Application Support/<bundle ID>/Zero`, or `~/Library/Application Support/<executable>/Zero` for an app outside an app bundle; a sandboxed app keeps `~/Library/Application Support/Zero`, which is already in its own container. On Windows it is `%LOCALAPPDATA%\<executable>\Zero`, without `.exe`. On Linux and the other platforms it is `$XDG_DATA_HOME/<executable>/zero`, or `~/.local/share/<executable>/zero`. On iOS, tvOS, watchOS, and visionOS it stays `~/.local/share/zero`, since the app's home is its own container there. A `directory` the app passes is used as is.
+
+  Every app using zero-rust's default storage shared one folder before, so one app's cleanup of old databases, or its `drop_all_databases`, could delete another app's data, pending mutations included, and all of them shared one profile ID.
+
+  On macOS and Mac Catalyst, each launch excludes the default folder from backups.
+
+  The first time an updated app opens its default storage, it moves that database from the old folder, pending mutations included, and copies the profile ID. A database another process still has open, or one on another disk than the new folder, stays where it is. The app's other databases, such as those of other users, stay in the old folder too, and sync again from scratch.
+
+- 6e8c363: Add `Zero::pending_settled(timeout_ms)`, the Swift client's `pendingSettled(timeout:)`, which JS has no counterpart for. Await it before hiding the client with `set_visible(false)` to let the server confirm the pending mutations first: it resolves with whether none are left once the server has confirmed them, at once when it can't (the client isn't connected, it's closed, or its client group is disabled), or after `timeout_ms` on the client's scheduler. Mutations still pending then stay in the local store, and are sent again when the client next connects.
+
+### Patch Changes
+
+- 21e2ce1: `Ast::to_json` writes an AST's fields in the order JS's `normalizeAST` writes them, so an app can compare its queries' ASTs with a server's AST JSON as text: `json::stringify` of a normalized AST (`Ast::normalized`) is the text JS writes, byte for byte. The JSON is unchanged except for the key order of a relationship's fields: `hidden` now comes before `subquery`, as in JS. Query hashes are unchanged.
+- 343582f: A client that replaces itself after the server lost its state (`ClientNotFound`) now keeps a `set_visible(false)` the app made less than `hidden_disconnect_delay_ms` before. It disconnects when the hidden client would have; before, it stayed connected until the app called `set_visible` again.
+
 ## 0.3.1
 
 ### Patch Changes
