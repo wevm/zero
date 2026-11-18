@@ -14,11 +14,25 @@ class FrameProbeUITests: XCTestCase {
     continueAfterFailure = true
   }
 
+  /// The scroll bars' style, pinned. Without a trackpad, as on CI's
+  /// runners, AppKit switches a launched app's scroll views from overlay
+  /// to legacy scroll bars a few frames in: the list narrows by the
+  /// scroller's width and its rows wrap again, which moves them on screen
+  /// in a frame the probe counts wrong, whenever the switch comes after
+  /// the first frame drawn.
+  static let scrollBars: [String] = {
+    #if os(macOS)
+      ["-AppleShowScrollBars", "Always"]
+    #else
+      []
+    #endif
+  }()
+
   func launch(_ screen: String, script: Bool) {
     app = XCUIApplication()
     app.launchArguments =
       ["-screen", screen] + (script ? ["-probe-script", screen] : []) + ["-probe", "1"]
-      + ["-native", native ? "1" : "0"]
+      + ["-native", native ? "1" : "0"] + Self.scrollBars
     app.launch()
   }
 
@@ -87,6 +101,7 @@ class FrameProbeUITests: XCTestCase {
         app.launchArguments =
           ["-screen", "chat", "-probe-script", script, "-probe", "1"]
           + ["-native", native ? "1" : "0", "-storage-key", key, "-latency", "1000"] + args
+          + Self.scrollBars
         app.launch()
         let end = Date().addingTimeInterval(60)
         while Date() < end, !summary.hasSuffix(" done") {
