@@ -182,6 +182,36 @@ jobs:
             echo "Warmed up the app in $((SECONDS - start)) s"
             xcrun simctl terminate "$1" dev.rocicorp.zbugs || true
           }
+          # The app's, the UI-test runner's and testmanagerd's stacks, kept in
+          # the artifact (stacks/) when a UI query has gone 15 s without an
+          # answer, as the iPhone's first query once did for 41 s until it
+          # timed out. Waiting for an element, XCTest logs a check about once
+          # a second, so a log quiet that long after a query is one stuck
+          # query. Once per stall, and nothing else about the run changes.
+          stacks() {
+            set +e
+            log="$RUNNER_TEMP/xcodebuild-$1.log"
+            seen=
+            while sleep 5; do
+              since="$(stat -f %m "$log" 2>/dev/null)" || continue
+              [ $(($(date +%s) - since)) -ge 15 ] && [ "$since" != "$seen" ] || continue
+              tail -n 1 "$log" |
+                grep -qE '^ +t = +[0-9.]+s +(Checking|Check for|Find|Get|Requesting|Capturing) ' ||
+                continue
+              seen="$since"
+              out="$RUNNER_TEMP/screenshots/stacks/$1-$(date -u +%H%M%S)"
+              mkdir -p "$out"
+              tail -n 20 "$log" > "$out/log.txt"
+              # Two samples, as the first has no CPU figures.
+              top -l 2 -s 1 -o cpu -n 15 -stats pid,command,cpu,state,time,threads,user > "$out/top.txt"
+              pids=($(pgrep -x ZBugs) $(pgrep -f ZBugsUITests-Runner) $(pgrep -x testmanagerd))
+              [ "${#pids[@]}" -gt 0 ] || continue
+              procs=()
+              for pid in "${pids[@]:1}"; do procs+=(-proc "$pid"); done
+              sudo -n spindump "${pids[0]}" 5 10 -onlyTarget "${procs[@]}" -noBinary \
+                -o "$out/spindump.txt" > "$out/spindump.log" 2>&1
+            done
+          }
           # Every run, even after one fails, so each keeps its screenshots.
           status=0
           screenshots() {
@@ -195,10 +225,14 @@ jobs:
                 ;;
               *) xcrun simctl shutdown all ;;
             esac
+            stacks "$name" &
+            watcher=$!
             xcodebuild test -project ZBugs.xcodeproj -scheme ZBugsApp \
               -derivedDataPath "$RUNNER_TEMP/dd" \
               -resultBundlePath "$RUNNER_TEMP/results/$name.xcresult" \
-              -skipPackagePluginValidation "$@" || status=1
+              -skipPackagePluginValidation "$@" 2>&1 | tee "$RUNNER_TEMP/xcodebuild-$name.log"
+            [ "${PIPESTATUS[0]}" = 0 ] || status=1
+            kill "$watcher" || true
           }
           screenshots iPhone -destination "id=$(simulator iPhone)" CODE_SIGNING_ALLOWED=NO
           screenshots iPad -destination "id=$(simulator iPad)" CODE_SIGNING_ALLOWED=NO
