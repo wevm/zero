@@ -7,6 +7,7 @@
 //! thread sends it writes in order and waits only for reads, flushes, and
 //! closes. WAL mode, `synchronous = NORMAL`, one transaction per write.
 
+use super::default_directory::{DefaultDirectories, default_directories};
 use super::storage::{
     ClientGroupRecord, ClientIdPair, ClientRecord, DroppedDatabases, LoadError, StorageBackend,
     StorageFailure, StorageFailureKind, StorageOp, StoredClients, StoredDatabase, StoredGroup,
@@ -16,6 +17,7 @@ use crate::hash::xxhash32;
 use crate::json::{self, Object, Value};
 use crate::strings;
 use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
+use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -67,27 +69,6 @@ fn is_busy(e: &rusqlite::Error) -> bool {
 
 fn io(message: impl Into<String>) -> StorageFailure {
     StorageFailure::new(StorageFailureKind::IoError, message)
-}
-
-/// The default database directory.
-fn default_directory() -> Result<PathBuf, StorageFailure> {
-    let env = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
-    let no_home = || StorageFailure::new(StorageFailureKind::CannotOpen, "HOME is not set");
-    if cfg!(target_os = "macos") {
-        let home = env("HOME").ok_or_else(no_home)?;
-        return Ok(Path::new(&home).join("Library/Application Support/Zero"));
-    }
-    if cfg!(windows) {
-        let data = env("LOCALAPPDATA").ok_or_else(|| {
-            StorageFailure::new(StorageFailureKind::CannotOpen, "LOCALAPPDATA is not set")
-        })?;
-        return Ok(Path::new(&data).join("Zero"));
-    }
-    if let Some(data) = env("XDG_DATA_HOME") {
-        return Ok(Path::new(&data).join("zero"));
-    }
-    let home = env("HOME").ok_or_else(no_home)?;
-    Ok(Path::new(&home).join(".local/share/zero"))
 }
 
 /// The file a database is stored in: names can hold any character.
@@ -174,34 +155,131 @@ fn profile_id(directory: &Path) -> Result<String, StorageFailure> {
     Ok(id)
 }
 
+fn create_directory(directory: &Path) -> Result<(), StorageFailure> {
+    std::fs::create_dir_all(directory).map_err(|e| {
+        StorageFailure::new(
+            StorageFailureKind::CannotOpen,
+            format!("Cannot create {}: {e}", directory.display()),
+        )
+    })
+}
+
 /// A directory of SQLite databases.
 pub(crate) struct SqliteBackend {
     directory: PathBuf,
+    /// The folder every app shared, when this backend made the app's own
+    /// folder of the default storage: its first open moves its database
+    /// from there.
+    shared: Cell<Option<PathBuf>>,
 }
 
 impl SqliteBackend {
+    /// The backend of `directory`, or of the default storage for `None`.
+    /// Opening, `Zero::delete`, and `drop_all_databases` each make one.
     pub(crate) fn new(directory: Option<PathBuf>) -> Result<SqliteBackend, StorageFailure> {
-        let directory = match directory {
-            Some(d) => d,
-            None => default_directory()?,
+        let Some(directory) = directory else {
+            return Self::new_default();
         };
-        std::fs::create_dir_all(&directory).map_err(|e| {
-            StorageFailure::new(
-                StorageFailureKind::CannotOpen,
-                format!("Cannot create {}: {e}", directory.display()),
-            )
-        })?;
-        Ok(SqliteBackend { directory })
+        create_directory(&directory)?;
+        Ok(SqliteBackend {
+            directory,
+            shared: Cell::new(None),
+        })
+    }
+
+    /// The backend of the default storage, which makes the app's own
+    /// folder the first time. Once the folder is there, nothing moves: a
+    /// drop before the first open made it, so the open doesn't bring back
+    /// what the drop deleted.
+    fn new_default() -> Result<SqliteBackend, StorageFailure> {
+        let DefaultDirectories { directory, shared } = default_directories()?;
+        let made = directory != shared && !directory.exists();
+        create_directory(&directory)?;
+        #[cfg(any(target_os = "macos", all(target_os = "ios", target_abi = "macabi")))]
+        super::default_directory::exclude_from_backups(&directory);
+        Ok(SqliteBackend {
+            directory,
+            shared: Cell::new(made.then_some(shared)),
+        })
     }
 
     /// The location of the backend of `directory`, without creating it.
     pub(crate) fn location_of(directory: Option<&Path>) -> String {
         let dir = directory
             .map(Path::to_path_buf)
-            .or_else(|| default_directory().ok())
+            .or_else(|| default_directories().ok().map(|d| d.directory))
             .unwrap_or_default();
         format!("sqlite:{}", dir.display())
     }
+}
+
+/// Moves the database `file` from the folder every app shared to the
+/// app's own, when the app's own has none: only the database the app
+/// opens first, of one user, storage key, URLs and schema, with its
+/// pending mutations. The app's other databases, and other apps', stay,
+/// and its other databases sync again from scratch. The profile ID is
+/// copied, so the server sees the same profile. Neither moves when the
+/// folders are on different devices, where a rename can't move a file.
+fn move_from_shared(shared: &Path, directory: &Path, file: &str) {
+    if !same_device(shared, directory) {
+        return;
+    }
+    let (from, to) = (shared.join(file), directory.join(file));
+    if from.exists() && !to.exists() {
+        move_database(&from, &to);
+    }
+    let profile = directory.join("profile-id");
+    if !profile.exists() {
+        let _ = std::fs::copy(shared.join("profile-id"), profile);
+    }
+}
+
+#[cfg(unix)]
+fn same_device(a: &Path, b: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (std::fs::metadata(a), std::fs::metadata(b)) {
+        (Ok(a), Ok(b)) => a.dev() == b.dev(),
+        _ => false,
+    }
+}
+
+/// Elsewhere, such as on Windows, a rename to another volume fails, and
+/// the database stays.
+#[cfg(not(unix))]
+fn same_device(_: &Path, _: &Path) -> bool {
+    true
+}
+
+/// Moves the database at `from` once SQLite has folded its WAL into it, so
+/// the move is one rename: the database can't arrive without the commits
+/// in its WAL, or leave a WAL behind for a new database to read. A
+/// database another process has open stays, and syncs again from scratch.
+fn move_database(from: &Path, to: &Path) {
+    if !leave_wal(from) {
+        return;
+    }
+    // Apple's SQLite leaves the shared memory, which holds nothing now.
+    let _ = std::fs::remove_file(with_suffix(from, "-shm"));
+    let _ = std::fs::rename(from, to);
+}
+
+/// Switches the database at `path` out of WAL mode, which folds the WAL
+/// into it and deletes it, then closes it. False when that fails, as it
+/// does when another connection has the database open, since each keeps a
+/// shared lock on the file while it's open in WAL mode. (A WAL left after
+/// a close shows nothing: Apple's SQLite keeps it.)
+fn leave_wal(path: &Path) -> bool {
+    let Ok(db) = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)
+    else {
+        return false;
+    };
+    let left = db.busy_timeout(OPEN_BUSY_TIMEOUT).is_ok()
+        && db
+            .query_row("PRAGMA journal_mode = DELETE", [], |r| {
+                r.get::<_, String>(0)
+            })
+            .is_ok_and(|mode| mode == "delete");
+    db.close().is_ok() && left
 }
 
 impl StorageBackend for SqliteBackend {
@@ -210,7 +288,11 @@ impl StorageBackend for SqliteBackend {
     }
 
     fn open(&self, name: &str) -> Result<Box<dyn StoredDatabase>, LoadError> {
-        let path = self.directory.join(file_name(name));
+        let file = file_name(name);
+        if let Some(shared) = self.shared.take() {
+            move_from_shared(&shared, &self.directory, &file);
+        }
+        let path = self.directory.join(file);
         let connection = open_connection(&path, name).map_err(|e| failure(&e))?;
         let profile_id = profile_id(&self.directory)?;
         Ok(Box::new(SqliteDatabase::start(
@@ -959,5 +1041,128 @@ mod tests {
         let decoded = decode_writes(&encoded).unwrap();
         assert_eq!(decoded, vec![writes[1].clone(), writes[0].clone()]);
         assert!(decode_writes(&Value::from("x")).is_err());
+    }
+
+    fn folders(test: &str) -> (PathBuf, PathBuf) {
+        let root = std::env::temp_dir().join(format!("zero-move-{test}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (shared, own) = (root.join("shared"), root.join("own"));
+        std::fs::create_dir_all(&shared).unwrap();
+        std::fs::create_dir_all(&own).unwrap();
+        (shared, own)
+    }
+
+    fn read(path: &Path) -> Option<String> {
+        std::fs::read_to_string(path).ok()
+    }
+
+    fn names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// A database in WAL mode with a row in `t`, and its connection.
+    fn wal_database(path: &Path) -> Connection {
+        let db = Connection::open(path).unwrap();
+        db.execute_batch("PRAGMA journal_mode = WAL; CREATE TABLE t (x); INSERT INTO t VALUES (1)")
+            .unwrap();
+        db
+    }
+
+    fn rows(path: &Path) -> i64 {
+        let db = Connection::open(path).unwrap();
+        db.query_row("SELECT count(*) FROM t", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn a_move_folds_the_wal_in_and_renames_the_main_file_alone() {
+        let (shared, own) = folders("fold");
+        let file = "zero-v1-a.sqlite";
+        // Closed as a killed app leaves it: the table and row only in the
+        // WAL, with the shared memory.
+        let db = wal_database(&shared.join(file));
+        db.set_db_config(
+            rusqlite::config::DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE,
+            true,
+        )
+        .unwrap();
+        drop(db);
+        let wal = std::fs::metadata(shared.join(format!("{file}-wal"))).unwrap();
+        assert!(wal.len() > 0);
+        move_from_shared(&shared, &own, file);
+        assert_eq!(names(&shared), Vec::<String>::new());
+        assert_eq!(names(&own), [file]);
+        assert_eq!(rows(&own.join(file)), 1);
+        let _ = std::fs::remove_dir_all(shared.parent().unwrap());
+    }
+
+    #[test]
+    fn a_database_another_connection_has_open_stays() {
+        let (shared, own) = folders("open");
+        let file = "zero-v1-a.sqlite";
+        let other = wal_database(&shared.join(file));
+        move_from_shared(&shared, &own, file);
+        assert!(shared.join(file).exists());
+        assert_eq!(names(&own), Vec::<String>::new());
+        other.execute("INSERT INTO t VALUES (2)", []).unwrap();
+        drop(other);
+        move_from_shared(&shared, &own, file);
+        assert_eq!(names(&own), [file]);
+        assert_eq!(rows(&own.join(file)), 2);
+        // Nor does a file that isn't a database.
+        let not_one = "zero-v1-b.sqlite";
+        std::fs::write(shared.join(not_one), "not a database").unwrap();
+        move_from_shared(&shared, &own, not_one);
+        assert_eq!(names(&shared), [not_one]);
+        assert_eq!(
+            read(&shared.join(not_one)).as_deref(),
+            Some("not a database")
+        );
+        let _ = std::fs::remove_dir_all(shared.parent().unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nothing_moves_to_another_device() {
+        use std::os::unix::fs::MetadataExt;
+        let (shared, _) = folders("device");
+        // A file system of its own on Linux; elsewhere there's none to try.
+        let other = Path::new("/dev/shm");
+        let dev = |p: &Path| std::fs::metadata(p).map(|m| m.dev()).ok();
+        if dev(other).is_none() || dev(other) == dev(&shared) {
+            return;
+        }
+        let own = other.join(format!("zero-move-device-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&own);
+        std::fs::create_dir_all(&own).unwrap();
+        let file = "zero-v1-a.sqlite";
+        drop(wal_database(&shared.join(file)));
+        std::fs::write(shared.join("profile-id"), "p1").unwrap();
+        move_from_shared(&shared, &own, file);
+        assert_eq!(names(&own), Vec::<String>::new());
+        assert_eq!(names(&shared), ["profile-id", file]);
+        let _ = std::fs::remove_dir_all(&own);
+        let _ = std::fs::remove_dir_all(shared.parent().unwrap());
+    }
+
+    #[test]
+    fn a_move_keeps_what_the_new_folder_has() {
+        let (shared, own) = folders("keeps");
+        let file = "zero-v1-a.sqlite";
+        for (dir, what) in [(&shared, "shared"), (&own, "own")] {
+            std::fs::write(dir.join(file), what).unwrap();
+            std::fs::write(dir.join("profile-id"), what).unwrap();
+        }
+        move_from_shared(&shared, &own, file);
+        for (dir, what) in [(&shared, "shared"), (&own, "own")] {
+            assert_eq!(read(&dir.join(file)).as_deref(), Some(what));
+            assert_eq!(read(&dir.join("profile-id")).as_deref(), Some(what));
+        }
+        let _ = std::fs::remove_dir_all(shared.parent().unwrap());
     }
 }

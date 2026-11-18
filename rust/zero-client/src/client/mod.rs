@@ -7,6 +7,8 @@
 
 mod connection_manager;
 mod database;
+#[cfg(feature = "sqlite")]
+mod default_directory;
 mod engine;
 mod error;
 mod event_loop;
@@ -30,6 +32,9 @@ mod transaction;
 mod zero;
 
 pub use connection_manager::{ConnectionState, ConnectionStatus, NeedsAuthReason};
+#[cfg(feature = "sqlite")]
+#[doc(hidden)]
+pub use default_directory::set_default_sqlite_directories;
 pub use engine::{
     BatchViewUpdates, MutationOutcome, MutationServerOutcome, MutatorResult, StorageFailureHandler,
     UpdateNeededHandler, UpdateNeededReason, ZeroOptions,

@@ -83,9 +83,12 @@ One default differs from JS, on purpose: `storage` is
 storage is the opt-in `sqlite` feature, so the default build has no
 third-party dependencies, and an app chooses where its replica lives
 (`ZeroStorage::Sqlite { directory }`); an app that wants its data across
-restarts sets it. `hidden_disconnect_delay_ms` is JS's 5 minutes; a mobile
-app, which the system suspends soon after it goes to the background, can
-set 0 to disconnect as soon as it says it is hidden, as Swift does.
+restarts sets it. With `directory: None`, each app gets a folder of its
+own, named for its bundle identifier or executable (on iOS and Apple's other
+platforms, its container is its own already), as IndexedDB keeps each
+origin's databases apart. `hidden_disconnect_delay_ms` is JS's 5 minutes; a
+mobile app, which the system suspends soon after it goes to the background,
+can set 0 to disconnect as soon as it says it is hidden, as Swift does.
 
 ### The client
 

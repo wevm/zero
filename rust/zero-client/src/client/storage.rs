@@ -23,13 +23,34 @@ pub enum ZeroStorage {
     /// `kvStore: 'mem'`. **Nothing survives a restart.**
     #[default]
     Memory,
-    /// A SQLite database file per database name in `directory`. The default
-    /// directory is `~/Library/Application Support/Zero` on macOS,
-    /// `%LOCALAPPDATA%\Zero` on Windows, and `$XDG_DATA_HOME/zero` (or
-    /// `~/.local/share/zero`) elsewhere.
+    /// A SQLite database file per database name in `directory`.
+    ///
+    /// The default directory is the app's own, as zero-swift's:
+    ///
+    /// - macOS and Mac Catalyst: `~/Library/Application Support/<app>/Zero`,
+    ///   where `<app>` is the bundle identifier of an app in an app bundle,
+    ///   or else the executable's name. A sandboxed app's is
+    ///   `~/Library/Application Support/Zero`, in its own container. Each
+    ///   launch excludes it from backups (`tmutil addexclusion`).
+    /// - iOS, tvOS, watchOS, and visionOS: `$XDG_DATA_HOME/zero`, or
+    ///   `~/.local/share/zero`, in the app's container, as before.
+    /// - Windows: `%LOCALAPPDATA%\<app>\Zero`, where `<app>` is the
+    ///   executable's name without `.exe`.
+    /// - Elsewhere: `$XDG_DATA_HOME/<app>/zero`, or
+    ///   `~/.local/share/<app>/zero`, where `<app>` is the executable's
+    ///   name.
+    ///
+    /// Every app used to share the folder without `<app>`, where one app's
+    /// database GC and [`drop_all_databases`] deleted other apps'
+    /// databases. The first time the default storage makes the app's
+    /// folder, the first database it opens moves there from the shared
+    /// one, pending mutations included; the app's other databases stay and
+    /// sync again from scratch. A database another process has open stays
+    /// too, as does one on another device than the app's folder. An app
+    /// whose `<app>` isn't a single path component keeps the shared folder.
     #[cfg(feature = "sqlite")]
     Sqlite {
-        /// Where the files go; `None` for the default directory.
+        /// Where the files go, as is; `None` for the default directory.
         directory: Option<std::path::PathBuf>,
     },
     /// A store the app brings.

@@ -1,8 +1,9 @@
 //! SQLite storage on disk: what a client wrote is what the next one reads
 //! (checked by editing the file in between), a file that doesn't decode is
 //! dropped as lost client state, a store that can't open falls back to
-//! memory, `delete` removes the file, and the database GC deletes old
-//! files and keeps current ones.
+//! memory, `delete` removes the file, the database GC deletes old files and
+//! keeps current ones, and the default storage's first open moves its
+//! database from the folder every app shared.
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -10,7 +11,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 use zero_client::ast::System;
-use zero_client::client::{Mutator, Transaction, Zero, ZeroOptions, ZeroStorage};
+use zero_client::client::{
+    Mutator, Transaction, Zero, ZeroOptions, ZeroStorage, drop_all_databases,
+    set_default_sqlite_directories,
+};
 use zero_client::json::{self, Object, Value};
 use zero_client::query::AnyQuery;
 use zero_client::schema::Schema;
@@ -267,4 +271,117 @@ fn the_database_gc_deletes_old_files_and_keeps_current_ones() {
     assert!(recent.events.borrow().is_empty());
     drop(recent);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+const DEFAULT: ZeroStorage = ZeroStorage::Sqlite { directory: None };
+
+/// The folder every app shared, and this app's own, which doesn't exist
+/// yet, as the default storage of this thread.
+fn default_folders(test: &str) -> (PathBuf, PathBuf) {
+    let root = directory(test);
+    let (shared, own) = (root.join("Zero"), root.join("com.example.notes/Zero"));
+    set_default_sqlite_directories(own.clone(), shared.clone());
+    (shared, own)
+}
+
+fn with_suffix(file: &Path, suffix: &str) -> PathBuf {
+    let mut s = file.as_os_str().to_owned();
+    s.push(suffix);
+    PathBuf::from(s)
+}
+
+fn contents(files: &[PathBuf]) -> Vec<Vec<u8>> {
+    files.iter().map(|f| std::fs::read(f).unwrap()).collect()
+}
+
+#[test]
+fn the_first_open_of_the_default_storage_moves_its_database_from_the_shared_folder() {
+    let (shared, own) = default_folders("move");
+    // Another app's database, and this app's of another user.
+    for (key, id) in [("other-app", "o1"), ("other-user", "u1")] {
+        let c = client(sqlite(&shared), key, 1_000.0);
+        c.create(id, "Elsewhere");
+        drop(c);
+    }
+    let others = files(&shared);
+    assert_eq!(others.len(), 2);
+    let before = contents(&others);
+
+    // A mutation the server never confirmed, in the shared folder as an app
+    // that was killed leaves it: in the WAL, not yet in the main file.
+    let first = client(sqlite(&shared), "k", 1_000.0);
+    first.create("i1", "Pending");
+    first.zero.flush_storage();
+    let group = first.zero.client_group_id();
+    let [mine] = files(&shared)
+        .into_iter()
+        .filter(|f| !others.contains(f))
+        .collect::<Vec<_>>()
+        .try_into()
+        .unwrap();
+    let killed = shared.with_file_name("killed.sqlite");
+    for suffix in ["", "-wal"] {
+        std::fs::copy(with_suffix(&mine, suffix), with_suffix(&killed, suffix)).unwrap();
+    }
+    drop(first);
+    for suffix in ["", "-wal"] {
+        std::fs::copy(with_suffix(&killed, suffix), with_suffix(&mine, suffix)).unwrap();
+    }
+    // Without its WAL, the main file has no mutations table.
+    let main_only = shared.with_file_name("main-only.sqlite");
+    std::fs::copy(&killed, &main_only).unwrap();
+    let tables = "SELECT count(*) FROM sqlite_master WHERE name = 'mutations'";
+    assert_eq!(count(&main_only, tables), 0);
+    let profile = std::fs::read_to_string(shared.join("profile-id")).unwrap();
+
+    assert!(!own.exists());
+    let c = client(DEFAULT, "k", 2_000.0);
+    assert!(c.events.borrow().is_empty(), "{:?}", c.events);
+    assert_eq!(c.zero.client_group_id(), group);
+    // No server sent the row: the pending mutation ran again.
+    assert_eq!(c.issues(), ["i1:Pending"]);
+    c.zero.flush_storage();
+    let moved = own.join(mine.file_name().unwrap());
+    assert_eq!(files(&own), std::slice::from_ref(&moved));
+    assert_eq!(count(&moved, "SELECT count(*) FROM mutations"), 1);
+    for suffix in ["", "-wal", "-shm"] {
+        assert!(!with_suffix(&mine, suffix).exists(), "{suffix}");
+    }
+    assert_eq!(files(&shared), others);
+    assert_eq!(contents(&others), before);
+    assert_eq!(
+        std::fs::read_to_string(own.join("profile-id")).unwrap(),
+        profile
+    );
+    drop(c);
+
+    // Now that the folder is there, nothing moves: this app's database of
+    // the other user stays, and that user syncs again from scratch.
+    let again = client(DEFAULT, "other-user", 3_000.0);
+    assert!(again.issues().is_empty());
+    drop(again);
+    assert_eq!(files(&shared), others);
+    assert_eq!(contents(&others), before);
+    assert_eq!(files(&own).len(), 2);
+    let _ = std::fs::remove_dir_all(shared.parent().unwrap());
+}
+
+#[test]
+fn a_drop_before_the_first_open_of_the_default_storage_does_not_bring_the_database_back() {
+    let (shared, own) = default_folders("move-drop");
+    let first = client(sqlite(&shared), "k", 1_000.0);
+    first.create("i1", "Logged out");
+    drop(first);
+    let [old] = files(&shared).try_into().unwrap();
+
+    let dropped = drop_all_databases(&DEFAULT);
+    assert_eq!(dropped, Default::default());
+    assert!(own.is_dir());
+    let c = client(DEFAULT, "k", 2_000.0);
+    assert!(c.issues().is_empty());
+    drop(c);
+    assert!(old.exists());
+    let [new] = files(&own).try_into().unwrap();
+    assert_eq!(count(&new, "SELECT count(*) FROM mutations"), 0);
+    let _ = std::fs::remove_dir_all(shared.parent().unwrap());
 }
