@@ -151,6 +151,14 @@ the default storage is memory only, so a restarted app starts with no
 synced rows and no pending mutations. Without `tokio-transport`, bring your
 own event loop with `client::Scheduler` and `client::SocketFactory`.
 
+`ZeroStorage::Sqlite { directory: None }` keeps each app's databases in a
+folder of its own: `~/Library/Application Support/<bundle ID>/Zero` on
+macOS and Mac Catalyst (the executable's name outside an app bundle),
+excluded from backups; `%LOCALAPPDATA%\<app>\Zero` on Windows; and
+`~/.local/share/<app>/zero` (or `$XDG_DATA_HOME/<app>/zero`) elsewhere,
+where `<app>` is the executable's name. On iOS and Apple's other platforms
+it stays `~/.local/share/zero`, in the app's container.
+
 ## Differences from JS
 
 - **One thread.** `Zero` is neither `Send` nor `Sync`; it runs on your event

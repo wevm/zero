@@ -142,8 +142,38 @@ IndexedDB-shaped machinery.
   plain `std::thread` that owns its connection, fed by a channel: writes run
   in order, one `BEGIN IMMEDIATE` transaction per batch (a mutation, a
   poke), so no async runtime is needed; reads at open, flushes, and closes
-  wait for it. The file layout, file names, and default directory are
-  zero-swift's, so the two read each other's files.
+  wait for it. The file layout and file names are zero-swift's, so the two
+  read each other's files, and so are the default directory's rules.
+- The default directory is the app's own: `<app>/Zero` in
+  `~/Library/Application Support` on macOS and Mac Catalyst, `<app>` the
+  bundle identifier or else the executable's name; `<app>\Zero` in
+  `%LOCALAPPDATA%` on Windows; `<app>/zero` in `$XDG_DATA_HOME` or
+  `~/.local/share` elsewhere, `<app>` the executable's name (without the
+  ` (deleted)` Linux adds once an upgrade replaces it). Every app used to
+  share the folder without `<app>`, where one app's database GC and
+  `drop_all_databases` deleted the others' databases, pending mutations
+  included, and all shared one profile ID; IndexedDB, per origin, keeps JS
+  apps apart. A sandboxed macOS app keeps `Application Support/Zero`, and
+  iOS and Apple's other platforms keep `.local/share/zero`, in a home that
+  is the app's container. The rules take the environment, the executable's
+  path, and the `Info.plist` (XML or binary, read by a small parser) as
+  arguments, so each platform's are tested on Linux. On macOS and Mac
+  Catalyst each launch runs `tmutil addexclusion` on the folder, on a
+  thread, as Firestore excludes its folder from backups on every open.
+- The first time the default storage makes the app's folder, the backend
+  remembers the shared one, and its first open moves that one database
+  there and copies the profile ID, when both folders are on one device. The
+  move is one rename of the main file, as zero-swift's: first
+  `PRAGMA journal_mode = DELETE` folds the WAL in and deletes it, so a
+  crash can't leave the database without the commits in its WAL. Leaving
+  WAL mode needs every other connection closed, since each keeps a shared
+  lock on the file in WAL mode, so a database another process has open
+  stays, and syncs again from scratch. (Apple's SQLite keeps the WAL after
+  the last connection closes, so a WAL left can't tell.) Only that
+  database moves: its name hashes the user, storage key, URLs, and schema,
+  so other apps' files and this app's other users' stay, and those users
+  sync again from scratch. `drop_all_databases` and `delete` make the
+  folder too, so a drop before the first open isn't undone by a move.
 - Versioning by name, as in Swift, with no migration framework: the
   database name covers the user, the storage key, the mutate and query
   URLs, the client schema's hash, the storage version, and the format, so a
@@ -164,8 +194,8 @@ IndexedDB-shaped machinery.
   `(sqlite)` row for each client file, each scenario on a directory of its
   own. `tests/sqlite_storage.rs` checks the file itself (a relaunch reads
   an edit made on disk, a corrupt file, a directory that can't open,
-  `delete`, the GC), and `tests/client_e2e/` relaunches on SQLite against
-  `zero-cache`.
+  `delete`, the GC, the move from the shared folder), and
+  `tests/client_e2e/` relaunches on SQLite against `zero-cache`.
 - When the server no longer has the client's state (a 1009 close for a
   message over its size limit, or the server's `ClientNotFound`), JS
   disables the client group and calls `onClientStateNotFound`, which
