@@ -91,18 +91,30 @@ struct DefaultDirectory: Equatable {
     Self.excludeFromBackup(path)
   }
 
-  /// Moves the database `file` and its WAL. The WAL goes first, as in
-  /// `SQLiteStore.retire`, so the database never arrives without the
-  /// commits in its WAL.
+  /// Moves the database `file` once SQLite has folded its WAL into it, so
+  /// the move is one rename: the database can't arrive without the commits
+  /// in its WAL, or leave a WAL behind for a new database to read. A
+  /// database another process has open stays, and syncs again.
   private static func move(_ file: String, from source: String, to destination: String) {
     let from = source + "/" + file
     let to = destination + "/" + file
     guard access(from, F_OK) == 0, access(to, F_OK) != 0 else { return }
-    for suffix in ["-wal", "-shm", ""] { _ = rename(from + suffix, to + suffix) }
+    do {
+      let db = try SQLiteDatabase(path: from)
+      defer { db.close() }
+      db.setBusyTimeout(ms: SQLiteStore.openBusyTimeoutMs)
+      try db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    } catch {
+      return
+    }
+    // The last connection to close deletes the WAL; a WAL left is another's.
+    guard access(from + "-wal", F_OK) != 0 else { return }
+    _ = unlink(from + "-shm")
+    _ = rename(from, to)
   }
 
-  /// Whether a rename from `a` to `b` stays on one volume, so a database
-  /// can't move without its WAL.
+  /// Whether a rename from `a` to `b` stays on one volume, and so moves the
+  /// database rather than copying it.
   private static func sameVolume(_ a: String, _ b: String) -> Bool {
     var sa = stat()
     var sb = stat()

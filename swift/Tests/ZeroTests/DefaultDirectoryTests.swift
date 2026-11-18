@@ -99,17 +99,37 @@ import ZeroTesting
 
   @Test func theFirstOpenMovesTheAppsDatabaseWithItsPendingMutations() async throws {
     defer { try? FileManager.default.removeItem(atPath: root) }
-    let first = try makeZero("k", in: legacy)
+    // Left as an app that was killed leaves it: the pending mutation is
+    // only in the WAL.
+    let file = ReplicaDatabase.fileName(Self.name("k"))
+    let running = root + "/running"
+    let first = try makeZero("k", in: running)
     first.mutate(create("i1"))
+    first.engine.database.flush()
+    try FileManager.default.createDirectory(atPath: legacy, withIntermediateDirectories: true)
+    for name in [file, file + "-wal", file + "-shm", "profile-id"] {
+      try FileManager.default.copyItem(atPath: running + "/" + name, toPath: legacy + "/" + name)
+    }
     first.close()
+    try FileManager.default.copyItem(
+      atPath: legacy + "/" + file, toPath: root + "/without-wal.sqlite")
+    var tables = 0
+    try SQLiteDatabase(path: root + "/without-wal.sqlite").query(
+      "SELECT count(*) FROM sqlite_master WHERE name = 'mutations'"
+    ) { tables = Int($0.integer(0)) }
+    #expect(tables == 0)
     // Another app's database, or another user's.
     let other = try makeZero("other", in: legacy)
     other.close()
     let profileID = try String(contentsOfFile: legacy + "/profile-id", encoding: .utf8)
 
     try directory.prepare(moving: Self.name("k"))
-    #expect(files(directory.path) == [ReplicaDatabase.fileName(Self.name("k"))])
+    #expect(files(directory.path) == [file])
     #expect(files(legacy) == [ReplicaDatabase.fileName(Self.name("other"))])
+    let left =
+      try FileManager.default.contentsOfDirectory(atPath: legacy)
+      + FileManager.default.contentsOfDirectory(atPath: directory.path)
+    #expect(!left.contains { $0.hasSuffix("-wal") || $0.hasSuffix("-shm") }, "\(left)")
     #expect(
       try String(contentsOfFile: directory.path + "/profile-id", encoding: .utf8) == profileID)
 
@@ -132,6 +152,19 @@ import ZeroTesting
     try directory.prepare(moving: Self.name("k"))
     #expect(files(directory.path).isEmpty)
     #expect(files(legacy) == [ReplicaDatabase.fileName(Self.name("k"))])
+  }
+
+  @Test func leavesADatabaseThatIsOpenElsewhere() throws {
+    defer { try? FileManager.default.removeItem(atPath: root) }
+    // Its connection keeps the WAL, which a move would leave behind.
+    let running = try makeZero("k", in: legacy)
+    running.mutate(create("i1"))
+    running.engine.database.flush()
+
+    try directory.prepare(moving: Self.name("k"))
+    #expect(files(directory.path).isEmpty)
+    #expect(files(legacy) == [ReplicaDatabase.fileName(Self.name("k"))])
+    running.close()
   }
 
   #if canImport(Darwin)
