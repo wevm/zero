@@ -357,7 +357,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rune::{Env, GesturePhase, Runtime, WheelEvent};
+    use rune::{ElementInfo, Env, GesturePhase, Runtime, WheelEvent};
 
     const SIZE: (f32, f32) = (420.0, 760.0);
     /// Where the pointer scrolls: over the list.
@@ -413,7 +413,10 @@ mod tests {
             }
             let moving = self.rt.frame(self.dt);
             self.frames += 1;
-            let gap = blank_in(&self.rt);
+            // What the frame drew, read once for both checks: in a debug
+            // build, reading it costs more than the frame itself.
+            let elements = self.rt.elements();
+            let gap = blank_in(&elements);
             if gap > 0.5 {
                 match self.blanks.iter_mut().find(|b| b.0 == self.drive) {
                     Some(b) => {
@@ -423,7 +426,7 @@ mod tests {
                     None => self.blanks.push((self.drive.clone(), 1, gap)),
                 }
             }
-            if placeholders_in(&self.rt) > 0 {
+            if placeholders_in(&elements) > 0 {
                 match self.placeholders.iter_mut().find(|p| p.0 == self.drive) {
                     Some(p) => p.1 += 1,
                     None => self.placeholders.push((self.drive.clone(), 1)),
@@ -448,7 +451,7 @@ mod tests {
             }
             self.frames(12);
             assert_eq!(
-                placeholders_in(&self.rt),
+                placeholders_in(&self.rt.elements()),
                 0,
                 "{}: placeholders on screen at rest",
                 self.drive
@@ -617,36 +620,31 @@ mod tests {
         }
     }
 
-    /// The list's rows the last frame drew, by key, and where.
-    fn rows_in(rt: &Runtime<Lists>) -> Vec<(String, [f32; 4])> {
-        (rt.elements().into_iter())
-            .filter(|e| !e.exiting)
-            .filter_map(|e| {
-                let k = e.path.strip_prefix(ROWS)?.strip_prefix('/')?;
-                (!k.contains('/')).then(|| (k.to_owned(), e.rect))
-            })
-            .collect()
+    /// The list's rows among a frame's `elements`, by key, and where.
+    fn rows_in(elements: &[ElementInfo]) -> impl Iterator<Item = (&str, [f32; 4])> {
+        elements.iter().filter(|e| !e.exiting).filter_map(|e| {
+            let k = e.path.strip_prefix(ROWS)?.strip_prefix('/')?;
+            (!k.contains('/')).then_some((k, e.rect))
+        })
     }
 
     /// Placeholders in the viewport.
-    fn placeholders_in(rt: &Runtime<Lists>) -> usize {
-        let elements = rt.elements();
+    fn placeholders_in(elements: &[ElementInfo]) -> usize {
         let viewport = elements.iter().find(|e| e.path == VIEWPORT).map(|e| e.rect);
         let [_, top, _, h] = viewport.expect("the list's viewport");
-        (rows_in(rt).into_iter())
+        rows_in(elements)
             .filter(|(k, r)| k.starts_with('p') && r[1] < top + h && r[1] + r[3] > top)
             .count()
     }
 
     /// Points of the viewport, within the rows' extent, that no row covers.
-    fn blank_in(rt: &Runtime<Lists>) -> f32 {
-        let elements = rt.elements();
+    fn blank_in(elements: &[ElementInfo]) -> f32 {
         let rect = |path: &str| elements.iter().find(|e| e.path == path).map(|e| e.rect);
         let viewport = rect(VIEWPORT).expect("the list's viewport");
         let content = rect(ROWS).expect("the list's rows");
         let top = viewport[1].max(content[1]);
         let bottom = (viewport[1] + viewport[3]).min(content[1] + content[3]);
-        let mut rows: Vec<(f32, f32)> = (rows_in(rt).into_iter())
+        let mut rows: Vec<(f32, f32)> = rows_in(elements)
             .map(|(_, r)| (r[1], r[1] + r[3]))
             .collect();
         rows.sort_by(|a, b| a.0.total_cmp(&b.0));
