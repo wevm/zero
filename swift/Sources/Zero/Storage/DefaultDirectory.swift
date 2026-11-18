@@ -164,8 +164,16 @@ struct DefaultDirectory: Equatable {
       }
       let path =
         n > 0 ? String(decoding: buffer.prefix(n), as: UTF8.self) : CommandLine.arguments.first
-      return path?.split(separator: "/").last.map(String.init)
+      return path.flatMap(executableName)
     #endif
+  }
+
+  /// The name of the executable at `path`, as `/proc/self/exe` gives it:
+  /// Linux adds " (deleted)" once the file is replaced, as an upgrade does
+  /// while the app runs.
+  static func executableName(_ path: String) -> String? {
+    let path = path.hasSuffix(" (deleted)") ? String(path.dropLast(10)) : path
+    return path.split(separator: "/").last.map(String.init)
   }
 
   /// Whether `name` names a folder, rather than a path.

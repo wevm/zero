@@ -61,6 +61,11 @@ import ZeroTesting
     #expect(name.map(DefaultDirectory.isPathComponent) == true, "\(name ?? "nil")")
   }
 
+  @Test func namesAnExecutableReplacedWhileItRunsAsBefore() {
+    #expect(DefaultDirectory.executableName("/usr/bin/notes") == "notes")
+    #expect(DefaultDirectory.executableName("/usr/bin/notes (deleted)") == "notes")
+  }
+
   // MARK: - The move
 
   let root = NSTemporaryDirectory() + "zero-default-directory-" + UUID().uuidString
