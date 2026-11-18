@@ -483,6 +483,43 @@ final class LayoutScrollView {
     #expect(view.bottomGap == 50)
   }
 
+  // The same, the user dragging up through rows that come out shorter than
+  // estimated as they're measured. The jump kept the list from holding
+  // what's on screen in place until its rows settled, which, with each
+  // page the drag loads unconfirmed, they didn't until the drag stopped:
+  // the rows on screen moved against the drag a row's difference at a
+  // time, and the pages it loaded could leave the viewport blank.
+  @Test("a drag once a jump's row is on screen keeps the rows on screen with it as rows above load")
+  func dragAfterJump() {
+    let h = Harness(rowCount: 200, rowHeight: 80) {
+      $0.anchoring = .manual
+      $0.stickToBottom = true
+      $0.minPageSize = 20
+    }
+    let view = LayoutScrollView(h, viewportHeight: 376)
+    for i in 0..<200 { view.heights["r\(i)"] = 59 }
+    view.pass()
+    h.offline = true
+    h.core.scrollToItem("r199", align: .end)
+    for _ in 0..<3 {
+      view.pass()
+      view.frameDrawn()
+    }
+    #expect(h.core.lastVisibleItem()?.key == "r199")
+    #expect(!h.core.snapshot.complete)
+    // 3,000 points up, 30 a frame.
+    for _ in 0..<100 {
+      guard let key = h.core.firstVisibleItem()?.key, let top = view.rowTop(key) else {
+        Issue.record("no row on screen")
+        return
+      }
+      view.userScroll(view.scrollOffset - 30)
+      #expect(view.rowTop(key) == top + 30, "\(key) moved against the drag")
+      #expect(view.blank == 0)
+      view.frameDrawn()
+    }
+  }
+
   // A scroll bar sized by the rows paged in so far can't be dragged to the
   // list's end, and a thumb dragged far into the space walked to it from
   // the rows a few pages a query.

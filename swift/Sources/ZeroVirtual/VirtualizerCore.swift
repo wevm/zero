@@ -284,7 +284,8 @@ package final class VirtualizerCore<
   private var anchorKey: AnyHashable?
   // The reference row's top, in content coordinates.
   private var anchorOffset = 0.0
-  // From a reset until the new window's rows are in.
+  // From a reset until the new window's rows are in, or the user scrolls
+  // the rows of a jump on screen.
   private var anchorSuppressed = false
   // How far the space before the rows is off its estimate. Rows above the
   // reference row that load, go, or come out another height than estimated
@@ -1134,7 +1135,14 @@ package final class VirtualizerCore<
     if !programmatic, let t = target {
       switch t {
       case .offset: target = nil
-      case .row where placed: target = nil
+      case .row where placed:
+        target = nil
+        // Its rows are on screen, and the user moves them: what's on screen
+        // stays in place from here as rows near it load and come out other
+        // heights, as after any scroll. Not once its rows settle: each page
+        // the scroll loads is one the server hasn't confirmed yet, so they
+        // don't until the scroll stops.
+        anchorSuppressed = false
       default: break
       }
     }
