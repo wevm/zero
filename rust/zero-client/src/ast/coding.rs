@@ -4,6 +4,9 @@ use super::*;
 use crate::decode::{self, Builder, DecodeError, JsonCodable, Reader, Result, strings_json};
 
 impl JsonCodable for Ast {
+    /// Reads an AST from its JSON in the sync protocol (`astSchema` in
+    /// `packages/zero-protocol/src/ast.ts`), such as a server's, with its
+    /// fields in any order.
     fn from_json(v: &Value) -> Result<Self> {
         let r = Reader::new(v, "AST")?;
         Ok(Ast {
@@ -44,6 +47,13 @@ impl JsonCodable for Ast {
         })
     }
 
+    /// The AST's JSON in the sync protocol (`astSchema`), with every node's
+    /// fields in the order JS's `normalizeAST` writes them, which is the
+    /// order JS's query builder builds them in. Absent fields are left out,
+    /// as `JSON.stringify` leaves out `undefined`. So
+    /// [`json::stringify`](crate::json::stringify) of a normalized AST
+    /// ([`Ast::normalized`]) is JS's `JSON.stringify(normalizeAST(ast))`,
+    /// byte for byte, and equal queries have the same text.
     fn to_json(&self) -> Value {
         Builder::new()
             .opt("schema", self.schema.clone())
@@ -179,9 +189,9 @@ impl JsonCodable for CorrelatedSubquery {
                     .set("childField", strings_json(&self.correlation.child_field))
                     .build(),
             )
+            .opt("hidden", self.hidden)
             .set("subquery", self.subquery.to_json())
             .opt("system", self.system.map(System::as_str))
-            .opt("hidden", self.hidden)
             .opt("aggregate", self.aggregate.as_ref().map(Aggregate::to_json))
             .build()
     }
