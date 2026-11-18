@@ -105,6 +105,7 @@ set 0 to disconnect as soon as it says it is hidden, as Swift does.
 | `zero.inspector`                                                 | `inspector()`, an `Inspector`; see below                                                                |
 | `zero.mutateBatch`, `zero.online`, `zero.server`, `zero.version` | not ported; `protocol::PROTOCOL_VERSION` is the sync protocol's version                                 |
 | none (Swift's `addMutationOutcomeListener`)                      | `add_mutation_outcome_listener(listener)`, which returns the function that removes it                   |
+| none (Swift's `pendingSettled(timeout:)`)                        | `pending_settled(timeout_ms)`, a `Deferred<bool>`: whether no mutations are pending; see below          |
 
 Rust adds `reconnect_now` (the network may be back, so skip the backoff),
 `when_pending_settled`, and `flush_storage` (wait for the store's queued
@@ -123,6 +124,13 @@ listener hears each mutation's server outcome once, as a
 `server` result settled with a `ZeroError` when the client gave up
 connecting. Swift's `mutationOutcomes` stream isn't ported: the listener can
 feed a channel.
+
+`pending_settled` is Swift's API too, with no JS counterpart: it waits for
+the server to confirm every pending mutation, as before `set_visible(false)`,
+and resolves with whether none are left. It resolves at once when the server
+can't confirm them (the client isn't connected, it's closed, or its client
+group is disabled), and at `timeout_ms` on the client's scheduler.
+`when_pending_settled` calls a function instead, with no timeout.
 
 When the server no longer has the client's state, JS asks the app to
 reload. Without `on_client_state_not_found`, Rust replaces the client

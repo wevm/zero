@@ -129,7 +129,7 @@ app uses `client`, `define`, `typed` (through generated code), `ttl`, and
 | Mutate             | `zero.mutate_request(M.with(args))`, a `MutatorResult` with `client` and `server` outcomes             | `zero.mutate(name, json)` untyped                               |
 | Server outcomes    | `zero.add_mutation_outcome_listener(\|o\| ...)`                                                        | Also hears mutations replayed after a reconnect                 |
 | Connection         | `connection().state()`, `.subscribe(listener)`, `.connect(ConnectAuth::Keep \| Set(token) \| Clear)?`  | `NeedsAuth` when the server rejects the token                   |
-| Background         | `set_visible(false)`, then `hidden_disconnect_delay_ms`                                                | 5 minutes, as in JS; 0 on mobile                                |
+| Background         | `pending_settled(timeout_ms)`, `set_visible(false)`, then `hidden_disconnect_delay_ms`                 | 5 minutes, as in JS; 0 on mobile                                |
 | Storage            | `ZeroStorage::Memory` (default), `Sqlite { directory }`, `Custom`; `flush_storage()`, `delete()`       | `client::drop_all_databases`                                    |
 | Inspector          | `zero.inspector()`: `metrics()`, `client().queries()`, `analyze_query(..)`, `server_version()`         | Logs slow materializations past `slow_materialize_threshold_ms` |
 | Testing            | `testing::{ManualScheduler, MockSocketFactory, RecordingLogSink}`                                      | A client without a server                                       |
@@ -162,7 +162,8 @@ own event loop with `client::Scheduler` and `client::SocketFactory`.
 - **Storage defaults to memory**, where JS uses IndexedDB.
 - **Background:** the app calls `set_visible`. The client disconnects after
   `hidden_disconnect_delay_ms` hidden, 5 minutes as in JS; a mobile app the
-  system suspends sets 0.
+  system suspends sets 0. To push pending mutations before hiding, the app
+  awaits `pending_settled(timeout_ms)` first.
 - **No UI bindings.** `LiveView` is the typed `useQuery`, with listeners a UI
   wakes itself from.
 - **An unnamed query only sees local data**, as in JS without

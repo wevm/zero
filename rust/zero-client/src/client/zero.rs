@@ -12,7 +12,7 @@ use super::mutation_tracker::OutcomeListeners;
 use super::query_context::{MaterializedView, Preload, RunType, WeakView};
 use super::storage::DroppedDatabases;
 use super::transaction::Transaction;
-use super::{ApplicationError, Deferred, Error, Scheduler, SocketFactory};
+use super::{ApplicationError, Deferred, Error, Scheduler, SocketFactory, Timer};
 use crate::ivm::ViewValue;
 use crate::json::Value;
 use crate::query::{AnyQuery, ZeroQuery};
@@ -393,6 +393,53 @@ impl<C: 'static> Zero<C> {
     pub fn when_pending_settled(&self, done: impl FnOnce() + 'static) {
         let e = self.engine();
         e.event_loop.call(|| e.when_pending_settled(done));
+    }
+
+    /// Waits for the server to confirm every pending mutation, as before
+    /// hiding the client with [`set_visible`](Zero::set_visible). Resolves
+    /// at once when the server can't confirm them: the client isn't
+    /// connected, it's closed, or its client group is disabled. Mutations
+    /// still pending then stay in the local store, and are sent again when
+    /// the client next connects.
+    ///
+    /// `timeout_ms` is how long to wait at most, on the client's
+    /// [`Scheduler`]; `None` waits until the mutations settle. Resolves with
+    /// whether no mutations are pending, and never fails. Dropping the
+    /// future only stops waiting. Swift's `pendingSettled(timeout:)`: JS has
+    /// no counterpart.
+    pub fn pending_settled(&self, timeout_ms: Option<f64>) -> Deferred<bool> {
+        let settled = Deferred::new();
+        let timer: Rc<RefCell<Option<Box<dyn Timer>>>> = Rc::default();
+        let finish: Rc<dyn Fn()> = {
+            let (core, settled, timer) =
+                (Rc::downgrade(&self.core), settled.clone(), timer.clone());
+            Rc::new(move || {
+                if let Some(t) = timer.borrow_mut().take() {
+                    t.cancel();
+                }
+                // The client may have replaced its engine meanwhile.
+                let none = core
+                    .upgrade()
+                    .is_some_and(|c| c.engine().store.borrow().pending.is_empty());
+                settled.resolve(none);
+            })
+        };
+        let done = finish.clone();
+        self.when_pending_settled(move || done());
+        if let Some(ms) = timeout_ms
+            && !settled.is_settled()
+        {
+            let core = Rc::downgrade(&self.core);
+            let t = self.core.scheduler.schedule(
+                ms,
+                Box::new(move || match core.upgrade() {
+                    Some(core) => core.engine().event_loop.dispatch(|| finish()),
+                    None => finish(),
+                }),
+            );
+            *timer.borrow_mut() = Some(t);
+        }
+        settled
     }
 
     /// Runs `body` as a task of the client's event loop: the work it
