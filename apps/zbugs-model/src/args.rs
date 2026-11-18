@@ -195,6 +195,13 @@ pub struct IssueListCountArgs {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct IssueListCountBeforeArgs {
+    pub list_context: ListContextParams,
+    pub start: IssueRowSort,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ListIssueByIdArgs {
     pub list_context: ListContextParams,
     pub id_field: IdField,

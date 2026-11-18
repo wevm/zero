@@ -79,6 +79,24 @@ Update `selected[folder]` whenever the selection changes.
 Pass `permalinkID: selected[folder]` instead to open centred on the
 selected row.
 
+## Size the scroll bar by the whole list
+
+By default the scroll bar spans the rows paged in so far, and a little
+space past them, and grows as the list pages. To have it span the whole
+list, count the list's rows and set ``ZeroVirtualizer/totalRows``: the rows
+not loaded stand at the estimated row height, and dragging the thumb far
+into them loads the rows there from whichever end of the list is nearer.
+
+A list that opens away from its start, at a `permalinkID` or a
+`scrollState`, doesn't know how many rows are above it. Set
+``ZeroVirtualizer/indexQuery`` to count them once, and the thumb moves to
+where the list is, with nothing on screen moving:
+
+```swift
+issues.totalRows = count  // from a count() of the list, once the server has it
+issues.indexQuery = { request, filter in IssueQueries.countBefore(filter, request.start) }
+```
+
 ## Selection in a compact split view
 
 In a compact `NavigationSplitView`, only a `List` selection pushes the next
@@ -136,3 +154,4 @@ Release builds ignore it.
 
 - ``VirtualScrollState``
 - ``VirtualScrollAlignment``
+- ``VirtualIndexRequest``

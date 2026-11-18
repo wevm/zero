@@ -11,8 +11,10 @@ final class Backend {
   let server = LoopbackServer()
   let zero: Zero<Void>
   private(set) var messageCount: Int
+  private let issueCount: Int
 
   init(issues: Int = 2000, messages: Int = 200) {
+    issueCount = issues
     // `-messages <n>`: a longer chat.
     let messages = max(messages, UserDefaults.standard.integer(forKey: "messages"))
     messageCount = messages
@@ -222,12 +224,16 @@ extension Backend {
   }
 
   func issueList() -> IssueList {
-    IssueList(
+    let list = IssueList(
       zero: zero, listContext: "issues", estimatedRowHeight: 44, rowKey: \.id,
       toStartRow: \.id,
       pageQuery: { r, _ in
         IssueQueries.page(.init(limit: r.limit, start: r.start, backward: r.direction == .backward))
       },
       rowQuery: { r, _ in IssueQueries.issue(r.id) })
+    // `-total-rows 1`: the scroll bar spans every issue, as an app's count
+    // of the list sets it.
+    if UserDefaults.standard.bool(forKey: "total-rows") { list.totalRows = issueCount }
+    return list
   }
 }

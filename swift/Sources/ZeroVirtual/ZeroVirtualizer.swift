@@ -31,6 +31,11 @@ public final class ZeroVirtualizer<
   >
   /// The row an id names, if it's in the list `ListContext` names.
   public typealias RowQuery = (VirtualRowRequest, ListContext) -> QueryRequest<Row, Row?, Context>
+  /// How many rows of the list `ListContext` names come before a row, in
+  /// its order: a `count()`.
+  public typealias IndexQuery = (VirtualIndexRequest<StartRow>, ListContext) -> QueryRequest<
+    Row, Int, Context
+  >
   public typealias ScrollState = VirtualScrollState<StartRow, ListContext>
 
   /// What to render.
@@ -46,6 +51,7 @@ public final class ZeroVirtualizer<
   @ObservationIgnored private var single = Slot<Row?>()
   @ObservationIgnored private var main = Slot<[Row]>()
   @ObservationIgnored private var after = Slot<[Row]>()
+  @ObservationIgnored private var index = Slot<Int>()
   @ObservationIgnored private var syncing = false
   @ObservationIgnored private var dirty = false
   /// Called with each snapshot published: the adapter re-renders and calls
@@ -95,6 +101,7 @@ public final class ZeroVirtualizer<
     single.close()
     main.close()
     after.close()
+    index.close()
   }
 
   // MARK: Options
@@ -126,6 +133,31 @@ public final class ZeroVirtualizer<
   public var stickToBottom: Bool {
     get { core.options.stickToBottom }
     set { update { $0.stickToBottom = newValue } }
+  }
+
+  /// How many rows the list has, as the app counts them, or nil (the
+  /// default). With a count, the scroll bar spans all the rows, each at the
+  /// estimated row height, and a jump far into it, as by its thumb, loads
+  /// the rows there from whichever end of the list is nearer. Without, it
+  /// spans the rows paged in so far.
+  ///
+  /// A list that opens away from its start (`permalinkID`, `scrollState`)
+  /// doesn't know how many rows are above it until `indexQuery` counts them.
+  public var totalRows: Int? {
+    get { core.options.totalRows }
+    set { update { $0.totalRows = newValue } }
+  }
+
+  /// How many rows come before a row, for `totalRows`: a list that opened
+  /// away from its start counts the rows above it once, and its scroll bar
+  /// shows where it is in the list. Without, it shows the list as if it
+  /// started a few pages above the rows it opened at, until it reaches the
+  /// start.
+  @ObservationIgnored public var indexQuery: IndexQuery? {
+    didSet {
+      index.close()
+      sync()
+    }
   }
 
   /// Called with where the list is, on every scroll and page. Save the
@@ -231,22 +263,29 @@ public final class ZeroVirtualizer<
         inputs, toStartRow: core.options.toStartRow, singleRow: single.rows ?? nil)
       if let next = reopen(main, pages.main.map { pageQuery($0, context) }) { main = next }
       if let next = reopen(after, pages.after.map { pageQuery($0, context) }) { after = next }
+      let counting = inputs.indexOf.flatMap { start in
+        indexQuery.map { $0(VirtualIndexRequest(start: start), context) }
+      }
+      if let next = reopen(index, counting) { index = next }
       core.setRows(
         assembleRows(
           inputs,
           RowsQueryResults(
             singleRow: single.rows ?? nil, singleComplete: single.complete, mainRows: main.rows,
-            mainComplete: main.complete, afterRows: after.rows, afterComplete: after.complete)))
+            mainComplete: main.complete, afterRows: after.rows, afterComplete: after.complete,
+            // The server's count: the client's own counts only the rows it
+            // has.
+            rowsBefore: index.error == nil && index.confirmed ? index.rows : nil)))
     } while dirty
-    error = single.error ?? main.error ?? after.error
+    error = single.error ?? main.error ?? after.error ?? index.error
     snapshot = core.snapshot
     onSnapshot?()
   }
 
   /// The slot for `request`: nil when `slot` already runs it.
-  private func reopen<R: QueryResult>(
+  private func reopen<R: QueryValue>(
     _ slot: Slot<R>, _ request: QueryRequest<Row, R, Context>?
-  ) -> Slot<R>? where R.Row == Row {
+  ) -> Slot<R>? {
     let key = request.map { SlotKey(name: $0.name, args: $0.args) }
     if slot.key == key { return nil }
     var old = slot
@@ -280,6 +319,7 @@ public final class ZeroVirtualizer<
     if single.key == key { single.take(value, type, queryError) }
     if main.key == key { main.take(value, type, queryError) }
     if after.key == key { after.take(value, type, queryError) }
+    if index.key == key { index.take(value, type, queryError) }
     sync()
   }
 }
@@ -291,12 +331,14 @@ private struct SlotKey: Equatable {
 
 /// One live query of the virtualizer.
 @MainActor
-private struct Slot<R: QueryResult> {
+private struct Slot<R: QueryValue> {
   var key: SlotKey?
   var view: MaterializedView?
   var remove: () -> Void = {}
   var rows: R?
   var complete = false
+  /// The server's answer, from it or from a previous session's.
+  var confirmed = false
   var error: (any Error)?
 
   mutating func take(_ value: ViewValue, _ type: ResultType, _ queryError: ErroredQuery?) {
@@ -304,6 +346,7 @@ private struct Slot<R: QueryResult> {
       rows = try R(view: value)
       // An errored query has nothing more coming: done, as far as paging goes.
       complete = type == .complete || type == .error
+      confirmed = type == .complete || type == .cached
       error = queryError.map { QueryError($0) }
     } catch {
       self.error = error
@@ -318,6 +361,7 @@ private struct Slot<R: QueryResult> {
     key = nil
     rows = nil
     complete = false
+    confirmed = false
     error = nil
   }
 }
