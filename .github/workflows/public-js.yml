@@ -82,6 +82,15 @@ jobs:
     # See Public Checks. x64, since this runs WebKit and Firefox too. Ubuntu
     # 24.04, not ubuntu-latest: Playwright 1.60 has no browsers for 26.04.
     runs-on: ${{ github.repository == 'rocicorp/mono-internal' && 'ubuntu-x64-8-core' || 'ubuntu-24.04' }}
+    # Playwright's image has the browsers and their system dependencies, which
+    # installing from Ubuntu's apt mirror timed out. Its tag must match
+    # pnpm-lock.yaml's playwright; .github/actions/playwright-image checks.
+    container:
+      image: mcr.microsoft.com/playwright:v1.60.0-noble
+    env:
+      # The image runs as root, and Firefox won't start as root with a $HOME
+      # owned by another user, such as the runner's /github/home.
+      HOME: /root
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -107,7 +116,7 @@ jobs:
           restore-keys: |
             pnpm-store-v11-${{ runner.os }}-${{ runner.arch }}-full-
       - run: pnpm install --frozen-lockfile
-      - uses: ./.github/actions/playwright-install
+      - uses: ./.github/actions/playwright-image
       # The packages whose tests are published (see tools/public-sync/
       # public-filter). Each package's own vitest config runs its node and
       # browser projects.

@@ -23,6 +23,14 @@ jobs:
   test:
     name: Restored Tests
     runs-on: ubuntu-24.04
+    # As in Public Test (public-js.yml). Root can reach the runner's Docker
+    # socket, which testcontainers starts Postgres through.
+    container:
+      image: mcr.microsoft.com/playwright:v1.60.0-noble
+    env:
+      # Firefox won't start as root with a $HOME owned by another user, such
+      # as the runner's /github/home.
+      HOME: /root
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -49,7 +57,7 @@ jobs:
           package-manager-cache: false
       - run: pnpm install --frozen-lockfile
       # zero-protocol, zero-schema and zero-types run in the browsers.
-      - uses: ./.github/actions/playwright-install
+      - uses: ./.github/actions/playwright-image
       - name: Package tests
         run: >-
           pnpm
