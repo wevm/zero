@@ -4,10 +4,11 @@
  * seed data, zbugs' API server (apps/zbugs/api), and zero-cache, all from
  * this repository's sources. With `ZBUGS_KEEP=1` it keeps the database, the
  * replica, and its signing keys from the last run instead, so an app keeps
- * its local data and its token across restarts, and it outlives zero-cache:
- * when zero-cache exits, as when Postgres is unreachable after this machine
- * sleeps, it restarts zero-cache once Postgres answers again. With
- * `ZBUGS_PG_START` it also starts Postgres again when Postgres stops.
+ * its local data and its token across restarts, it waits for Postgres to
+ * answer before it starts, and it outlives zero-cache: when zero-cache
+ * exits, as when Postgres is unreachable after this machine sleeps, it
+ * restarts zero-cache once Postgres answers again. With `ZBUGS_PG_START` it
+ * also starts Postgres when Postgres is stopped, at startup or later.
  *
  *   node apps/zbugs-swift/server/server.ts
  *
@@ -28,12 +29,12 @@
  *   ZBUGS_API_PORT   API server port (default 5173)
  *   ZBUGS_DIR        working directory for the replica (default a temp dir)
  *   ZBUGS_KEEP       1 to keep the last run's database, and the replica and
- *                    keys in ZBUGS_DIR, which it needs, and to restart
- *                    zero-cache when it exits
+ *                    keys in ZBUGS_DIR, which it needs, to wait for Postgres
+ *                    at startup, and to restart zero-cache when it exits
  *   ZBUGS_PG_START   with ZBUGS_KEEP, a shell command that starts Postgres,
  *                    run once Postgres has refused three checks 10 seconds
- *                    apart (for example `docker compose -f
- *                    apps/zbugs/docker/docker-compose.yml start`)
+ *                    apart, at startup or later (for example `docker compose
+ *                    -f apps/zbugs/docker/docker-compose.yml start`)
  */
 import {execFileSync, spawn} from 'node:child_process';
 import {
@@ -49,7 +50,7 @@ import {networkInterfaces, tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import {createJwkPair} from '../../../packages/zero-cache/src/auth/jwt.ts';
-import {postgresAnswers, watchPostgres} from './postgres.ts';
+import {postgresAnswers, waitForPostgres, watchPostgres} from './postgres.ts';
 
 const env = process.env;
 const adminURL =
@@ -102,6 +103,12 @@ function psql(url: string, ...args: string[]) {
   execFileSync('psql', [url, '-v', 'ON_ERROR_STOP=1', '-q', ...args], {
     stdio: ['ignore', 'ignore', 'inherit'],
   });
+}
+
+// A kept backend can start while this machine sleeps, when Postgres in
+// Docker's VM doesn't answer until the VM wakes, so it waits for Postgres.
+if (keep) {
+  await waitForPostgres(adminURL, env, env['ZBUGS_PG_START']);
 }
 
 // The database: zbugs' migrations, then its seed script. Kept, it also

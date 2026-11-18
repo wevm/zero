@@ -4,6 +4,7 @@
  */
 import {execFile, type ExecFileException} from 'node:child_process';
 import {connect} from 'node:net';
+import {setTimeout as sleep} from 'node:timers/promises';
 import {promisify} from 'node:util';
 
 const START_TIMEOUT_MS = 60_000;
@@ -16,44 +17,52 @@ export async function postgresAnswers(
   url: string,
   env: NodeJS.ProcessEnv,
 ): Promise<boolean> {
-  try {
-    await promisify(execFile)('psql', [url, '-tAc', 'SELECT 1'], {
-      env: {['PGCONNECT_TIMEOUT']: '5', ...env},
-    });
-    return true;
-  } catch {
-    return false;
-  }
+  return (await psqlError(url, env)) === undefined;
 }
 
 /**
+ * Resolves once Postgres at `url` answers, checking every `intervalMs`, and
+ * logs what it waits on each time that changes.
+ *
  * zero-cache keeps retrying while Postgres refuses connections and catches
  * up once it answers, but nothing starts a stopped Postgres again: Docker's
  * `restart: always` leaves a container that `docker stop` stopped alone
- * until Docker itself restarts. So a kept backend runs `start` once
- * Postgres has refused three checks 10 seconds apart, longer than a Docker
- * restart takes, and again after three more.
+ * until Docker itself restarts. So with `start`, it runs `start` once
+ * Postgres has refused three checks in a row, 10 seconds apart, longer than
+ * a Docker restart takes, and again after three more.
  *
  * A check that Postgres neither answers nor refuses doesn't count. That is
  * how Postgres in OrbStack's VM looks while the VM is paused as this machine
- * sleeps: connections time out, and starting Postgres can't help, since
- * `docker` hangs until the VM wakes.
+ * sleeps: connections time out, or OrbStack closes them, and starting
+ * Postgres can't help, since `docker` hangs until the VM wakes.
  *
- * Returns a function that stops watching.
+ * Rejects once `signal` aborts.
  */
-export function watchPostgres(
+export async function waitForPostgres(
   url: string,
   env: NodeJS.ProcessEnv,
-  start: string,
+  start: string | undefined,
   intervalMs = 10_000,
-): () => void {
+  signal?: AbortSignal,
+): Promise<void> {
   let refusals = 0;
-  let stopped = false;
-  let timer: NodeJS.Timeout | undefined;
-  const check = async () => {
-    if ((await postgresAnswers(url, env)) || !(await refuses(url))) {
+  let waitingOn: string | undefined;
+  for (;;) {
+    const error = await psqlError(url, env);
+    signal?.throwIfAborted();
+    if (error === undefined) {
+      if (waitingOn !== undefined) {
+        process.stderr.write('Postgres answers\n');
+      }
+      return;
+    }
+    if (error !== waitingOn) {
+      waitingOn = error;
+      process.stderr.write(`waiting for Postgres: ${error}\n`);
+    }
+    if (!(await refuses(url))) {
       refusals = 0;
-    } else if (++refusals === 3) {
+    } else if (start && ++refusals === 3) {
       refusals = 0;
       process.stderr.write(
         'Postgres refuses connections; running ZBUGS_PG_START\n',
@@ -67,15 +76,55 @@ export function watchPostgres(
         process.stderr.write(`ZBUGS_PG_START ${startFailure(e)}\n`);
       }
     }
-    if (!stopped) {
-      timer = setTimeout(check, intervalMs);
+    await sleep(intervalMs, undefined, {signal});
+  }
+}
+
+/**
+ * Checks Postgres every `intervalMs` and, while it doesn't answer, waits for
+ * it as waitForPostgres does, running `start` when it refuses connections.
+ *
+ * Returns a function that stops watching.
+ */
+export function watchPostgres(
+  url: string,
+  env: NodeJS.ProcessEnv,
+  start: string,
+  intervalMs = 10_000,
+): () => void {
+  const stopping = new AbortController();
+  const {signal} = stopping;
+  void (async () => {
+    for (;;) {
+      await sleep(intervalMs, undefined, {signal});
+      await waitForPostgres(url, env, start, intervalMs, signal);
     }
-  };
-  timer = setTimeout(check, intervalMs);
-  return () => {
-    stopped = true;
-    clearTimeout(timer);
-  };
+  })().catch(e => {
+    if (!signal.aborted) {
+      throw e;
+    }
+  });
+  return () => stopping.abort();
+}
+
+/**
+ * The first line of psql's error when Postgres at `url` doesn't answer a
+ * query within `PGCONNECT_TIMEOUT` seconds (5 unless `env` sets it), or
+ * undefined when it answers.
+ */
+async function psqlError(
+  url: string,
+  env: NodeJS.ProcessEnv,
+): Promise<string | undefined> {
+  try {
+    await promisify(execFile)('psql', [url, '-tAc', 'SELECT 1'], {
+      env: {['PGCONNECT_TIMEOUT']: '5', ...env},
+    });
+    return undefined;
+  } catch (e) {
+    const {message, stderr} = e as Error & {stderr?: string};
+    return (stderr?.trim() || message).split('\n')[0];
+  }
 }
 
 /** Whether the host and port of `url` refuse a TCP connection. */
