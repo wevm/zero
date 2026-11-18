@@ -112,7 +112,7 @@ Build Documentation.
 | Mutate             | `zero.mutate(M(args))`, a `MutatorResult` with `client` and `server` outcomes                                     |                                                            |
 | Server outcomes    | `zero.addMutationOutcomeListener { ... }`, or `for await o in zero.mutationOutcomes`                              | Also hears mutations replayed after a reconnect            |
 | Connection         | `zero.connection.state` (observable), `.subscribe(_:)`, `try .connect(.keep \| .set(token) \| .clear)`            | `.needsAuth` when the server rejects the token             |
-| Background         | none: follows the app's lifecycle and the network on its own                                                      | Disconnects in the background                              |
+| Background         | follows the app's lifecycle and the network; `zero.setVisible(false)`, `await zero.pendingSettled(timeout:)`      | Disconnects in the background, or when the app hides it    |
 | Storage            | `.sqlite()` (default) or `.memory`; `await zero.delete()`, `await dropAllDatabases(_:)`                           |                                                            |
 | Inspector          | `zero.inspector`: `metrics()`, `client.queries()`, `analyzeQuery(_:)`, `serverVersion()`                          | Logs slow materializations past `slowMaterializeThreshold` |
 | Testing            | `ZeroTesting`: `Drift.failures`, `ManualScheduler`, `MockSocketFactory`                                           | Drift checks your Swift against the TypeScript             |
@@ -139,7 +139,10 @@ On Linux, `Zero` has no socket: pass your own `SocketFactory` to sync.
 - **Storage is SQLite**, where JS uses IndexedDB.
 - **Background:** on Apple platforms the client pushes pending mutations and
   disconnects when the app goes to the background, and reconnects when it
-  comes back; there's no `hiddenTabDisconnectDelay`.
+  comes back; there's no `hiddenTabDisconnectDelay`. For a window, scene, or
+  screen that can be out of sight in the foreground, the app calls
+  `setVisible(_:)`, after `await pendingSettled(timeout:)` to push pending
+  mutations first.
 - **UI:** `ZeroUI` stands in for zero-react; `useSuspenseQuery` isn't ported.
 - **An unnamed query only sees local data**, as in JS without
   `enableLegacyQueries`: the server syncs a `defineQuery` request.

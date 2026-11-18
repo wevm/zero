@@ -13,7 +13,7 @@
 /// What the app's lifecycle does to a client.
 @MainActor
 protocol LifecycleClient: AnyObject {
-  func setVisible(_ visible: Bool)
+  func setSystemVisible(_ visible: Bool)
   func reconnectNow()
   func whenPendingSettled(_ done: @escaping () -> Void)
   func flushStorage()
@@ -59,7 +59,7 @@ protocol LifecycleClient: AnyObject {
             forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main
           ) { [weak self] _ in MainActor.assumeIsolated { self?.willEnterForeground() } })
         if UIApplication.shared.applicationState == .background {
-          client.setVisible(false)
+          client.setSystemVisible(false)
         }
       #elseif canImport(AppKit)
         let center = NSWorkspace.shared.notificationCenter
@@ -67,13 +67,13 @@ protocol LifecycleClient: AnyObject {
           center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main)
           { [weak self] _ in
             MainActor.assumeIsolated {
-              self?.client?.setVisible(false)
+              self?.client?.setSystemVisible(false)
               self?.client?.flushStorage()
             }
           })
         observers.append(
           center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) {
-            [weak self] _ in MainActor.assumeIsolated { self?.client?.setVisible(true) }
+            [weak self] _ in MainActor.assumeIsolated { self?.client?.setSystemVisible(true) }
           })
       #endif
       #if canImport(Network)
@@ -134,7 +134,7 @@ protocol LifecycleClient: AnyObject {
       private func willEnterForeground() {
         flush?.end()
         flush = nil
-        client?.setVisible(true)
+        client?.setSystemVisible(true)
       }
     #endif
   }
@@ -154,7 +154,7 @@ protocol LifecycleClient: AnyObject {
       /// Disconnects and ends the background task.
       func finish() {
         guard !done else { return }
-        client?.setVisible(false)
+        client?.setSystemVisible(false)
         client?.flushStorage()
         end()
       }

@@ -24,6 +24,10 @@ public final class Zero<Context: Sendable> {
   private var outcomeListeners: [(id: Int, listener: (MutationServerOutcome) -> Void)] = []
   private var nextOutcomeListenerID = 0
   private var inspectorStorage: Inspector?
+  /// The app's visibility (`setVisible`) and the lifecycle's: the client
+  /// is visible when both are.
+  private var appVisible = true
+  private var systemVisible = true
   #if canImport(Darwin)
     private var lifecycle: AppLifecycle?
   #endif
@@ -294,8 +298,34 @@ public final class Zero<Context: Sendable> {
     engine.loop.call { engine.mutate(name: request.name, args: request.args) }
   }
 
-  /// The app came to the foreground, or went to the background.
-  func setVisible(_ visible: Bool) {
+  /// Shows or hides the client, for a part of the app that can be out of
+  /// sight while the app is in the foreground, such as a Mac window, a menu
+  /// bar app's popover, or a screen that only sometimes needs to sync.
+  /// Hidden, the client disconnects and waits; shown again, it reconnects.
+  /// Queries and mutations keep working on the local replica meanwhile, and
+  /// the mutations are pushed once it reconnects. To push them before
+  /// hiding, await ``pendingSettled(timeout:)`` first.
+  ///
+  /// The client also follows the app's lifecycle: it is hidden in the
+  /// background on iOS and while the Mac sleeps. It is visible only when
+  /// both this and the lifecycle say so, so a client hidden here stays
+  /// hidden when the app comes back to the foreground or the Mac wakes.
+  /// Visible until this is called. Swift only: JS follows the page's
+  /// visibility.
+  public func setVisible(_ visible: Bool) {
+    appVisible = visible
+    updateVisibility()
+  }
+
+  /// The app came to the foreground, or went to the background
+  /// (`AppLifecycle`).
+  func setSystemVisible(_ visible: Bool) {
+    systemVisible = visible
+    updateVisibility()
+  }
+
+  private func updateVisibility() {
+    let visible = appVisible && systemVisible
     engine.loop.call { engine.setVisible(visible) }
   }
 
@@ -308,6 +338,35 @@ public final class Zero<Context: Sendable> {
   /// or when it can't.
   func whenPendingSettled(_ done: @escaping () -> Void) {
     engine.loop.call { engine.whenPendingSettled(done) }
+  }
+
+  /// Waits for the server to confirm every pending mutation, as before
+  /// hiding the client with ``setVisible(_:)``. Returns at once when the
+  /// server can't confirm them: the client isn't connected, it's closed, or
+  /// its client group is disabled. Mutations still pending then stay in the
+  /// local store, and are sent again when the client next connects. Swift
+  /// only: JS has no counterpart.
+  ///
+  /// - Parameter timeout: How long to wait at most; nil waits until the
+  ///   mutations settle, or the task is cancelled.
+  /// - Returns: Whether no mutations are pending.
+  @discardableResult
+  public func pendingSettled(timeout: Duration? = nil) async -> Bool {
+    let wait = PendingWait()
+    await withTaskCancellationHandler {
+      await withCheckedContinuation { continuation in
+        wait.continuation = continuation
+        if let timeout {
+          wait.timer = scheduler.schedule(after: SystemScheduler.milliseconds(timeout)) {
+            wait.finish()
+          }
+        }
+        whenPendingSettled { wait.finish() }
+      }
+    } onCancel: {
+      Task { @MainActor in wait.finish() }
+    }
+    return engine.store.pending.isEmpty
   }
 
   /// Waits for the store's queued writes.
@@ -350,6 +409,22 @@ public func platformSocketFactory() -> (any SocketFactory)? {
   #else
     nil
   #endif
+}
+
+/// One `Zero.pendingSettled(timeout:)`: ends at the first of the server
+/// confirming the pending mutations, the timeout, and the task's
+/// cancellation.
+@MainActor
+private final class PendingWait {
+  var continuation: CheckedContinuation<Void, Never>?
+  var timer: (any ScheduledTimer)?
+
+  func finish() {
+    timer?.cancel()
+    timer = nil
+    continuation?.resume()
+    continuation = nil
+  }
 }
 
 @MainActor
