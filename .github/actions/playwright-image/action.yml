@@ -1,0 +1,21 @@
+name: 'Check Playwright image'
+description: "Fails unless the job runs in Playwright's Docker image for the Playwright version in pnpm-lock.yaml. The image has the browsers and their system dependencies, so the job installs neither. Requires a checkout."
+
+runs:
+  using: 'composite'
+  steps:
+    # A Playwright bump in pnpm-lock.yaml needs the job's container.image
+    # bumped to match: browsers from another release may still launch, so a
+    # mismatch wouldn't otherwise fail.
+    - name: Check Playwright image matches pnpm-lock.yaml
+      run: |
+        image="$(node -p 'JSON.parse(require("fs").readFileSync("/ms-playwright/.docker-info", "utf8")).dockerImageName' 2>/dev/null)" ||
+          image="no Playwright image"
+        locked="$( (grep -oE '^  playwright@[0-9][^:(]*' pnpm-lock.yaml || true) | cut -d@ -f2 | sort -u | paste -sd ' ')"
+        if [ "$image" != "mcr.microsoft.com/playwright:v$locked-noble" ]; then
+          workflow="${GITHUB_WORKFLOW_REF#*/*/}"
+          echo "::error file=${workflow%@*},title=Playwright image doesn't match pnpm-lock.yaml::This job runs in $image, but pnpm-lock.yaml has playwright $locked. Set the job's container.image to mcr.microsoft.com/playwright:v$locked-noble."
+          exit 1
+        fi
+        echo "$image matches playwright $locked in pnpm-lock.yaml"
+      shell: bash
