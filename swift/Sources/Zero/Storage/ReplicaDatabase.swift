@@ -4,9 +4,23 @@ import Synchronization
 
 /// Where a client keeps its replica between launches.
 public enum ZeroStorage: Sendable, Hashable {
-  /// A SQLite database in `directory`. The default directory is
-  /// `Library/Application Support/Zero` in the app's home on Apple platforms,
-  /// and `$XDG_DATA_HOME/zero` (or `~/.local/share/zero`) elsewhere.
+  /// A SQLite database in `directory`. The default directory is the app's
+  /// own, excluded from backups on Apple platforms, since the server can
+  /// sync it again:
+  ///
+  /// - iOS, and sandboxed Mac apps: `Library/Application Support/Zero` in the
+  ///   app's container.
+  /// - Unsandboxed Mac apps, Mac Catalyst too:
+  ///   `~/Library/Application Support/<bundle ID>/Zero`, with the executable's
+  ///   name for a command-line tool, which has no bundle ID.
+  /// - Elsewhere: `$XDG_DATA_HOME/<executable>/zero`, or
+  ///   `~/.local/share/<executable>/zero`.
+  ///
+  /// Unsandboxed Mac apps and apps elsewhere used to share one folder,
+  /// `~/Library/Application Support/Zero` or `$XDG_DATA_HOME/zero`. The first
+  /// open of the app's own folder moves its database from there, with its
+  /// pending mutations; the app's other databases there sync again. A
+  /// `directory` the app passes is used as is.
   case sqlite(directory: String? = nil)
   /// Memory only, kept for the life of the process: a client created later
   /// with the same options finds what an earlier one stored, as with JS
@@ -233,8 +247,15 @@ final class ReplicaDatabase {
       return (memory(name: name), nil, false)
     case .sqlite(let directory):
       do {
-        let dir = try directory ?? defaultDirectory()
-        try makeDirectories(dir)
+        let dir: String
+        if let directory {
+          dir = directory
+          try makeDirectories(dir)
+        } else {
+          let d = try DefaultDirectory.current()
+          try d.prepare(moving: name)
+          dir = d.path
+        }
         let path = dir + "/" + fileName(name)
         if let db = open[path] {
           db.users += 1
@@ -290,7 +311,7 @@ final class ReplicaDatabase {
   /// failed runs on.
   static func fallback(name: String, storage: ZeroStorage) -> ReplicaDatabase {
     if case .sqlite(let directory) = storage {
-      fellBack[name, default: []].insert(directory ?? (try? defaultDirectory()) ?? "")
+      fellBack[name, default: []].insert(directory ?? (try? DefaultDirectory.current().path) ?? "")
     }
     return memory(name: name)
   }
@@ -618,7 +639,15 @@ final class ReplicaDatabase {
     case .memory: prefix = "memory:"
     case .sqlite(let directory):
       do {
-        prefix = try (directory ?? defaultDirectory()) + "/"
+        if let directory {
+          prefix = directory + "/"
+        } else {
+          // Makes the app's folder, if it's new, so that a later first open
+          // doesn't move back what this drops.
+          let d = try DefaultDirectory.current()
+          try d.prepare(moving: nil)
+          prefix = d.path + "/"
+        }
       } catch {
         result.errors.append(StorageFailure(error))
         return result
@@ -1173,27 +1202,6 @@ final class SQLiteStore: @unchecked Sendable {
 #elseif canImport(Musl)
   import Musl
 #endif
-
-/// The default database directory.
-func defaultDirectory() throws -> String {
-  func env(_ name: String) -> String? {
-    guard let v = getenv(name) else { return nil }
-    let s = String(cString: v)
-    return s.isEmpty ? nil : s
-  }
-  #if canImport(Darwin)
-    guard let home = env("HOME") else {
-      throw StorageFailure(kind: .cannotOpen, message: "HOME is not set")
-    }
-    return home + "/Library/Application Support/Zero"
-  #else
-    if let data = env("XDG_DATA_HOME") { return data + "/zero" }
-    guard let home = env("HOME") else {
-      throw StorageFailure(kind: .cannotOpen, message: "HOME is not set")
-    }
-    return home + "/.local/share/zero"
-  #endif
-}
 
 /// `mkdir -p`.
 func makeDirectories(_ path: String) throws {
