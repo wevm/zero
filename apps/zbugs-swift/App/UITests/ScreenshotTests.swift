@@ -24,6 +24,9 @@ final class ScreenshotTests: XCTestCase {
     for key in ["ZBUGS_CACHE_URL", "ZBUGS_API_URL"] {
       app.launchEnvironment[key] = environment[key]
     }
+    #if os(macOS)
+      app.launchArguments += Self.newWindow
+    #endif
     app.launch()
     #if os(iOS) && !targetEnvironment(simulator)
       // A device asks for local network access on the first launch.
@@ -115,6 +118,9 @@ final class ScreenshotTests: XCTestCase {
     for key in ["ZBUGS_CACHE_URL", "ZBUGS_API_URL"] {
       app.launchEnvironment[key] = environment[key]
     }
+    #if os(macOS)
+      app.launchArguments += Self.newWindow
+    #endif
     app.launch()
     let rows = app.descendants(matching: .any).matching(identifier: "IssueRow")
     guard expect(app, rows.firstMatch, "an issue in the list", timeout: 120) else { return }
@@ -168,6 +174,13 @@ final class ScreenshotTests: XCTestCase {
     snapshot(app, "6 Issues past 200")
     XCTAssertGreaterThan(seen.count, 200, "the list stopped at \(seen.count) issues")
   }
+
+  /// On a Mac, a launch opens a new window, not the windows the last launch
+  /// left. macOS restores those, and from saved state that has no window
+  /// it opens none, on every launch until the state changes: CI's
+  /// testScreens and the offline run after it both waited two minutes for
+  /// a window that never came.
+  private static let newWindow = ["-ApplePersistenceIgnoreState", "YES"]
 
   @MainActor
   private var isPhone: Bool {
