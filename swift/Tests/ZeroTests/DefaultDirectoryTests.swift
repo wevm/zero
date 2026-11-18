@@ -131,10 +131,11 @@ import ZeroTesting
     try directory.prepare(moving: Self.name("k"))
     #expect(files(directory.path) == [file])
     #expect(files(legacy) == [ReplicaDatabase.fileName(Self.name("other"))])
-    let left =
-      try FileManager.default.contentsOfDirectory(atPath: legacy)
-      + FileManager.default.contentsOfDirectory(atPath: directory.path)
-    #expect(!left.contains { $0.hasSuffix("-wal") || $0.hasSuffix("-shm") }, "\(left)")
+    for folder in [legacy, directory.path] {
+      // The other database keeps its WAL on Apple platforms, which persist it.
+      let left = try FileManager.default.contentsOfDirectory(atPath: folder)
+      #expect(!left.contains { $0.hasPrefix(file + "-") }, "\(left)")
+    }
     #expect(
       try String(contentsOfFile: directory.path + "/profile-id", encoding: .utf8) == profileID)
 
@@ -161,7 +162,7 @@ import ZeroTesting
 
   @Test func leavesADatabaseThatIsOpenElsewhere() throws {
     defer { try? FileManager.default.removeItem(atPath: root) }
-    // Its connection keeps the WAL, which a move would leave behind.
+    // Its connection keeps the database in WAL mode, its commit in the WAL.
     let running = try makeZero("k", in: legacy)
     running.mutate(create("i1"))
     running.engine.database.flush()
