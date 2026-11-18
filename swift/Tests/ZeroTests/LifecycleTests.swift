@@ -132,7 +132,7 @@ import ZeroTesting
   @Test func disconnectsInTheBackgroundAndReconnectsInTheForeground() throws {
     let zero = try makeZero()
     let first = try connect()
-    zero.setVisible(false)
+    zero.setSystemVisible(false)
     scheduler.runDueTimers()
     #expect(first.closed)
     #expect(
@@ -140,9 +140,99 @@ import ZeroTesting
     scheduler.advance(by: 60_000)
     #expect(sockets.sockets.count == 1)
 
-    zero.setVisible(true)
+    zero.setSystemVisible(true)
     _ = try connect()
     #expect(sockets.sockets.count == 2)
     #expect(zero.connection.state == .connected)
+  }
+
+  @Test func isVisibleOnlyWhenBothTheAppAndTheLifecycleSaySo() throws {
+    let zero = try makeZero()
+    let first = try connect()
+    zero.setVisible(false)
+    scheduler.runDueTimers()
+    #expect(first.closed)
+
+    // The Mac sleeps and wakes, or the app goes to the background and back.
+    zero.setSystemVisible(false)
+    zero.setSystemVisible(true)
+    scheduler.advance(by: 60_000)
+    #expect(sockets.sockets.count == 1)
+    zero.setVisible(true)
+    let second = try connect()
+    #expect(zero.connection.state == .connected)
+
+    // And the other way round: the app shows a window while in the background.
+    zero.setSystemVisible(false)
+    scheduler.runDueTimers()
+    #expect(second.closed)
+    zero.setVisible(false)
+    zero.setVisible(true)
+    scheduler.advance(by: 60_000)
+    #expect(sockets.sockets.count == 2)
+    zero.setSystemVisible(true)
+    _ = try connect()
+    #expect(sockets.sockets.count == 3)
+    #expect(zero.connection.state == .connected)
+  }
+
+  /// Awaits `pendingSettled(timeout:)` in a task; `finished` tells whether
+  /// it has returned.
+  @MainActor final class Wait {
+    var finished = false
+    var task: Task<Bool, Never>!
+  }
+
+  func waitForPending(_ zero: Zero<Void>, timeout: Duration? = nil) async -> Wait {
+    let wait = Wait()
+    wait.task = Task {
+      let none = await zero.pendingSettled(timeout: timeout)
+      wait.finished = true
+      return none
+    }
+    for _ in 0..<5 { await Task.yield() }
+    return wait
+  }
+
+  @Test(.timeLimit(.minutes(1))) func pendingSettledReturnsOnceTheServerConfirms() async throws {
+    let zero = try makeZero()
+    let socket = try connect()
+    #expect(await zero.pendingSettled())
+
+    zero.mutate(Self.create("i1"))
+    scheduler.runDueTimers()
+    // Waits less than the ping interval: an unanswered ping would disconnect.
+    let wait = await waitForPending(zero, timeout: .seconds(2))
+    scheduler.advance(by: 1_000)
+    for _ in 0..<5 { await Task.yield() }
+    #expect(!wait.finished)
+
+    poke(socket, "p1", from: nil, to: "01", #""lastMutationIDChanges":{"\#(zero.clientID)":1}"#)
+    #expect(await wait.task.value)
+  }
+
+  @Test(.timeLimit(.minutes(1))) func pendingSettledGivesUpWhenTheServerCant() async throws {
+    let zero = try makeZero()
+    zero.mutate(Self.create("i1"))
+    // Not connected yet: nothing will confirm it.
+    #expect(await zero.pendingSettled() == false)
+
+    _ = try connect()
+    let timedOut = await waitForPending(zero, timeout: .seconds(2))
+    scheduler.advance(by: 1_999)
+    for _ in 0..<5 { await Task.yield() }
+    #expect(!timedOut.finished)
+    scheduler.advance(by: 1)
+    #expect(await timedOut.task.value == false)
+
+    let cancelled = await waitForPending(zero)
+    #expect(!cancelled.finished)
+    cancelled.task.cancel()
+    #expect(await cancelled.task.value == false)
+
+    let closed = await waitForPending(zero)
+    #expect(!closed.finished)
+    zero.close()
+    #expect(await closed.task.value == false)
   }
 }
