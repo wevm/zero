@@ -98,32 +98,26 @@ struct DefaultDirectory: Equatable {
   private static func move(_ file: String, from source: String, to destination: String) {
     let from = source + "/" + file
     let to = destination + "/" + file
-    guard access(from, F_OK) == 0, access(to, F_OK) != 0, foldWAL(from) else { return }
-    // What Apple's SQLite keeps after the last close, holding nothing now.
-    _ = unlink(from + "-wal")
+    guard access(from, F_OK) == 0, access(to, F_OK) != 0, leaveWAL(from) else { return }
+    // Apple's SQLite leaves the shared memory, which holds nothing now.
     _ = unlink(from + "-shm")
     _ = rename(from, to)
   }
 
-  /// Folds the WAL of the database at `path` into it and leaves WAL mode,
-  /// which needs every other connection closed. Apple's SQLite keeps the
-  /// WAL file after the last close (persistent WAL), so a WAL that's left
-  /// counts only if it holds something.
-  private static func foldWAL(_ path: String) -> Bool {
+  /// Switches the database at `path` out of WAL mode, which folds the WAL
+  /// into it and deletes it, and needs every other connection closed. (A
+  /// WAL left after a close shows nothing: Apple's SQLite keeps it.)
+  private static func leaveWAL(_ path: String) -> Bool {
     do {
       let db = try SQLiteDatabase(path: path)
       defer { db.close() }
       db.setBusyTimeout(ms: SQLiteStore.openBusyTimeoutMs)
-      var busy: Int64 = 1
-      try db.query("PRAGMA wal_checkpoint(TRUNCATE)") { busy = $0.integer(0) }
       var mode = ""
       try db.query("PRAGMA journal_mode = DELETE") { mode = $0.text(0) }
-      guard busy == 0, mode == "delete" else { return false }
+      return mode == "delete"
     } catch {
       return false
     }
-    var wal = stat()
-    return stat(path + "-wal", &wal) != 0 || wal.st_size == 0
   }
 
   /// Whether a rename from `a` to `b` stays on one volume, and so moves the
