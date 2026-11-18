@@ -1,5 +1,12 @@
 # zero-swift
 
+## 0.8.3
+
+### Patch Changes
+
+- 4a0b410: A `VirtualList` or `VirtualListView` on iOS now bounces at its bottom as it does at its top: a fling or a pull past the last row springs back instead of stopping dead, at the list's end and at the end of the rows loaded so far. The list took any offset past the end of its content back to the end on every layout pass, to keep rows that went or got shorter at the bottom from leaving blank space, and that took the scroll view's own bounce back too. It now keeps the bounce and still takes back what the content shrinking leaves.
+- 966056c: `ZeroVirtualizer` has an opt-in `totalRows`: set it to the list's row count, as from a `count()` the server has confirmed, and the scroll bar of a `VirtualList` or `VirtualListView` spans every row of the list at the estimated row height, rather than only the rows paged in so far. Dragging or jumping the thumb far into rows it hasn't loaded loads them from whichever end of the list is nearer. A list that opens away from its start, at a `permalinkID` or from a `scrollState`, asks its new `indexQuery` (a `count()` of the rows before a `VirtualIndexRequest`'s start row) how many rows are above it, and then moves its thumb to where it is in the list without moving anything on screen. Without `totalRows`, nothing changes.
+
 ## 0.8.2
 
 ### Patch Changes
