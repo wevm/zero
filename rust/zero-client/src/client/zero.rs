@@ -527,6 +527,12 @@ impl Core {
                 return;
             }
         };
+        // An app hidden less than `hidden_disconnect_delay_ms` ago is still
+        // visible to the old engine: the new one disconnects when it would
+        // have.
+        if let Some(at) = old.hiding_at() {
+            new.event_loop.call(|| new.hide_at(at));
+        }
         *core.engine.borrow_mut() = new.clone();
         Core::attach(core, &new);
         core.connection.bind(new.clone());

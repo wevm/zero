@@ -2,6 +2,9 @@
 //! after `set_visible(false)` before it disconnects. The conformance vectors
 //! set the delay themselves, so they don't check the default.
 //!
+//! A client that replaces a hidden one, after the server lost its state,
+//! disconnects when the hidden one would have.
+//!
 //! `Zero::pending_settled`, which an app awaits before hiding the client:
 //! it ends at the first of the server confirming the pending mutations, the
 //! server being unable to, and the timeout.
@@ -149,6 +152,48 @@ impl Client {
         self.scheduler.advance(ms);
         self.settle();
     }
+
+    /// Moves the clock forward by `ms` a second at a time, answering pings
+    /// on `socket`, so the connection stays up.
+    fn advance_answering(&self, socket: &MockSocket, ms: f64) {
+        let mut waited = 0.0;
+        while waited < ms {
+            self.scheduler.advance(1_000.0);
+            waited += 1_000.0;
+            socket.receive_text(r#"["pong",{}]"#);
+            self.settle();
+        }
+    }
+}
+
+/// The server loses the client's state a minute after the app hid it: the
+/// client that replaces it disconnects when the hidden one would have, five
+/// minutes after the app hid it, not five minutes later or never.
+#[test]
+fn a_client_that_replaces_a_hidden_one_disconnects_when_it_would_have() {
+    let c = Client::new();
+    let socket = c.connect();
+    c.zero.set_visible(false);
+    c.settle();
+    c.advance_answering(&socket, 60_000.0);
+
+    let first = c.zero.client_id();
+    socket.receive_text(r#"["error",{"kind":"ClientNotFound","message":"gone"}]"#);
+    c.settle();
+    assert_ne!(c.zero.client_id(), first, "replaced");
+    let socket = c.connect();
+    c.advance_answering(&socket, 239_000.0);
+    assert_eq!(c.zero.connection().state(), ConnectionState::Connected);
+
+    c.advance(1_000.0);
+    assert!(
+        matches!(
+            c.zero.connection().state(),
+            ConnectionState::Disconnected { .. }
+        ),
+        "{:?}",
+        c.zero.connection().state()
+    );
 }
 
 /// What `pending_settled` resolved with, once it has.
