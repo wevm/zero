@@ -91,7 +91,10 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+      # xcodebuild copies the system's logs to the test runner's console, a pty it reads, and on CI it can go a minute without reading it. A write to the full pty blocks. The simulator's Network.framework logs an error for every socket it closes, from the queue that runs the socket, so the close, and the next connect of the same URLSession, wait until xcodebuild reads again. So the system's logs stay out of the console.
       - name: Test (iOS Simulator)
+        env:
+          TEST_RUNNER_OS_ACTIVITY_MODE: disable
         run: |
           device="$(xcrun simctl list devices available -j |
             python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for k,v in d.items() if "iOS" in k for x in v if x["name"].startswith("iPhone")))')"
@@ -148,10 +151,12 @@ jobs:
         env:
           ZERO_LIFECYCLE_TESTS: '1'
         run: swift test --skip-build --filter AppLifecycleTests
+      # OS_ACTIVITY_MODE: see the iOS Simulator job.
       - name: Test the app lifecycle (iOS Simulator)
         working-directory: swift
         env:
           TEST_RUNNER_ZERO_LIFECYCLE_TESTS: '1'
+          TEST_RUNNER_OS_ACTIVITY_MODE: disable
         run: |
           device="$(xcrun simctl list devices available -j |
             python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for k,v in d.items() if "iOS" in k for x in v if x["name"].startswith("iPhone")))')"
