@@ -79,9 +79,8 @@ jobs:
   test:
     name: Public Test
     if: github.repository == 'rocicorp/mono' || github.repository == 'rocicorp/mono-internal' || github.repository == 'wevm/zero'
-    # See Public Checks. x64, since this runs WebKit and Firefox too. Ubuntu
-    # 24.04, not ubuntu-latest: Playwright 1.60 has no browsers for 26.04.
-    runs-on: ${{ github.repository == 'rocicorp/mono-internal' && 'ubuntu-x64-8-core' || 'ubuntu-24.04' }}
+    # See Public Checks. x64, since this runs WebKit and Firefox too.
+    runs-on: ${{ github.repository == 'rocicorp/mono-internal' && 'ubuntu-x64-8-core' || 'ubuntu-latest' }}
     # Playwright's image has the browsers and their system dependencies, which
     # installing from Ubuntu's apt mirror timed out. Its tag must match
     # pnpm-lock.yaml's playwright; .github/actions/playwright-image checks.
