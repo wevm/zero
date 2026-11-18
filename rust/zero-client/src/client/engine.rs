@@ -620,7 +620,9 @@ pub(crate) struct Engine {
     /// Trails the app's visibility by `hidden_disconnect_delay_ms` when it
     /// is hidden (`DocumentVisibilityWatcher`).
     pub(crate) visible: Cell<bool>,
-    hidden_timer: RefCell<Option<Box<dyn Timer>>>,
+    /// When the app is hidden and `visible` hasn't caught up yet: the time
+    /// it will, and the timer that makes it.
+    hidden_timer: RefCell<Option<(f64, Box<dyn Timer>)>>,
     visibility_waiters: RefCell<Vec<VisibilityWaiter>>,
     pending_waiters: RefCell<Vec<Box<dyn FnOnce()>>>,
 
@@ -1522,18 +1524,34 @@ impl Engine {
     /// The app was shown, or hidden. Hidden, the client disconnects and
     /// waits to be shown again.
     pub(crate) fn set_visible(&self, visible: bool) {
-        if let Some(t) = self.hidden_timer.borrow_mut().take() {
-            t.cancel();
-        }
         if visible {
+            if let Some((_, t)) = self.hidden_timer.borrow_mut().take() {
+                t.cancel();
+            }
             self.set_visibility_state(true);
         } else {
-            let t = self.later(self.options.hidden_disconnect_delay_ms, |e| {
-                e.hidden_timer.borrow_mut().take();
-                e.set_visibility_state(false);
-            });
-            *self.hidden_timer.borrow_mut() = Some(t);
+            self.hide_at(self.scheduler.now() + self.options.hidden_disconnect_delay_ms);
         }
+    }
+
+    /// When the app said it was hidden and the client hasn't disconnected
+    /// for it yet: the time it will.
+    pub(crate) fn hiding_at(&self) -> Option<f64> {
+        self.hidden_timer.borrow().as_ref().map(|(at, _)| *at)
+    }
+
+    /// The app is hidden: the client is too at `at`, or at once if that's
+    /// past.
+    pub(crate) fn hide_at(&self, at: f64) {
+        if let Some((_, t)) = self.hidden_timer.borrow_mut().take() {
+            t.cancel();
+        }
+        let delay = (at - self.scheduler.now()).max(0.0);
+        let t = self.later(delay, |e| {
+            e.hidden_timer.borrow_mut().take();
+            e.set_visibility_state(false);
+        });
+        *self.hidden_timer.borrow_mut() = Some((at, t));
     }
 
     fn set_visibility_state(&self, visible: bool) {
