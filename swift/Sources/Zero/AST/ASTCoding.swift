@@ -31,7 +31,12 @@ extension AST: JSONCodable {
     }
   }
 
-  package var json: JSONValue {
+  /// The AST as the sync protocol's JSON (`astSchema`), as zero-cache and
+  /// the JS client have it. Its `description` is the text `JSON.stringify`
+  /// writes for it, byte for byte. To compare a client's query with the AST
+  /// a server sent for it, decode the server's AST as an `AST` (it's
+  /// `Codable`) or as a `JSONValue`, and compare them.
+  public var json: JSONValue {
     var o = JSONObjectBuilder()
     o.set("schema", schema)
     o.set("table", .string(table))
@@ -50,6 +55,28 @@ extension AST: JSONCodable {
     o.set("aggregate", aggregate?.json)
     o.set("groupBy", groupBy.map { JSONValue.array($0.map { .string($0) }) })
     return o.value
+  }
+}
+
+/// The AST as the sync protocol's JSON (``AST/json``), such as a query
+/// that a server's custom query endpoint returns: decode it with
+/// `JSONDecoder`, or `JSONValueDecoder` from a `JSONValue`. JSON that isn't
+/// a valid AST throws `DecodingError.dataCorrupted`, which says where. An
+/// encoder writes the same JSON as `json`, though not necessarily the same
+/// text: `JSONEncoder` may order the keys differently and escape `/`.
+extension AST: Codable {
+  public init(from decoder: any Decoder) throws {
+    let json = try JSONValue(from: decoder)
+    do {
+      try self.init(json: json)
+    } catch {
+      throw Swift.DecodingError.dataCorrupted(
+        .init(codingPath: decoder.codingPath, debugDescription: error.description))
+    }
+  }
+
+  public func encode(to encoder: any Encoder) throws {
+    try json.encode(to: encoder)
   }
 }
 
@@ -139,9 +166,11 @@ extension AST.CorrelatedSubquery: JSONCodable {
       .object([
         "parentField": correlation.parentField.json, "childField": correlation.childField.json,
       ]))
+    // In `normalizedRelated`'s order, as every other node is in its
+    // normalizer's, so a normalized AST is written as JS writes it.
+    o.set("hidden", hidden)
     o.set("subquery", subquery.json)
     o.set("system", system?.rawValue)
-    o.set("hidden", hidden)
     o.set("aggregate", aggregate?.json)
     return o.value
   }

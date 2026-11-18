@@ -87,6 +87,7 @@ same error at once; such a preload registers nothing. A `run` with
 | `.related('comments', q => q.count())`                               | `.related(\.comments) { $0.count() }`, read as `row.aggregates?.count(\.comments)`            |
 | `.distinct('ownerID')`                                               | `.distinct(\.ownerID)`, rows of ``DistinctRow``                                                |
 | `.groupBy('ownerID').count()`                                        | `.groupBy(\.ownerID).count()`, rows of ``GroupRow``: `row[\.ownerID]`, `row.value`            |
+| `asQueryInternals(query).ast`, an `AST` that is the protocol's JSON   | `query.ast`, an ``AST``: `Codable` from the protocol's JSON, and ``AST/json`` writes it as JS's `JSON.stringify(normalizeAST(ast))` does |
 
 Columns and relationships are key paths of the generated row types. Rows
 are structs; a relationship the query didn't ask for with `related` is nil.
