@@ -8,8 +8,18 @@
   /// A `Transport` over `URLSessionWebSocketTask`: the client's socket on
   /// Apple platforms.
   public final class URLSessionTransport: Transport {
-    private let session: URLSession
+    /// The session, made by the first connect, which runs off the main
+    /// actor: `Zero.init` would otherwise make it on the main thread at
+    /// launch.
+    private let session: Mutex<Session>
     private let maximumMessageSize: Int
+
+    private enum Session: @unchecked Sendable {
+      /// The configuration to make it with, a copy only the lock reaches;
+      /// nil for `URLSessionConfiguration.default`.
+      case pending(URLSessionConfiguration?)
+      case made(URLSession)
+    }
 
     /// - Parameters:
     ///   - configuration: The session's configuration, for example to add
@@ -19,19 +29,46 @@
     public init(
       configuration: URLSessionConfiguration = .default, maximumMessageSize: Int = 64 << 20
     ) {
-      session = URLSession(configuration: configuration)
+      // A copy, as URLSession takes one: later changes to it don't apply.
+      session = Mutex(.pending(configuration.copy() as? URLSessionConfiguration ?? configuration))
       self.maximumMessageSize = maximumMessageSize
     }
 
+    private init(_ session: Session, maximumMessageSize: Int) {
+      self.session = Mutex(session)
+      self.maximumMessageSize = maximumMessageSize
+    }
+
+    /// `URLSessionTransport()`, but reading `URLSessionConfiguration.default`
+    /// only when the session is made: the first read takes over a
+    /// millisecond, which `platformSocketFactory()` would otherwise spend on
+    /// the main thread.
+    static func withDefaultConfiguration() -> URLSessionTransport {
+      URLSessionTransport(.pending(nil), maximumMessageSize: 64 << 20)
+    }
+
     deinit {
-      session.finishTasksAndInvalidate()
+      if case .made(let session) = session.withLock({ $0 }) { session.finishTasksAndInvalidate() }
+    }
+
+    private var urlSession: URLSession {
+      session.withLock { state in
+        switch state {
+        case .made(let session):
+          return session
+        case .pending(let configuration):
+          let session = URLSession(configuration: configuration ?? .default)
+          state = .made(session)
+          return session
+        }
+      }
     }
 
     public func connect(url: String, secProtocol: String?) async throws -> any Socket {
       guard let target = URL(string: url) else {
         throw SocketClosed(code: 1006, reason: "Invalid URL: \(url)", wasClean: false)
       }
-      let task = session.webSocketTask(with: target, protocols: secProtocol.map { [$0] } ?? [])
+      let task = urlSession.webSocketTask(with: target, protocols: secProtocol.map { [$0] } ?? [])
       task.maximumMessageSize = maximumMessageSize
       let socket = URLSessionSocket(task)
       try await socket.open()

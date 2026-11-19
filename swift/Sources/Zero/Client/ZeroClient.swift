@@ -405,7 +405,7 @@ extension Zero: LifecycleClient {}
 @MainActor
 public func platformSocketFactory() -> (any SocketFactory)? {
   #if canImport(Darwin)
-    TransportSocketFactory(URLSessionTransport())
+    TransportSocketFactory(URLSessionTransport.withDefaultConfiguration())
   #else
     nil
   #endif

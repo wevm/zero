@@ -75,12 +75,46 @@ extension KVDiff {
     return diff
   }
 
-  /// The diff from `old` to `new` over every key of both.
+  /// The diff from `old` to `new` over every key of both: one walk of the
+  /// two maps in key order.
   static func between(_ old: KVMap, _ new: KVMap) -> KVDiff {
-    var keys = Set<JSKey>()
-    for e in old.entries { keys.insert(JSKey(e.key)) }
-    for e in new.entries { keys.insert(JSKey(e.key)) }
-    return between(old, new, keys: keys)
+    var diff: KVDiff = []
+    var olds = old.entries
+    var news = new.entries
+    var a = olds.next()
+    var b = news.next()
+    while true {
+      switch (a, b) {
+      case (nil, nil):
+        return diff
+      case (let x?, nil):
+        diff.append(.del(key: x.key, oldValue: x.value))
+        a = olds.next()
+      case (nil, let y?):
+        diff.append(.add(key: y.key, newValue: y.value))
+        b = news.next()
+      case (let x?, let y?):
+        let order = StringCompare.utf8(x.key, y.key)
+        if order < 0 {
+          diff.append(.del(key: x.key, oldValue: x.value))
+          a = olds.next()
+        } else if order > 0 {
+          diff.append(.add(key: y.key, newValue: y.value))
+          b = news.next()
+        } else {
+          if x.value != y.value {
+            diff.append(.change(key: x.key, oldValue: x.value, newValue: y.value))
+          }
+          a = olds.next()
+          b = news.next()
+        }
+      }
+    }
+  }
+
+  /// An add of each entry: the diff from an empty map.
+  init(adding entries: some Sequence<KVMap.Entry>) {
+    self = entries.map { .add(key: $0.key, newValue: $0.value) }
   }
 
   /// The ops whose key starts with `prefix`.

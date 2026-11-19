@@ -345,7 +345,7 @@ final class Engine {
     // Load the snapshot into the sources and replay the pending mutations
     // on it, with the synced aggregate rows they wrote when they were last
     // persisted, as JS's stored commits have them.
-    ivmMain.apply(KVDiff.between(KVMap(), store.snapshot.map))
+    ivmMain.apply(KVDiff(adding: store.snapshot.map.entries))
     if !store.pending.isEmpty {
       let (main, replayed, touched, _) = replay(
         store.pending, over: store.snapshot.map, branch: ivmMain.fork(),
@@ -383,7 +383,11 @@ final class Engine {
 
     // The replica is loaded: report its got queries and mutation results,
     // as the first runs of the store watches do, then build the pipelines.
-    fireWatchers(KVDiff.between(KVMap(), store.main), initial: true)
+    fireWatchers(
+      KVDiff(
+        adding: store.main.scan(prefix: Keys.mutationsPrefix + clientID + "/")
+          + store.main.scan(prefix: Keys.gotQueriesPrefix)),
+      initial: true)
     context.markPipelinesReady()
     loop.microtask { [weak self] in self?.startRunLoop() }
   }

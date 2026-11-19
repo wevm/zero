@@ -293,31 +293,51 @@ import ZeroTesting
   @Test func kvMapStaysSortedAndUniqueThroughManyWrites() {
     var rng = SplitMix(seed: 42)
     var map = KVMap()
-    var model: [String: JSONValue] = [:]
+    var model: [JSKey: JSONValue] = [:]
+    // UTF-8 and UTF-16 order these differently, and Swift's `==` equates the
+    // two spellings of "é", which are distinct keys.
+    let suffixes = ["", "\u{FFFD}", "\u{1F600}", "\u{E9}", "e\u{301}"]
     for round in 0..<20 {
       let old = map
       let oldModel = model
       for _ in 0..<500 {
-        let key = "e/issues/" + String(rng.next() % 2000)
+        let key =
+          "e/issues/" + String(rng.next() % 2000) + suffixes[Int(rng.next() % 5)]
         if rng.next() % 3 == 0 {
           map.delete(key)
-          model[key] = nil
+          model[JSKey(key)] = nil
         } else {
           let v = JSONValue.number(Double(round))
           map.set(key, v)
-          model[key] = v
+          model[JSKey(key)] = v
         }
       }
       var keys: [String] = []
       for e in map.entries { keys.append(e.key) }
-      #expect(keys == model.keys.sorted(by: StringCompare.utf8Less))
-      let diff = KVDiff.between(old, map)
-      var expected = 0
-      for key in Set(oldModel.keys).union(model.keys) where oldModel[key] != model[key] {
-        expected += 1
+      let sorted = model.keys.map(\.string).sorted(by: StringCompare.utf8Less)
+      #expect(keys.map(JSKey.init) == sorted.map(JSKey.init))
+      // Each key whose value changed, in key order, as the model has it.
+      var expected: [String] = []
+      for key in Set(oldModel.keys).union(model.keys).map(\.string).sorted(
+        by: StringCompare.utf8Less)
+      {
+        switch (oldModel[JSKey(key)], model[JSKey(key)]) {
+        case (nil, let v?): expected.append("add \(key) \(v)")
+        case (let v?, nil): expected.append("del \(key) \(v)")
+        case (let a?, let b?) where a != b: expected.append("change \(key) \(a) \(b)")
+        default: break
+        }
       }
-      #expect(diff.count == expected)
-      #expect(diff.map(\.key) == diff.map(\.key).sorted(by: StringCompare.utf8Less))
+      let diff = KVDiff.between(old, map).map { op in
+        switch op {
+        case .add(let key, let v): "add \(key) \(v)"
+        case .del(let key, let v): "del \(key) \(v)"
+        case .change(let key, let a, let b): "change \(key) \(a) \(b)"
+        }
+      }
+      // `JSKey`s compare bytes, unlike `String`.
+      #expect(diff.map(JSKey.init) == expected.map(JSKey.init))
+      #expect(KVDiff(adding: map.entries).map { JSKey($0.key) } == keys.map(JSKey.init))
     }
   }
 }

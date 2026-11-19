@@ -42,7 +42,7 @@ protocol LifecycleClient: AnyObject {
       private var flush: BackgroundFlush?
     #endif
     #if canImport(Network)
-      private let monitor = NWPathMonitor()
+      private var monitor: PathMonitor?
       private var lastPath: (status: NWPath.Status, interfaces: [String])?
     #endif
 
@@ -77,12 +77,11 @@ protocol LifecycleClient: AnyObject {
           })
       #endif
       #if canImport(Network)
-        monitor.pathUpdateHandler = { [weak self] path in
+        monitor = PathMonitor { [weak self] path in
           let status = path.status
           let interfaces = path.availableInterfaces.map(\.name)
           Task { @MainActor in self?.pathChanged(status, interfaces) }
         }
-        monitor.start(queue: DispatchQueue(label: "zero.network"))
       #endif
     }
 
@@ -98,7 +97,8 @@ protocol LifecycleClient: AnyObject {
       #endif
       observers = []
       #if canImport(Network)
-        monitor.cancel()
+        monitor?.cancel()
+        monitor = nil
       #endif
     }
 
@@ -138,6 +138,33 @@ protocol LifecycleClient: AnyObject {
       }
     #endif
   }
+
+  #if canImport(Network)
+    /// An `NWPathMonitor` made and started on its own queue: on the main
+    /// thread, making and starting one takes about half a millisecond at
+    /// launch, before the app's first frame.
+    private final class PathMonitor: @unchecked Sendable {
+      private let queue = DispatchQueue(label: "zero.network")
+      /// Only used on `queue`.
+      private var monitor: NWPathMonitor?
+
+      init(_ handler: @escaping @Sendable (NWPath) -> Void) {
+        queue.async { [self] in
+          let monitor = NWPathMonitor()
+          monitor.pathUpdateHandler = handler
+          monitor.start(queue: queue)
+          self.monitor = monitor
+        }
+      }
+
+      func cancel() {
+        queue.async { [self] in
+          monitor?.cancel()
+          monitor = nil
+        }
+      }
+    }
+  #endif
 
   #if canImport(UIKit) && !os(watchOS)
     /// One trip to the background: ends at the first of the server
