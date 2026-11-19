@@ -1,5 +1,15 @@
 # zero-swift
 
+## 0.10.0
+
+### Minor Changes
+
+- 73d5f6b: `Zero.prepare(schema:context:mutators:options:queries:)` opens the client's store, reads its replica, and hydrates the queries the app's first frame shows, off the main actor, and `Zero(prepared)` takes the result over on the main actor. Call `prepare` as early as the app knows its options, such as in `App.init`, and make the client where the first frame needs it: it waits for whatever is left, and the views of the prepared queries have their rows at once, as with `Zero.init`. At launch, Zero then takes about 2 ms of the main thread on a Mac however large the replica is, instead of 10 ms for a replica of 2,000 rows and 25 ms for 8,000. `Zero.init` and `materialize` don't change.
+
+### Patch Changes
+
+- cd2855b: Opening a client takes less of the main thread before the app's first frame: a third less for a replica of about 2,000 rows (on a Mac, 10.9 ms instead of 15.6 ms; on the iOS Simulator, 20.4 ms instead of 26.2 ms), and 40% less for 8,000 rows. The replica goes into the query sources without a diff against an empty one, and the first report of its queries and mutation results reads only those keys. The URLSession is made by the first connect, the network monitor starts on its own queue, and the storage folder is excluded from backups in the background.
+
 ## 0.9.0
 
 ### Minor Changes

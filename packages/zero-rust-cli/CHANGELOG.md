@@ -1,5 +1,15 @@
 # zero-rust
 
+## 0.5.0
+
+### Minor Changes
+
+- 607f99d: `Zero::prepare(schema, context, mutators, options)` opens the client's SQLite store and reads its replica on a thread of its own, and `Zero::from_prepared(prepared, scheduler, socket_factory)` makes the client from it on the app's thread. Call `prepare` as early as the app knows its options, and `from_prepared` where the first frame needs the client: it waits for whatever is left, and the client and its views have their rows at once, as with `Zero::new`. At launch, Zero then takes 5.6 ms of the app's thread on a Mac for a replica of 8,000 rows instead of 17.8 ms, and 2.8 ms instead of 7.1 ms for 2,000. Loading the replica into the query sources and hydrating the first views stay on the app's thread. `Zero::new` and `materialize` don't change.
+
+### Patch Changes
+
+- edec2e7: `Zero::new` takes less time on a replica of thousands of rows: on a Mac, 19.0 ms instead of 23.0 ms for 8,000 rows, and 7.0 ms instead of 7.6 ms for 2,000. The replica goes into the query sources without a diff against an empty one, the first report of its queries and mutation results reads only those keys, and a diff of two whole copies of the replica walks them once instead of sorting their keys.
+
 ## 0.4.0
 
 ### Minor Changes
