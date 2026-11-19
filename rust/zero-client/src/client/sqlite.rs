@@ -20,6 +20,7 @@ use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
 use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -211,6 +212,83 @@ impl SqliteBackend {
             .unwrap_or_default();
         format!("sqlite:{}", dir.display())
     }
+
+    fn open_database(&self, name: &str) -> Result<SqliteDatabase, LoadError> {
+        let file = file_name(name);
+        if let Some(shared) = self.shared.take() {
+            move_from_shared(&shared, &self.directory, &file);
+        }
+        let path = self.directory.join(file);
+        let connection = open_connection(&path, name).map_err(|e| failure(&e))?;
+        let profile_id = profile_id(&self.directory)?;
+        Ok(SqliteDatabase::start(path, connection, profile_id))
+    }
+}
+
+/// A database `Zero::prepare` opened on its own thread, for the client's
+/// thread to take over (`PreparedReplica` in zero-swift).
+pub(crate) struct PreparedSqlite {
+    backend: SqliteBackend,
+    database: SqliteDatabase,
+    /// The file and its `PRAGMA data_version` once read.
+    read: Option<(Option<FileId>, i64)>,
+}
+
+impl PreparedSqlite {
+    /// Makes the folder (moving the database from the shared one the first
+    /// time) and opens the database `name` in it.
+    pub(crate) fn open(directory: Option<PathBuf>, name: &str) -> Result<Self, LoadError> {
+        let backend = SqliteBackend::new(directory)?;
+        let database = backend.open_database(name)?;
+        Ok(PreparedSqlite {
+            backend,
+            database,
+            read: None,
+        })
+    }
+
+    pub(crate) fn database(&self) -> &dyn StoredDatabase {
+        &self.database
+    }
+
+    pub(crate) fn location(&self) -> String {
+        self.backend.location()
+    }
+
+    /// Notes the file as it is once read.
+    pub(crate) fn mark_read(&mut self) {
+        self.read = self.state();
+    }
+
+    fn state(&self) -> Option<(Option<FileId>, i64)> {
+        let version = self.database.ask(Request::DataVersion).flatten()?;
+        Some((file_id(&self.database.path), version))
+    }
+
+    /// Whether what was read is still what the file holds: the file at the
+    /// path is the one open, and no other connection wrote to it since.
+    pub(crate) fn is_current(&self) -> bool {
+        self.read.is_some() && self.state() == self.read
+    }
+
+    pub(crate) fn into_parts(self) -> (Rc<dyn StorageBackend>, Box<dyn StoredDatabase>) {
+        (Rc::new(self.backend), Box::new(self.database))
+    }
+}
+
+type FileId = (u64, u64);
+
+#[cfg(unix)]
+fn file_id(path: &Path) -> Option<FileId> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(path).ok().map(|m| (m.dev(), m.ino()))
+}
+
+/// Elsewhere, such as on Windows, an open file can't be deleted or
+/// replaced, so it's the one at its path while it's there.
+#[cfg(not(unix))]
+fn file_id(path: &Path) -> Option<FileId> {
+    path.exists().then_some((0, 0))
 }
 
 /// Moves the database `file` from the folder every app shared to the
@@ -288,16 +366,7 @@ impl StorageBackend for SqliteBackend {
     }
 
     fn open(&self, name: &str) -> Result<Box<dyn StoredDatabase>, LoadError> {
-        let file = file_name(name);
-        if let Some(shared) = self.shared.take() {
-            move_from_shared(&shared, &self.directory, &file);
-        }
-        let path = self.directory.join(file);
-        let connection = open_connection(&path, name).map_err(|e| failure(&e))?;
-        let profile_id = profile_id(&self.directory)?;
-        Ok(Box::new(SqliteDatabase::start(
-            path, connection, profile_id,
-        )))
+        Ok(Box::new(self.open_database(name)?))
     }
 
     fn drop_databases(&self, matches: &dyn Fn(&str) -> bool) -> DroppedDatabases {
@@ -411,7 +480,20 @@ fn delete_retired(directory: &Path) {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    static OPENS: Cell<usize> = const { Cell::new(0) };
+}
+
+/// How many connections this thread opened, for tests.
+#[cfg(test)]
+pub(crate) fn opens_on_this_thread() -> usize {
+    OPENS.with(Cell::get)
+}
+
 fn open_connection(path: &Path, name: &str) -> rusqlite::Result<Connection> {
+    #[cfg(test)]
+    OPENS.with(|n| n.set(n.get() + 1));
     let db = Connection::open(path)?;
     db.busy_timeout(OPEN_BUSY_TIMEOUT)?;
     db.execute_batch(
@@ -479,6 +561,8 @@ enum Request {
     Flush(mpsc::Sender<Result<(), StorageFailure>>),
     Close(mpsc::Sender<Result<(), StorageFailure>>),
     Drop(mpsc::Sender<()>),
+    /// `PRAGMA data_version`, which changes when another connection writes.
+    DataVersion(mpsc::Sender<Option<i64>>),
 }
 
 /// An open SQLite database and the thread that owns its connection.
@@ -656,6 +740,13 @@ impl Writer {
                 unlink_database(&self.path);
                 let _ = reply.send(());
                 return false;
+            }
+            Request::DataVersion(reply) => {
+                let version = self
+                    .db
+                    .as_ref()
+                    .and_then(|db| db.query_row("PRAGMA data_version", [], |r| r.get(0)).ok());
+                let _ = reply.send(version);
             }
         }
         true

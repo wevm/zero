@@ -5,7 +5,9 @@
 //! `event_loop`.
 
 use super::connection_manager::{ConnectionManager, State};
-use super::database::{AggregateWrites, ReplicaDatabase, StorageOp, StoredMutation, base36};
+use super::database::{
+    AggregateWrites, PreparedDatabase, ReplicaDatabase, StorageOp, StoredMutation, base36,
+};
 use super::event_loop::{EventLoop, LoopScheduler};
 use super::ivm_branch::IvmBranch;
 use super::log::Log;
@@ -31,8 +33,8 @@ use crate::json::{self, Object, Value, number};
 use crate::keys::{self, AGGREGATES_PREFIX, GOT_QUERIES_PREFIX, MUTATIONS_PREFIX};
 use crate::map::OrderedMap;
 use crate::protocol::{
-    ChangeDesiredQueriesBody, ConnectedBody, ConnectionUrl, DeleteClientsBody, Downstream,
-    ErrorBody, ErrorKind, InitConnectionBody, Mutation, PushBody, PushResponseBody,
+    ChangeDesiredQueriesBody, ClientSchema, ConnectedBody, ConnectionUrl, DeleteClientsBody,
+    Downstream, ErrorBody, ErrorKind, InitConnectionBody, Mutation, PushBody, PushResponseBody,
     UpQueriesPatchOp, UpdateAuthBody, Upstream, poke_chunk, sec_protocols,
 };
 use crate::schema::Schema;
@@ -110,6 +112,27 @@ fn random_u64() -> u64 {
 /// `Math.random()`.
 fn random_f64() -> f64 {
     (random_u64() >> 11) as f64 / (1u64 << 53) as f64
+}
+
+/// The name of the database a client of `client_schema` opens
+/// (`makeIDBName`).
+pub(crate) fn database_name(
+    client_schema: &ClientSchema,
+    user_id: Option<&str>,
+    storage_key: Option<&str>,
+    mutate_url: Option<&str>,
+    query_url: Option<&str>,
+) -> String {
+    let schema_hash = base36(xxhash32::h64(&json::stringify(
+        &client_schema.normalized().to_json(),
+    )));
+    ReplicaDatabase::name(
+        user_id,
+        storage_key.unwrap_or(""),
+        mutate_url,
+        query_url,
+        &schema_hash,
+    )
 }
 
 /// A random ID like the JS client's `nanoid`.
@@ -694,20 +717,9 @@ impl Engine {
         base: Rc<dyn Scheduler>,
         socket_factory: Option<Rc<dyn SocketFactory>>,
         visible: bool,
+        prepared: Option<PreparedDatabase>,
     ) -> Result<Rc<Engine>, Error> {
-        if options.user_id.as_deref() == Some("") {
-            return Err(ConnectionError::client(
-                ClientErrorKind::Internal,
-                "ZeroOptions.userID should not be empty. Omit it entirely for logged-out clients.",
-            )
-            .into());
-        }
-        Self::check_auth_valid(options.user_id.as_deref(), options.auth.as_deref())?;
-        let socket_origin = options
-            .cache_url
-            .as_deref()
-            .map(Self::socket_origin)
-            .transpose()?;
+        let socket_origin = Self::check_options(&options)?;
         let event_loop = EventLoop::new(base.clone());
         let scheduler: Rc<dyn Scheduler> = Rc::new(LoopScheduler {
             base: base.clone(),
@@ -720,22 +732,19 @@ impl Engine {
             .unwrap_or_else(|| Rc::new(StderrLogSink));
         let log = Log::new(options.log_level, sink).with("clientID", &client_id);
         let client_schema = schema.client_schema();
-        let schema_hash = base36(xxhash32::h64(&json::stringify(
-            &client_schema.normalized().to_json(),
-        )));
 
         // Open the database and join a client group (`initClientV6`).
-        let name = ReplicaDatabase::name(
+        let name = database_name(
+            &client_schema,
             options.user_id.as_deref(),
-            options.storage_key.as_deref().unwrap_or(""),
+            options.storage_key.as_deref(),
             options.mutate_url.as_deref(),
             options.query_url.as_deref(),
-            &schema_hash,
         );
         let mut mutator_names: Vec<String> = mutators.keys().cloned().collect();
         mutator_names.sort();
         let (mut database, mut open_failure, mut corrupt) =
-            ReplicaDatabase::open(&options.storage, &name);
+            ReplicaDatabase::open(&options.storage, &name, prepared);
         let joined = match database.init_client(&client_id, &mutator_names, base.now()) {
             // What the client group holds doesn't decode, so the client
             // state is lost: drop the database and start a new one
@@ -744,7 +753,7 @@ impl Engine {
                 corrupt = true;
                 database.drop_database();
                 database.release();
-                (database, open_failure, _) = ReplicaDatabase::open(&options.storage, &name);
+                (database, open_failure, _) = ReplicaDatabase::open(&options.storage, &name, None);
                 database.init_client(&client_id, &mutator_names, base.now())
             }
             r => r,
@@ -1094,6 +1103,24 @@ impl Engine {
         e.context.mark_pipelines_ready();
         e.micro(|e| e.start_run_loop());
         Ok(engine)
+    }
+
+    /// Fails for options no client can start with; otherwise the
+    /// WebSocket origin of the zero-cache URL.
+    pub(crate) fn check_options(options: &ZeroOptions) -> Result<Option<String>, Error> {
+        if options.user_id.as_deref() == Some("") {
+            return Err(ConnectionError::client(
+                ClientErrorKind::Internal,
+                "ZeroOptions.userID should not be empty. Omit it entirely for logged-out clients.",
+            )
+            .into());
+        }
+        Self::check_auth_valid(options.user_id.as_deref(), options.auth.as_deref())?;
+        options
+            .cache_url
+            .as_deref()
+            .map(Self::socket_origin)
+            .transpose()
     }
 
     fn check_auth_valid(user_id: Option<&str>, auth: Option<&str>) -> Result<(), Error> {

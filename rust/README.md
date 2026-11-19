@@ -119,6 +119,7 @@ app uses `client`, `define`, `typed` (through generated code), `ttl`, and
 | Concept            | API                                                                                                    | Notes                                                           |
 | ------------------ | ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
 | Client             | `Zero::new(schema, context, mutators, options, scheduler, socket_factory)?`                            | Not `Send`: one thread                                          |
+| Client at launch   | `Zero::prepare(..)`, then `Zero::from_prepared(prepared, scheduler, socket_factory)?`                  | Opens and reads the SQLite store on another thread meanwhile    |
 | Options            | `ZeroOptions { cache_url, user_id, auth, storage, mutate_url, query_url, log_level, .. }`              | JS's options in snake case                                      |
 | Named queries      | `define_query(name, \|args, ctx\| query)`, called as `Q.with(args)`                                    | `serde` feature                                                 |
 | Query builder      | `zql::issue()`, `.where_eq`, `.where_expr`, `.where_exists`, `.related`, `.order_by`, `.limit`, `.one` | Also `count`, `sum`, `group_by`, `distinct`                     |

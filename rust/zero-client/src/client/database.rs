@@ -13,8 +13,8 @@ pub(crate) use super::storage::{
     AggregateWrites, ClientGroupRecord, ClientIdPair, ClientRecord, StorageOp, StoredMutation,
 };
 use super::storage::{
-    DroppedDatabases, LoadError, StorageBackend, StorageFailure, StoredDatabase, StoredGroup,
-    ZeroStorage,
+    DroppedDatabases, LoadError, StorageBackend, StorageFailure, StoredClients, StoredDatabase,
+    StoredGroup, ZeroStorage,
 };
 use crate::hash::xxhash32;
 use crate::json::{self, Value};
@@ -45,6 +45,20 @@ impl From<StoredGroup> for GroupData {
 type OnDelete = Rc<dyn Fn(&str)>;
 type FailureListener = Rc<dyn Fn(&StorageFailure)>;
 
+/// A client's database opened and read by `Zero::prepare` on its own
+/// thread: the clients, and the group a client with its mutators joins.
+#[cfg(feature = "sqlite")]
+pub(crate) struct PreparedDatabase {
+    name: String,
+    sqlite: super::sqlite::PreparedSqlite,
+    clients: StoredClients,
+    group: Option<(String, StoredGroup)>,
+}
+
+/// Without SQLite there is nothing to prepare.
+#[cfg(not(feature = "sqlite"))]
+pub(crate) enum PreparedDatabase {}
+
 pub(crate) struct ReplicaDatabase {
     /// The JS name of the database (`rep:<name>:<format>:<schemaVersion>`).
     pub(crate) name: String,
@@ -68,6 +82,8 @@ pub(crate) struct ReplicaDatabase {
     running: RefCell<Vec<(String, String, OnDelete)>>,
     /// The cookie of each client group's stored snapshot.
     snapshot_cookies: RefCell<HashMap<String, Value>>,
+    /// The group `Zero::prepare` read, until a client joins it.
+    prepared_group: RefCell<Option<(String, StoredGroup)>>,
 }
 
 thread_local! {
@@ -78,6 +94,20 @@ thread_local! {
     /// (`fellBack` in `mem-fallback-store.ts`), with the locations they
     /// stand in for. Drops from those locations drop these too.
     static FELL_BACK: RefCell<HashMap<String, HashSet<String>>> = RefCell::default();
+}
+
+/// The client group a client with `mutator_names` joins: one that
+/// registers the same mutators and isn't disabled.
+fn matching_group<'a>(
+    groups: &'a [ClientGroupRecord],
+    mutator_names: &[String],
+) -> Option<&'a ClientGroupRecord> {
+    let names: HashSet<&String> = mutator_names.iter().collect();
+    groups.iter().find(|g| {
+        !g.disabled
+            && g.mutator_names.len() == names.len()
+            && g.mutator_names.iter().all(|n| names.contains(n))
+    })
 }
 
 fn memory_key(name: &str) -> String {
@@ -121,6 +151,7 @@ impl ReplicaDatabase {
             users: Cell::new(1),
             running: RefCell::default(),
             snapshot_cookies: RefCell::default(),
+            prepared_group: RefCell::default(),
         }
     }
 
@@ -128,10 +159,17 @@ impl ReplicaDatabase {
     /// open on this thread. A database that can't be opened is replaced by
     /// the memory one of its name, and the failure returned. One whose data
     /// doesn't decode is deleted and a new one started, and `corrupt` set.
+    ///
+    /// `prepared`, what `Zero::prepare` read of it, is taken over when it's
+    /// still what the file holds.
     pub(crate) fn open(
         storage: &ZeroStorage,
         name: &str,
+        prepared: Option<PreparedDatabase>,
     ) -> (Rc<ReplicaDatabase>, Option<StorageFailure>, bool) {
+        if let Some(db) = prepared.and_then(Self::adopt) {
+            return (db, None, false);
+        }
         let backend = match backend(storage) {
             Ok(None) => return (Self::memory(name), None, false),
             Ok(Some(b)) => b,
@@ -188,11 +226,70 @@ impl ReplicaDatabase {
             }
         };
         let db = ReplicaDatabase::new(name, key.to_owned(), Some((backend.clone(), store)));
-        *db.groups.borrow_mut() = clients.groups;
-        *db.clients.borrow_mut() = clients.clients;
-        *db.deleted_clients.borrow_mut() = ClientIdPair::normalize(clients.deleted_clients);
-        *db.profile_id.borrow_mut() = clients.profile_id;
+        db.set_clients(clients);
         Ok(db)
+    }
+
+    fn set_clients(&self, clients: StoredClients) {
+        *self.groups.borrow_mut() = clients.groups;
+        *self.clients.borrow_mut() = clients.clients;
+        *self.deleted_clients.borrow_mut() = ClientIdPair::normalize(clients.deleted_clients);
+        *self.profile_id.borrow_mut() = clients.profile_id;
+    }
+
+    /// Opens and reads the SQLite database `name` in `directory` for a
+    /// client with `mutator_names`, on any thread: its clients, and the
+    /// snapshot and pending mutations of the group the client joins. `None`
+    /// when it can't, which the client then handles as when it opens it.
+    #[cfg(feature = "sqlite")]
+    pub(crate) fn prepare(
+        directory: Option<std::path::PathBuf>,
+        name: String,
+        mutator_names: &[String],
+    ) -> Option<PreparedDatabase> {
+        let mut sqlite = super::sqlite::PreparedSqlite::open(directory, &name).ok()?;
+        let clients = sqlite.database().load().ok()?;
+        let group = match matching_group(&clients.groups, mutator_names) {
+            Some(g) => Some((g.id.clone(), sqlite.database().load_group(&g.id).ok()?)),
+            None => None,
+        };
+        sqlite.mark_read();
+        Some(PreparedDatabase {
+            name,
+            sqlite,
+            clients,
+            group,
+        })
+    }
+
+    /// The database of `prepared` on this thread: the one already open
+    /// here, or the prepared one when no other connection changed the file
+    /// since. `None` when it has to be opened again.
+    #[cfg(feature = "sqlite")]
+    fn adopt(prepared: PreparedDatabase) -> Option<Rc<ReplicaDatabase>> {
+        let key = store_key(&prepared.sqlite.location(), &prepared.name);
+        if let Some(db) = OPEN.with(|o| o.borrow().get(&key).cloned()) {
+            db.users.set(db.users.get() + 1);
+            return Some(db);
+        }
+        if !prepared.sqlite.is_current() {
+            return None;
+        }
+        let db = ReplicaDatabase::new(
+            &prepared.name,
+            key.clone(),
+            Some(prepared.sqlite.into_parts()),
+        );
+        db.set_clients(prepared.clients);
+        *db.prepared_group.borrow_mut() = prepared.group;
+        let db = Rc::new(db);
+        OPEN.with(|o| o.borrow_mut().insert(key, db.clone()));
+        Some(db)
+    }
+
+    #[cfg(not(feature = "sqlite"))]
+    fn adopt(prepared: PreparedDatabase) -> Option<Rc<ReplicaDatabase>> {
+        match prepared {}
     }
 
     /// The memory database named `name`, which lives for the thread and is
@@ -482,6 +579,9 @@ impl ReplicaDatabase {
         let Some((_, store)) = &self.store else {
             return Ok(GroupData::default());
         };
+        if let Some((_, g)) = self.prepared_group.borrow_mut().take_if(|(g, _)| g == id) {
+            return Ok(g.into());
+        }
         match store.load_group(id) {
             Ok(g) => Ok(g.into()),
             Err(LoadError::Failure(f)) => {
@@ -506,18 +606,8 @@ impl ReplicaDatabase {
         if let Some(f) = self.failure.borrow().clone() {
             return Err(LoadError::Failure(f));
         }
-        let names: HashSet<&String> = mutator_names.iter().collect();
         let mut ops = Vec::new();
-        let matched = self
-            .groups
-            .borrow()
-            .iter()
-            .find(|g| {
-                !g.disabled
-                    && g.mutator_names.len() == names.len()
-                    && g.mutator_names.iter().all(|n| names.contains(n))
-            })
-            .map(|g| g.id.clone());
+        let matched = matching_group(&self.groups.borrow(), mutator_names).map(|g| g.id.clone());
         let (group_id, group) = match matched {
             Some(id) => {
                 let group = self.load_group(&id)?;

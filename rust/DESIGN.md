@@ -144,6 +144,17 @@ IndexedDB-shaped machinery.
   poke), so no async runtime is needed; reads at open, flushes, and closes
   wait for it. The file layout and file names are zero-swift's, so the two
   read each other's files, and so are the default directory's rules.
+- `Zero::prepare` (zero-swift's `Zero.prepare`) opens and reads the SQLite
+  store on a thread of its own while the app launches: the folder, the
+  open and migrations, the clients, and the snapshot and pending mutations
+  of the group the client joins, parsed. `Zero::from_prepared` waits for
+  that and takes the database over on the app's thread, which then only
+  builds the replica's map, loads the sources, and hydrates. Those build
+  the client's `Rc`s, which can't move between threads without `unsafe`, so
+  unlike zero-swift's, Rust's `prepare` doesn't hydrate the first queries.
+  The client opens the store again, as `Zero::new` does, when the thread
+  already has it open, or when the file at the path or its
+  `PRAGMA data_version` changed since it was read.
 - The default directory is the app's own: `<app>/Zero` in
   `~/Library/Application Support` on macOS and Mac Catalyst, `<app>` the
   bundle identifier or else the executable's name; `<app>\Zero` in

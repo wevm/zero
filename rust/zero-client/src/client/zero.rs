@@ -2,7 +2,7 @@
 //! and its connection (`connection.ts`).
 
 use super::connection_manager::ConnectionState;
-use super::database::{ReplicaDatabase, replicache_name};
+use super::database::{PreparedDatabase, ReplicaDatabase, replicache_name};
 use super::engine::{
     Engine, MutationServerOutcome, MutatorFn, MutatorResult, UpdateNeededReason, ZeroOptions,
 };
@@ -148,6 +148,27 @@ impl<C: 'static> Zero<C> {
         scheduler: Rc<dyn Scheduler>,
         socket_factory: Option<Rc<dyn SocketFactory>>,
     ) -> Result<Self, Error> {
+        Self::start(
+            schema,
+            context,
+            mutators,
+            options,
+            scheduler,
+            socket_factory,
+            None,
+        )
+    }
+
+    /// `new`, on the database `Zero::prepare` read, if any.
+    pub(super) fn start(
+        schema: Arc<Schema>,
+        context: C,
+        mutators: Vec<Mutator<C>>,
+        options: ZeroOptions,
+        scheduler: Rc<dyn Scheduler>,
+        socket_factory: Option<Rc<dyn SocketFactory>>,
+        prepared: Option<PreparedDatabase>,
+    ) -> Result<Self, Error> {
         let context = Rc::new(context);
         let mut functions: HashMap<String, MutatorFn> = HashMap::new();
         for m in mutators {
@@ -169,6 +190,7 @@ impl<C: 'static> Zero<C> {
             scheduler.clone(),
             socket_factory.clone(),
             true,
+            prepared,
         )?;
         let connection = Connection::new(engine.clone());
         let core = Rc::new(Core {
@@ -188,7 +210,7 @@ impl<C: 'static> Zero<C> {
         Ok(Zero { core, context })
     }
 
-    fn engine(&self) -> Rc<Engine> {
+    pub(super) fn engine(&self) -> Rc<Engine> {
         self.core.engine()
     }
 
@@ -519,6 +541,7 @@ impl Core {
             core.scheduler.clone(),
             core.socket_factory.clone(),
             old.visible.get(),
+            None,
         ) {
             Ok(new) => new,
             Err(e) => {

@@ -108,6 +108,7 @@ can set 0 to disconnect as soon as it says it is hidden, as Swift does.
 | `zero.inspector`                                                 | `inspector()`, an `Inspector`; see below                                                                |
 | `zero.mutateBatch`, `zero.online`, `zero.server`, `zero.version` | not ported; `protocol::PROTOCOL_VERSION` is the sync protocol's version                                 |
 | none (Swift's `addMutationOutcomeListener`)                      | `add_mutation_outcome_listener(listener)`, which returns the function that removes it                   |
+| none (Swift's `Zero.prepare`)                                    | `Zero::prepare(..)`, then `Zero::from_prepared(..)?`: the SQLite store read on another thread at launch |
 | none (Swift's `pendingSettled(timeout:)`)                        | `pending_settled(timeout_ms)`, a `Deferred<bool>`: whether no mutations are pending; see below          |
 
 Rust adds `reconnect_now` (the network may be back, so skip the backoff),
