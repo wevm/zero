@@ -177,6 +177,7 @@ import ZeroTesting
     @Test func excludesTheFolderFromBackups() throws {
       defer { try? FileManager.default.removeItem(atPath: root) }
       try DefaultDirectory(path: directory.path).prepare(moving: nil)
+      DefaultDirectory.waitForBackupExclusion()
       let values = try URL(fileURLWithPath: directory.path).resourceValues(forKeys: [
         .isExcludedFromBackupKey
       ])

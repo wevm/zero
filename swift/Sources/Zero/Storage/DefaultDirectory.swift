@@ -142,12 +142,28 @@ struct DefaultDirectory: Equatable {
     fclose(output)
   }
 
+  #if canImport(Darwin)
+    /// Where the folder is excluded from backups: setting the flag takes a
+    /// few hundred microseconds, which opening the store would otherwise
+    /// spend on the main thread at launch.
+    private static let backupQueue = DispatchQueue(label: "zero.storage.backup", qos: .utility)
+  #endif
+
   private static func excludeFromBackup(_ path: String) {
     #if canImport(Darwin)
-      var url = URL(fileURLWithPath: path, isDirectory: true)
-      var values = URLResourceValues()
-      values.isExcludedFromBackup = true
-      try? url.setResourceValues(values)
+      backupQueue.async {
+        var url = URL(fileURLWithPath: path, isDirectory: true)
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? url.setResourceValues(values)
+      }
+    #endif
+  }
+
+  /// Waits for the folders queued so far to be excluded from backups.
+  static func waitForBackupExclusion() {
+    #if canImport(Darwin)
+      backupQueue.sync {}
     #endif
   }
 
