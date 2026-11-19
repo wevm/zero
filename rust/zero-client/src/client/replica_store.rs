@@ -261,10 +261,6 @@ impl KvMap {
     pub(crate) fn iter(&self) -> impl Iterator<Item = (&String, &Value)> {
         self.iter_from(None)
     }
-
-    pub(crate) fn keys(&self) -> impl Iterator<Item = &String> {
-        self.iter().map(|(k, _)| k)
-    }
 }
 
 /// The entries of a [`KvMap`] in key order: the path to the next one, with
@@ -356,13 +352,68 @@ pub(crate) fn diff_keys<'a>(
     diff
 }
 
-/// The diff from `old` to `new` over every key of both.
+/// The diff from `old` to `new` over every key of both: one walk of the two
+/// maps in key order.
 pub(crate) fn diff_all(old: &KvMap, new: &KvMap) -> KvDiff {
     if old.same(new) {
         return Vec::new();
     }
-    let keys: Vec<&String> = old.keys().chain(new.keys()).collect();
-    diff_keys(old, new, keys)
+    let del = |(key, v): (&String, &Value)| KvDiffOp::Del {
+        key: key.clone(),
+        old: v.clone(),
+    };
+    let add = |(key, v): (&String, &Value)| KvDiffOp::Add {
+        key: key.clone(),
+        new: v.clone(),
+    };
+    let mut diff = Vec::new();
+    let (mut olds, mut news) = (old.iter(), new.iter());
+    let (mut a, mut b) = (olds.next(), news.next());
+    loop {
+        match (a, b) {
+            (None, None) => return diff,
+            (Some(x), None) => {
+                diff.push(del(x));
+                a = olds.next();
+            }
+            (None, Some(y)) => {
+                diff.push(add(y));
+                b = news.next();
+            }
+            (Some(x), Some(y)) => match x.0.cmp(y.0) {
+                Ordering::Less => {
+                    diff.push(del(x));
+                    a = olds.next();
+                }
+                Ordering::Greater => {
+                    diff.push(add(y));
+                    b = news.next();
+                }
+                Ordering::Equal => {
+                    if x.1 != y.1 {
+                        diff.push(KvDiffOp::Change {
+                            key: x.0.clone(),
+                            old: x.1.clone(),
+                            new: y.1.clone(),
+                        });
+                    }
+                    a = olds.next();
+                    b = news.next();
+                }
+            },
+        }
+    }
+}
+
+/// An add of each entry: the diff from an empty map.
+pub(crate) fn adds<'a>(entries: impl IntoIterator<Item = (&'a String, &'a Value)>) -> KvDiff {
+    entries
+        .into_iter()
+        .map(|(key, v)| KvDiffOp::Add {
+            key: key.clone(),
+            new: v.clone(),
+        })
+        .collect()
 }
 
 /// The ops of `diff` whose key starts with `prefix`.
@@ -725,6 +776,89 @@ mod tests {
         assert_eq!(map, KvMap::default());
         for (copy, model) in &snapshots {
             assert!(copy.iter().eq(model.iter()));
+        }
+    }
+
+    /// `diff_all` between copies of a map with random writes between them,
+    /// and `adds`, agree with the diff of two `BTreeMap`s: every key whose
+    /// value differs, in key order, and none whose value a write kept.
+    #[test]
+    fn diff_all_matches_btree_maps() {
+        fn model_diff(old: &BTreeMap<String, Value>, new: &BTreeMap<String, Value>) -> KvDiff {
+            let keys: std::collections::BTreeSet<&String> = old.keys().chain(new.keys()).collect();
+            keys.into_iter()
+                .filter_map(|k| match (old.get(k), new.get(k)) {
+                    (None, Some(v)) => Some(KvDiffOp::Add {
+                        key: k.clone(),
+                        new: v.clone(),
+                    }),
+                    (Some(v), None) => Some(KvDiffOp::Del {
+                        key: k.clone(),
+                        old: v.clone(),
+                    }),
+                    (Some(a), Some(b)) if a != b => Some(KvDiffOp::Change {
+                        key: k.clone(),
+                        old: a.clone(),
+                        new: b.clone(),
+                    }),
+                    _ => None,
+                })
+                .collect()
+        }
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        let mut random = |n: u64| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state % n
+        };
+        let mut map = KvMap::default();
+        let mut model = BTreeMap::new();
+        for round in 0..40 {
+            let (old, old_model) = (map.clone(), model.clone());
+            assert!(diff_all(&old, &map).is_empty());
+            // Few writes in some rounds, so most leaves stay shared.
+            for _ in 0..[3, 300][random(2) as usize] {
+                // Multi-byte endings, which the map orders by UTF-8 bytes.
+                let key = format!(
+                    "{}/{}{}",
+                    ["e/a", "e/b", "g", "m/c"][random(4) as usize],
+                    random(1500),
+                    ["", "\u{e9}", "e\u{301}", "\u{1F600}", "\u{FFFD}"][random(5) as usize]
+                );
+                if random(4) == 0 {
+                    map.delete(&key);
+                    model.remove(&key);
+                } else {
+                    let v = Value::from(random(3) as f64);
+                    map.set(key.clone(), v.clone());
+                    model.insert(key, v);
+                }
+            }
+            assert_eq!(
+                diff_all(&old, &map),
+                model_diff(&old_model, &model),
+                "round {round}"
+            );
+            assert_eq!(
+                diff_all(&map, &old),
+                model_diff(&model, &old_model),
+                "round {round}"
+            );
+            let empty = BTreeMap::new();
+            assert_eq!(
+                adds(map.iter()),
+                model_diff(&empty, &model),
+                "round {round}"
+            );
+            assert_eq!(
+                diff_all(&KvMap::default(), &map),
+                model_diff(&empty, &model)
+            );
+            assert_eq!(
+                diff_all(&map, &KvMap::default()),
+                model_diff(&model, &empty)
+            );
         }
     }
 

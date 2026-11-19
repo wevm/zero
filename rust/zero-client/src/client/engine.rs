@@ -14,8 +14,8 @@ use super::poke_handler::{MergedPoke, PokeHandler};
 use super::query_context::QueryContext;
 use super::query_manager::QueryManager;
 use super::replica_store::{
-    KvDiff, KvMap, KvPatchOp, KvWrite, PendingMutation, ReplicaStore, Snapshot, apply_patch,
-    compare_cookies, diff_all, diff_keys, with_prefix,
+    KvDiff, KvMap, KvPatchOp, KvWrite, PendingMutation, ReplicaStore, Snapshot, adds, apply_patch,
+    compare_cookies, diff_keys, with_prefix,
 };
 use super::socket::{SocketConnection, SocketEvents, SocketFactory, SocketMessage};
 use super::storage::{LoadError, StorageFailure, ZeroStorage};
@@ -991,7 +991,7 @@ impl Engine {
         // Load the snapshot into the sources and replay the pending
         // mutations on it, with the synced aggregate rows they wrote when
         // they were last persisted, as JS's stored commits have them.
-        let initial = diff_all(&KvMap::default(), &e.store.borrow().snapshot.map);
+        let initial = adds(e.store.borrow().snapshot.map.iter());
         e.ivm_main.apply(&initial, &HashMap::new());
         let pending = e.store.borrow().pending.clone();
         if !pending.is_empty() {
@@ -1084,8 +1084,13 @@ impl Engine {
         // The replica is loaded: report its got queries and mutation
         // results, as the first runs of the store watches do, then build
         // the pipelines.
-        let main = e.store.borrow().main.clone();
-        e.fire_watchers(&diff_all(&KvMap::default(), &main), true);
+        let watched = {
+            let store = e.store.borrow();
+            let main = &store.main;
+            let mutations = format!("{MUTATIONS_PREFIX}{}/", e.client_id);
+            adds(main.scan(&mutations).chain(main.scan(GOT_QUERIES_PREFIX)))
+        };
+        e.fire_watchers(&watched, true);
         e.context.mark_pipelines_ready();
         e.micro(|e| e.start_run_loop());
         Ok(engine)
