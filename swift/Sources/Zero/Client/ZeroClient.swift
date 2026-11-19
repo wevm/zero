@@ -49,13 +49,7 @@ public final class Zero<Context: Sendable> {
     options: ZeroOptions, scheduler: any Scheduler = SystemScheduler(),
     socketFactory: (any SocketFactory)? = platformSocketFactory()
   ) throws {
-    var functions: [String: MutatorFunction] = [:]
-    for m in mutators {
-      guard functions[m.name] == nil else {
-        throw ApplicationError("Mutator \"\(m.name)\" is registered twice")
-      }
-      functions[m.name] = { tx, args in try m.run(tx, args: args, context: context) }
-    }
+    let functions = try Self.functions(mutators, context: context)
     engine = try Engine(
       schema: schema, options: options, mutators: functions, scheduler: scheduler,
       socketFactory: socketFactory)
@@ -66,6 +60,57 @@ public final class Zero<Context: Sendable> {
     self.scheduler = scheduler
     self.socketFactory = socketFactory
     connection = Connection(engine)
+    start()
+  }
+
+  /// Takes over the client ``prepare(schema:context:mutators:options:queries:)``
+  /// opened, waiting for what's left of its preparation.
+  ///
+  /// The client is the one ``init(schema:context:mutators:options:scheduler:socketFactory:)``
+  /// makes with the preparation's arguments, and its first views of the
+  /// prepared queries are the ones `prepare` hydrated. A second client of
+  /// the same preparation opens its store as that initializer does.
+  ///
+  /// - Parameters:
+  ///   - prepared: What `prepare` opened and hydrated.
+  ///   - scheduler: The clock and timers. With the system clock, the client
+  ///     also follows the app's lifecycle and the network; tests pass a
+  ///     manual one.
+  ///   - socketFactory: Opens the sync socket. Defaults to
+  ///     `URLSessionTransport` on Apple platforms.
+  public init(
+    _ prepared: PreparedZero<Context>, scheduler: any Scheduler = SystemScheduler(),
+    socketFactory: (any SocketFactory)? = platformSocketFactory()
+  ) throws {
+    let context = prepared.context
+    let functions = try Self.functions(prepared.mutators, context: context)
+    engine = try Engine(
+      schema: prepared.schema, options: prepared.options, mutators: functions,
+      scheduler: scheduler, socketFactory: socketFactory, prepared: prepared.take())
+    self.context = context
+    self.schemaValue = prepared.schema
+    self.options = prepared.options
+    self.functions = functions
+    self.scheduler = scheduler
+    self.socketFactory = socketFactory
+    connection = Connection(engine)
+    start()
+  }
+
+  private static func functions(
+    _ mutators: [any Mutator<Context>], context: Context
+  ) throws -> [String: MutatorFunction] {
+    var functions: [String: MutatorFunction] = [:]
+    for m in mutators {
+      guard functions[m.name] == nil else {
+        throw ApplicationError("Mutator \"\(m.name)\" is registered twice")
+      }
+      functions[m.name] = { tx, args in try m.run(tx, args: args, context: context) }
+    }
+    return functions
+  }
+
+  private func start() {
     attach(engine)
     #if canImport(Darwin)
       // Simulated time drives everything in tests, the app's lifecycle too.
@@ -463,6 +508,15 @@ extension Zero where Context == Void {
     try self.init(
       schema: schema, context: (), mutators: mutators, options: options, scheduler: scheduler,
       socketFactory: socketFactory)
+  }
+
+  /// ``prepare(schema:context:mutators:options:queries:)`` for an app
+  /// without a context.
+  nonisolated public static func prepare(
+    schema: ZeroSchema, mutators: [any Mutator<Void>] = [], options: ZeroOptions,
+    queries: [any PreparableQuery<Void>] = []
+  ) -> PreparedZero<Void> {
+    prepare(schema: schema, context: (), mutators: mutators, options: options, queries: queries)
   }
 }
 

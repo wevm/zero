@@ -40,6 +40,8 @@ and AppKit integration.
 - <doc:GettingStarted>
 - <doc:JSParity>
 - ``Zero/Zero``
+- ``PreparedZero``
+- ``PreparableQuery``
 - ``ZeroOptions``
 - ``AnyZero``
 

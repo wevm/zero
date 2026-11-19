@@ -193,7 +193,8 @@ final class Engine {
 
   init(
     schema: ZeroSchema, options: ZeroOptions, mutators: [String: MutatorFunction],
-    scheduler base: any Scheduler, socketFactory: (any SocketFactory)?, visible: Bool = true
+    scheduler base: any Scheduler, socketFactory: (any SocketFactory)?, visible: Bool = true,
+    prepared: PreparedReplica? = nil
   ) throws {
     self.visible = visible
     if options.userID == "" {
@@ -225,11 +226,29 @@ final class Engine {
       mutateURL: options.mutateURL, queryURL: options.queryURL,
       schemaHash: clientSchema.hash)
     let mutatorNames = mutators.keys.sorted()
-    var (database, openFailure, corrupt) = ReplicaDatabase.open(options.storage, name: name)
+    // The store `Zero.prepare` opened and read, unless it can't be used.
+    let adopted = prepared.flatMap { ReplicaDatabase.adopt($0, name: name) }
+    var database: ReplicaDatabase
+    var openFailure: StorageFailure?
+    var corrupt = false
+    if let adopted {
+      database = adopted
+    } else {
+      (database, openFailure, corrupt) = ReplicaDatabase.open(options.storage, name: name)
+    }
     var joined: (clientGroupID: String, group: StoredGroup)
+    // Whether the client runs on the branch `prepare` loaded.
+    var onPrepared = false
     do {
       do {
-        joined = try database.initClient(clientID, mutatorNames: mutatorNames, now: base.now)
+        if adopted != nil, let prepared {
+          joined = try database.initClient(
+            clientID, mutatorNames: mutatorNames, now: base.now,
+            prepared: prepared.groupID.map { ($0, prepared.group) })
+          onPrepared = prepared.groupID == nil || joined.clientGroupID == prepared.groupID
+        } else {
+          joined = try database.initClient(clientID, mutatorNames: mutatorNames, now: base.now)
+        }
       } catch is ReplicaDatabase.CorruptData {
         // What the client group holds doesn't decode, so the client state
         // is lost: drop the database and start a new one
@@ -280,7 +299,8 @@ final class Engine {
     let storedAggregateWrites = Dictionary(
       mutations.map { (MutationKey(clientID: $0.clientID, id: $0.id), $0.aggregateWrites) },
       uniquingKeysWith: { $1 })
-    self.ivmMain = IVMBranch(schema: schema)
+    let preparedBranch = onPrepared ? prepared : nil
+    self.ivmMain = preparedBranch?.branch ?? IVMBranch(schema: schema)
     let loop = self.loop
     self.connectionManager = ConnectionManager(
       disconnectTimeout: options.disconnectTimeoutMs, scheduler: scheduler,
@@ -342,16 +362,27 @@ final class Engine {
         self?.onPokeError(message, received: received)
       })
 
-    // Load the snapshot into the sources and replay the pending mutations
-    // on it, with the synced aggregate rows they wrote when they were last
-    // persisted, as JS's stored commits have them.
-    ivmMain.apply(KVDiff(adding: store.snapshot.map.entries))
+    // Load the snapshot into the sources (`prepare` did already) and replay
+    // the pending mutations on it, with the synced aggregate rows they wrote
+    // when they were last persisted, as JS's stored commits have them.
+    if let preparedBranch {
+      context.adoptPreparedViews(preparedBranch.views)
+      preparedBranch.views = []
+    } else {
+      ivmMain.apply(KVDiff(adding: store.snapshot.map.entries))
+    }
     if !store.pending.isEmpty {
       let (main, replayed, touched, _) = replay(
         store.pending, over: store.snapshot.map, branch: ivmMain.fork(),
         restoring: storedAggregateWrites)
       ivmMain.apply(
         store.advance(to: store.snapshot, main: main, pending: replayed, touched: touched))
+    }
+    // The prepared views' pushes count from now on, as they would once
+    // built here.
+    preparedBranch?.metrics.now = { [scheduler] in scheduler.monotonicNow }
+    preparedBranch?.metrics.report = { [weak self] elapsed, queryID in
+      self?.queryManager.addMetric(.queryUpdateClient, elapsed, queryID: queryID, ast: nil)
     }
     persisted = PersistedState(
       cookie: store.snapshot.cookie, main: store.main, touched: store.pendingWrites,
@@ -1265,6 +1296,7 @@ final class Engine {
       disconnect(.client(.clientClosed, message: "Zero instance closed by user"), closeCode: 1000)
     }
     repClosed = true
+    context.releasePreparedViews()
     pushTimer?.cancel()
     pushTimer = nil
     // JS's close aborts a persist that hasn't run.
