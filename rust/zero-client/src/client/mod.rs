@@ -20,6 +20,7 @@ mod measure_push;
 mod mutation_tracker;
 mod planner_debug;
 mod poke_handler;
+mod prepare;
 mod query_context;
 mod query_manager;
 mod replica_store;
@@ -46,6 +47,7 @@ pub use inspector::{
 };
 pub use live_view::{LiveError, LiveView};
 pub use log::{LogLevel, LogSink, StderrLogSink};
+pub use prepare::PreparedZero;
 pub use query_context::{MaterializedView, Preload, RunType, ViewListener};
 pub use scheduler::*;
 pub use socket::{SocketConnection, SocketEvents, SocketFactory, SocketMessage};
