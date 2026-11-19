@@ -111,6 +111,22 @@ name and run again when the server's state arrives, including after a
 relaunch. The client keeps its replica in SQLite (``ZeroStorage``) and
 connects with `URLSession`.
 
+Opening the client reads the replica, and the first queries hydrate, on the
+main actor. At launch, start that work off it with `Zero.prepare`, as early
+as the app knows its options, and take it over where the first frame needs
+the client. The views of the prepared queries then have their rows at once:
+
+```swift
+// In App.init: returns at once.
+let prepared = Zero.prepare(
+  schema: .app, context: auth, mutators: [IssueMutators.create], options: options,
+  queries: [IssueQueries.open()])
+
+// Where the first frame needs it: waits for whatever is left.
+let zero = try Zero(prepared)
+let open = try zero.liveQuery(IssueQueries.open())  // the prepared view
+```
+
 ## Read rows
 
 ``LiveQuery`` is an observable object whose `data` stays current:

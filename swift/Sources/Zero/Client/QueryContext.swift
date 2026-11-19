@@ -13,8 +13,14 @@ final class BranchDelegate: BuilderDelegate {
     _ name: String, columns: [(String, ColumnSchema)], primaryKey: [String],
     optimistic: OptimisticAggregate?
   ) -> (any Source)? {
-    branch.aggregateSource(name, columns: columns, primaryKey: primaryKey, optimistic: optimistic)
+    if let optimistic, let deferOptimistic { deferOptimistic(name, optimistic) }
+    return branch.aggregateSource(
+      name, columns: columns, primaryKey: primaryKey,
+      optimistic: deferOptimistic == nil ? optimistic : nil)
   }
+  /// Set while `Zero.prepare` builds a view: gets the synced aggregates its
+  /// query moves, which register once a client takes the view.
+  var deferOptimistic: ((String, OptimisticAggregate) -> Void)?
   func aggregateKeyColumns(_ table: String, _ columns: [String]) -> [String] {
     branch.serverColumnNames(table, columns)
   }
@@ -180,6 +186,34 @@ final class QueryContext {
     }
   }
 
+  /// The views `Zero.prepare` hydrated over the branch, until a
+  /// `materialize` of their query takes them, or the replica first changes.
+  private(set) var preparedViews: [PreparedView] = []
+
+  func adoptPreparedViews(_ views: [PreparedView]) {
+    preparedViews = views
+  }
+
+  /// Releases the prepared views no query took: once the replica changes,
+  /// keeping them current would cost each change.
+  func releasePreparedViews() {
+    for v in preparedViews { v.input.destroy() }
+    preparedViews = []
+  }
+
+  /// Takes the prepared view of `query`, registering the synced aggregates
+  /// its query moves, as building it here would have.
+  private func takePreparedView(_ queryID: String, _ query: AnyQuery) -> PreparedView? {
+    guard
+      let i = preparedViews.firstIndex(where: {
+        $0.queryID == queryID && $0.ast == query.ast && $0.format == query.format
+      })
+    else { return nil }
+    let v = preparedViews.remove(at: i)
+    for (name, optimistic) in v.optimistic { branch.register(optimistic, for: name) }
+    return v
+  }
+
   /// Why pushing into the branch failed, once it has (`#advanceError` in
   /// `ivm-branch.ts`). The pipelines saw part of that push, so they no
   /// longer match the sources: as in JS, the branch is unusable from then
@@ -190,6 +224,7 @@ final class QueryContext {
   /// operator fails (where JS throws from it) still flushes what the views
   /// got, as JS's `finally` does, and then throws.
   func processChanges(_ diff: KVDiff, rows: [String: Row] = [:]) throws {
+    releasePreparedViews()
     if let branchFailure { throw branchFailure }
     var failure: PipelineError?
     batchViewUpdates {
@@ -230,6 +265,7 @@ final class QueryContext {
       ?? QueryHash.hashOfAST(ast)
     let microtask = self.microtask
     let deferPipeline = !pipelinesReady
+    let prepared = deferPipeline ? nil : takePreparedView(queryID, query)
     var attached = !deferPipeline
     var got: Got = .no
     var queryComplete: Completion = .pending
@@ -282,10 +318,14 @@ final class QueryContext {
       customQueryID.map { addCustomQuery(ast, $0, ttl, gotCallback) } ?? {}
 
     let input: any Input
-    let pipeline: any Input
     let deferred: DeferredInput?
     do {
-      if deferPipeline {
+      let pipeline: any Input
+      if let prepared {
+        // The view's input already, grouped or not.
+        deferred = nil
+        pipeline = prepared.input
+      } else if deferPipeline {
         let delegate = self.delegate
         let build = { () throws -> any Input in try buildPipeline(ast, delegate, queryID: queryID) }
         // A probe gets the schema, and makes a query that cannot be built
@@ -300,7 +340,9 @@ final class QueryContext {
         pipeline = try buildPipeline(ast, delegate, queryID: queryID)
       }
       // A view of a grouped query shows only its columns and value.
-      input = ast.groupBy != nil ? try groupViewInput(pipeline, ast, delegate) : pipeline
+      input =
+        ast.groupBy != nil && prepared == nil
+        ? try groupViewInput(pipeline, ast, delegate) : pipeline
     } catch {
       removeAddedQuery()
       throw error
@@ -312,6 +354,15 @@ final class QueryContext {
       let v: ArrayView
       // Hydrating fetches the pipeline, which can fail where JS throws.
       func hydrate(_ error: ErroredQuery?, complete: Bool) -> ArrayView? {
+        if let prepared {
+          // Hydrated by `Zero.prepare`, with the replica as it is now.
+          if complete {
+            prepared.view.setResultType(.complete)
+          } else if let error {
+            prepared.view.setResultType(.error, error: error)
+          }
+          return prepared.view
+        }
         do {
           return try PipelineFailure.capture {
             ArrayView(input, format: query.format, error: error, complete: complete)
@@ -387,7 +438,8 @@ final class QueryContext {
         }
       }
     } else {
-      addMetric?(.queryMaterializationClient, monotonicNow() - t0, queryID, nil)
+      addMetric?(
+        .queryMaterializationClient, prepared?.hydrateMs ?? monotonicNow() - t0, queryID, nil)
     }
 
     view = created

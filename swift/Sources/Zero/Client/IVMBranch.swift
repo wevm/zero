@@ -62,15 +62,19 @@ final class IVMBranch {
     _ name: String, columns: [(String, ColumnSchema)], primaryKey: [String],
     optimistic: OptimisticAggregate? = nil
   ) -> MemorySource {
-    // A fork's queries are never synced, so only the main branch, which
-    // releases them, registers.
-    if let optimistic, !isFork {
-      optimism.byTable[optimistic.table, default: [:]][name] = optimistic
-    }
+    if let optimistic { register(optimistic, for: name) }
     if let existing = sources[name] ?? nil { return existing }
     let source = MemorySource(TableSchema(name: name, columns: columns, primaryKey: primaryKey))
     sources[name] = .some(source)
     return source
+  }
+
+  /// Registers how a child row's mutation moves the synced aggregate
+  /// `name`. A fork's queries are never synced, so only the main branch,
+  /// which releases them, registers.
+  func register(_ optimistic: OptimisticAggregate, for name: String) {
+    guard !isFork else { return }
+    optimism.byTable[optimistic.table, default: [:]][name] = optimistic
   }
 
   /// `serverColumnNames`: the server names of `columns` of `table`.

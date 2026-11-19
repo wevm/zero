@@ -280,6 +280,22 @@ final class ReplicaDatabase {
     }
   }
 
+  /// The database `Zero.prepare` opened, as `open` would return it: nil
+  /// when this process has the file open already, which the client then
+  /// shares, or what `prepare` read is no longer what the file holds.
+  static func adopt(_ prepared: PreparedReplica, name: String) -> ReplicaDatabase? {
+    guard open[prepared.path] == nil, prepared.isCurrent(), let store = prepared.store else {
+      return nil
+    }
+    prepared.store = nil
+    let db = ReplicaDatabase(name: name, key: prepared.path, sqlite: store)
+    db.take(prepared.records)
+    db.users = 1
+    open[prepared.path] = db
+    markUsed(prepared.path)
+    return db
+  }
+
   private static func load(path: String, name: String, directory: String) throws -> ReplicaDatabase
   {
     let store = try SQLiteStore(path: path, name: name, directory: directory)
@@ -375,21 +391,55 @@ final class ReplicaDatabase {
     Self.finishCollections(of: sqlite)
   }
 
-  private func load(from db: SQLiteDatabase) throws {
+  /// What a database holds besides the groups' data, read when it opens.
+  struct Records: Sendable {
+    var groups: [ClientGroupRecord] = []
+    var clients: [ClientRecord] = []
+    var deletedClients: [ClientIDPair] = []
+    var profileID = ""
+  }
+
+  nonisolated static func readRecords(
+    from db: SQLiteDatabase, directory: String
+  ) throws -> Records {
+    var r = Records()
     try db.query("SELECT id, mutator_names, disabled FROM client_groups ORDER BY seq") { row in
       let names = try JSONParser.parse(row.bytes(1)).arrayValue?.compactMap(\.stringValue) ?? []
-      groups.append(
+      r.groups.append(
         ClientGroupRecord(id: row.text(0), mutatorNames: names, disabled: row.integer(2) != 0))
     }
     try db.query("SELECT id, client_group_id, heartbeat FROM clients ORDER BY seq") { row in
-      clients.append(
+      r.clients.append(
         ClientRecord(id: row.text(0), clientGroupID: row.text(1), heartbeat: row.real(2)))
     }
     try db.query("SELECT client_group_id, client_id FROM deleted_clients") { row in
-      deletedClients.append(ClientIDPair(clientGroupID: row.text(0), clientID: row.text(1)))
+      r.deletedClients.append(ClientIDPair(clientGroupID: row.text(0), clientID: row.text(1)))
     }
-    deletedClients = ClientIDPair.normalize(deletedClients)
-    profileID = try SQLiteStore.profileID(in: sqlite!.directory)
+    r.deletedClients = ClientIDPair.normalize(r.deletedClients)
+    r.profileID = try SQLiteStore.profileID(in: directory)
+    return r
+  }
+
+  private func load(from db: SQLiteDatabase) throws {
+    take(try Self.readRecords(from: db, directory: sqlite!.directory))
+  }
+
+  private func take(_ r: Records) {
+    groups = r.groups
+    clients = r.clients
+    deletedClients = r.deletedClients
+    profileID = r.profileID
+  }
+
+  /// The group of `groups` that `initClient` joins a client with
+  /// `mutatorNames` to, if any.
+  nonisolated static func matchingGroup(
+    _ groups: [ClientGroupRecord], mutatorNames: [String]
+  ) -> ClientGroupRecord? {
+    let names = Set(mutatorNames)
+    return groups.first {
+      !$0.disabled && $0.mutatorNames.count == names.count && names.isSuperset(of: $0.mutatorNames)
+    }
   }
 
   /// The snapshot and pending mutations of group `id`. Throws
@@ -525,21 +575,26 @@ final class ReplicaDatabase {
   /// what it holds. Throws, adding nothing, a `StorageFailure` when the
   /// database failed or the group can't be read, and `CorruptData` when
   /// what it holds doesn't decode.
+  ///
+  /// `prepared` is that group as `prepare` read it, used instead of reading
+  /// it again when it's still the one to join.
   func initClient(
-    _ clientID: String, mutatorNames: [String], now: Double
+    _ clientID: String, mutatorNames: [String], now: Double,
+    prepared: (id: String, group: StoredGroup)? = nil
   ) throws -> (
     clientGroupID: String, group: StoredGroup
   ) {
     if let failure { throw failure }
-    let names = Set(mutatorNames)
     var ops: [StorageOp] = []
     let groupID: String
     var group = StoredGroup()
-    if let match = groups.first(where: {
-      !$0.disabled && $0.mutatorNames.count == names.count && names.isSuperset(of: $0.mutatorNames)
-    }) {
+    if let match = Self.matchingGroup(groups, mutatorNames: mutatorNames) {
       groupID = match.id
-      group = try loadGroup(groupID)
+      if let prepared, prepared.id == groupID {
+        group = prepared.group
+      } else {
+        group = try loadGroup(groupID)
+      }
       snapshotCookies[groupID] = group.cookie
     } else {
       groupID = randomID()
