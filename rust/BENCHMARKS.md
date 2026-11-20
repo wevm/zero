@@ -110,6 +110,22 @@ and a project, into a fresh client with the issue list's first page of
 `issueListV2` (or no view, for the cost of the poke itself). Each sample is
 timed from the poke's frames arriving to the view being flushed.
 
+`issue list` times what that issue list sees once it is synced: pokes that
+retitle an issue on its page, move one from below the page to its top, and
+label one, and an optimistic retitle. It also opens and closes the list at
+limits of 51 and 1,000 on four times the issues, comments, and issue labels
+(8,097 rows), as zbugs-gpui and zbugs-rune open it again with a larger limit
+while it scrolls.
+
+`cold start` replays zbugs' launch on a SQLite store that holds the first
+sync, or four times its rows: `Zero::new` and the issue list's first page,
+the same after `Zero::prepare` has read the store on its own thread (timing
+`from_prepared` and the page), and `prepare` with `from_prepared` at once.
+
+A benchmark whose name ends in `, SQLite` is the one without it on SQLite
+storage (`sqlite-bundled`). The store's own thread makes the writes; the
+benchmark times the app's thread.
+
 ## What they found
 
 - **Every write copied the replica.** The replica's map was an
