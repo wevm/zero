@@ -164,8 +164,14 @@ public struct Row: @unchecked Sendable {
   /// The names of the columns with a value, in the layout's order.
   public var keys: [String] { map(\.key) }
 
-  /// The row as a JSON object, columns in the layout's order.
-  public var object: JSONObject { JSONObject(self) }
+  /// The row as a JSON object, columns in the layout's order. Made at its
+  /// size: a row's `underestimatedCount` is 0, so `JSONObject(row)` grows
+  /// as it goes.
+  public var object: JSONObject {
+    var object = JSONObject(minimumCapacity: count)
+    for (name, value) in self { object[name] = value }
+    return object
+  }
 
   /// The row as a dictionary. Of column names that are canonically
   /// equivalent (`"é"` and `"e\u{301}"`), the last one wins; ``object``
@@ -264,7 +270,7 @@ extension Row: CustomStringConvertible, CustomDebugStringConvertible {
 extension JSONValue {
   /// The row as a JSON object.
   public init(_ row: Row) {
-    self = .object(JSONObject(row))
+    self = .object(row.object)
   }
 }
 

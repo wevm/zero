@@ -81,7 +81,7 @@ package struct NameMapper: Sendable {
   package func row(_ table: String, _ row: RowRecord) throws(NameMappingError) -> RowRecord {
     let dest = try self.table(table)
     if dest.allColumnsSame { return row }
-    var out: RowRecord = [:]
+    var out = RowRecord(minimumCapacity: row.count)
     for (column, value) in row { out[dest.columns[column] ?? column] = value }
     return out
   }

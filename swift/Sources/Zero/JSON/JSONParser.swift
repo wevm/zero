@@ -34,9 +34,32 @@ package struct JSONParser {
   }
 
   package static func parse(_ buffer: UnsafeBufferPointer<UInt8>) throws(Error) -> JSONValue {
+    var sizes: [Int] = []
+    return try parse(buffer, sizes: &sizes)
+  }
+
+  /// Parses values like one another, such as the rows of a table, faster
+  /// than one at a time: each starts its objects as big as the last one's
+  /// were.
+  package struct Batch {
+    private var sizes: [Int] = []
+
+    package init() {}
+
+    package mutating func parse(_ bytes: [UInt8]) throws(Error) -> JSONValue {
+      let result = bytes.withUnsafeBufferPointer { buffer in
+        Result { () throws(Error) in try JSONParser.parse(buffer, sizes: &sizes) }
+      }
+      return try result.get()
+    }
+  }
+
+  private static func parse(
+    _ buffer: UnsafeBufferPointer<UInt8>, sizes: inout [Int]
+  ) throws(Error) -> JSONValue {
     var p = JSONParser(buffer)
     p.skipWhitespace()
-    var value = try p.parseValue()
+    var value = try p.parseValue(sizes: &sizes)
     p.skipWhitespace()
     if p.i != p.end {
       JSONValue.discard(&value)
@@ -78,11 +101,18 @@ package struct JSONParser {
   /// `key`); the ones it is in are on `parents`. They move between the two
   /// (`take()`), so each stays uniquely referenced and adding to it doesn't
   /// copy it.
-  private mutating func parseValue() throws(Error) -> JSONValue {
+  ///
+  /// An object starts with room for as many keys as the last one closed
+  /// inside as many objects had (`sizes`): the rows of a table come one
+  /// after another, with the same columns. Growing each from nothing took a
+  /// few allocations. One that ends with much more room than its keys take
+  /// gives it up, since it may be kept for long, as a row in the replica.
+  private mutating func parseValue(sizes: inout [Int]) throws(Error) -> JSONValue {
     var parents: [Container] = []
     var array: [JSONValue]?
     var object: JSONObject?
     var key = ""
+    var openObjects = 0
     // After an error, frees what was parsed without recursion. After a
     // value, there's nothing left.
     defer {
@@ -124,7 +154,9 @@ package struct JSONParser {
           parents.append(.object(o, key: key))
         }
         if isObject {
-          object = JSONObject()
+          if sizes.count == openObjects { sizes.append(0) }
+          object = JSONObject(minimumCapacity: sizes[openObjects])
+          openObjects += 1
           key = try parseKey()
         } else {
           array = []
@@ -168,6 +200,10 @@ package struct JSONParser {
             throw error("Expected ',' or '}' after property value")
           }
           i += 1
+          openObjects -= 1
+          let count = object!.count
+          sizes[openObjects] = count
+          if object!.capacity - count >= Swift.max(2, count / 4) { object!.shrinkToFit() }
           value = .object(object.take()!)
         } else {
           return value
