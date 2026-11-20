@@ -568,6 +568,12 @@ enum Request {
 /// An open SQLite database and the thread that owns its connection.
 struct SqliteDatabase {
     requests: mpsc::Sender<Request>,
+    /// The writes the database's thread made, sent back to be dropped on
+    /// the client's thread, which allocated them. glibc frees memory
+    /// another thread allocated under that thread's lock, so the
+    /// database's thread freeing a poke's keys stalled the client's
+    /// allocations while it applied the next.
+    written: mpsc::Receiver<Vec<StorageOp>>,
     /// Set once a write failed: the writes after it are dropped.
     failed: Arc<Mutex<Option<StorageFailure>>>,
     path: PathBuf,
@@ -578,12 +584,14 @@ impl SqliteDatabase {
     fn start(path: PathBuf, connection: Connection, profile_id: String) -> SqliteDatabase {
         *lock_open_files().entry(path.clone()).or_default() += 1;
         let (requests, receiver) = mpsc::channel();
+        let (written_tx, written) = mpsc::channel();
         let failed = Arc::new(Mutex::new(None));
         let mut writer = Writer {
             db: Some(connection),
             path: path.clone(),
             failed: failed.clone(),
             retrying: Vec::new(),
+            written: written_tx,
             profile_id,
         };
         std::thread::spawn(move || {
@@ -595,10 +603,16 @@ impl SqliteDatabase {
         });
         SqliteDatabase {
             requests,
+            written,
             failed,
             path,
             closed: std::cell::Cell::new(false),
         }
+    }
+
+    /// Drops the writes the database's thread has made since last time.
+    fn drop_written(&self) {
+        while self.written.try_recv().is_ok() {}
     }
 
     fn failure(&self) -> Option<StorageFailure> {
@@ -645,6 +659,7 @@ impl StoredDatabase for SqliteDatabase {
     }
 
     fn write(&self, ops: &[StorageOp]) -> Result<(), StorageFailure> {
+        self.drop_written();
         if let Some(f) = self.failure() {
             return Err(f);
         }
@@ -657,12 +672,16 @@ impl StoredDatabase for SqliteDatabase {
     }
 
     fn flush(&self) -> Result<(), StorageFailure> {
-        self.ask(Request::Flush)
-            .unwrap_or_else(|| Err(Self::closed_failure()))
+        let r = self
+            .ask(Request::Flush)
+            .unwrap_or_else(|| Err(Self::closed_failure()));
+        self.drop_written();
+        r
     }
 
     fn close(&self) -> Result<(), StorageFailure> {
         let r = self.ask(Request::Close).unwrap_or(Ok(()));
+        self.drop_written();
         self.forget();
         r
     }
@@ -687,6 +706,8 @@ struct Writer {
     failed: Arc<Mutex<Option<StorageFailure>>>,
     /// The writes that found the database busy, written with the next.
     retrying: Vec<StorageOp>,
+    /// Where the writes made go, to be dropped on the client's thread.
+    written: mpsc::Sender<Vec<StorageOp>>,
     profile_id: String,
 }
 
@@ -764,7 +785,9 @@ impl Writer {
         let mut all = std::mem::take(&mut self.retrying);
         all.extend(ops);
         match transaction(db, &all) {
-            Ok(()) => {}
+            Ok(()) => {
+                let _ = self.written.send(all);
+            }
             Err(e) if is_busy(&e) => self.retrying = all,
             Err(e) => self.set_failed(failure(&e)),
         }
@@ -788,7 +811,10 @@ impl Writer {
         }
         let kept = std::mem::take(&mut self.retrying);
         match transaction(db, &kept) {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                let _ = self.written.send(kept);
+                Ok(())
+            }
             Err(e) => {
                 let f = failure(&e);
                 self.set_failed(f.clone());
