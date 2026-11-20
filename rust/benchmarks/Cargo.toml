@@ -8,7 +8,8 @@ license.workspace = true
 publish = false
 
 [dependencies]
-zero-client.workspace = true
+# SQLite compiled in, as the conformance runner has it.
+zero-client = { workspace = true, features = ["sqlite-bundled"] }
 
 [lints]
 workspace = true

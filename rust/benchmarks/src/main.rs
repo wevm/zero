@@ -1,7 +1,9 @@
 //! The client's benchmarks: ports of the JS benchmarks
 //! (`zero-client/src/client/zero.bench.ts`, `shared/src/hash.bench.ts`)
 //! under the same names, and of the Swift client's own (memory, hydration,
-//! pokes, first sync, and mutations), so the three clients compare.
+//! pokes, first sync, and mutations), so the three clients compare; and the
+//! Rust client's own: zbugs' issue list once synced, its launch on SQLite,
+//! and pokes and mutations on SQLite.
 //!
 //! ```sh
 //! cargo run --release -p zero-benchmarks -- [--time <seconds>] [--json <file>] [<filter>…]
@@ -10,11 +12,13 @@
 //! A filter is a substring of `group > benchmark`, such as `hash` or
 //! `pokes > put 100`.
 
+mod cold_start;
 mod first_sync;
 mod fixtures;
 mod harness;
+mod issue_list;
 
-use fixtures::{Client, sum, update_user_args, user_json, users};
+use fixtures::{Client, bench_schema, mutators, storage, sum, update_user_args, user_json, users};
 use harness::{Bench, check, resident_memory};
 use std::cell::{Cell, RefCell};
 use std::hint::black_box;
@@ -46,8 +50,12 @@ fn main() {
     hydration(&mut bench);
     pokes(&mut bench);
     first_sync(&mut bench);
+    issue_list::issue_list(&mut bench);
+    cold_start::cold_start(&mut bench);
     mutations(&mut bench);
     hash(&mut bench);
+
+    let _ = std::fs::remove_dir_all(fixtures::sqlite_directory());
 
     if let Some(path) = json {
         let text = zero_client::json::stringify(&bench.results());
@@ -186,26 +194,34 @@ fn b(view: &zero_client::client::MaterializedView, index: usize) -> Option<f64> 
 }
 
 /// Pokes from the server: parsing them, writing the replica, and updating
-/// a view of 1000 rows.
+/// a view of 1000 rows; on memory storage, then on SQLite, whose writes the
+/// store's thread makes.
 fn pokes(bench: &mut Bench) {
     bench.group("pokes", |bench| {
         let n = 1000;
-        let client = Client::new(n, true);
-        let view = client.materialize(&users(client.zero.schema()));
-        check(view.data().entries().len() == n, "the poke's rows");
-        let value = Cell::new(n);
-        for k in [1, 100, 1000] {
-            bench.run_with(
-                &format!("put {k} changed rows, {n}-row view"),
-                || {
-                    value.set(value.get() + 1);
-                    let rows = (0..k).map(|a| user_json(a, value.get())).collect();
-                    client.next_poke(&[rows], None)
-                },
-                |frames| client.receive(frames),
-            );
-            if value.get() > n {
-                check(b(&view, 0) == Some(value.get() as f64), "the poke applied");
+        for sqlite in [false, true] {
+            let on = if sqlite { ", SQLite" } else { "" };
+            let names = [1, 100, 1000].map(|k| format!("put {k} changed rows, {n}-row view{on}"));
+            if !names.iter().any(|name| bench.wants(name)) {
+                continue;
+            }
+            let client = Client::on(storage(sqlite), n, true, bench_schema(), mutators());
+            let view = client.materialize(&users(client.zero.schema()));
+            check(view.data().entries().len() == n, "the poke's rows");
+            let value = Cell::new(n);
+            for (k, name) in [1, 100, 1000].into_iter().zip(&names) {
+                bench.run_with(
+                    name,
+                    || {
+                        value.set(value.get() + 1);
+                        let rows = (0..k).map(|a| user_json(a, value.get())).collect();
+                        client.next_poke(&[rows], None)
+                    },
+                    |frames| client.receive(frames),
+                );
+                if value.get() > n {
+                    check(b(&view, 0) == Some(value.get() as f64), "the poke applied");
+                }
             }
         }
     });
@@ -265,6 +281,26 @@ fn first_sync(bench: &mut Bench) {
                 (c, frames)
             },
             |(c, frames)| c.receive(frames),
+        );
+        // The same with the view on SQLite storage.
+        bench.run_with(
+            &format!(
+                "issueListV2 view, zbugs poke of {total} rows in {} parts, SQLite",
+                parts.len()
+            ),
+            || {
+                let c = Client::on(storage(true), 0, true, schema.clone(), Vec::new());
+                let view = c.materialize(&first_sync::issue_list(&schema));
+                let frames = c.next_poke(&parts, None);
+                (c, view, frames)
+            },
+            |(c, view, frames)| {
+                c.receive(frames);
+                check(
+                    view.data().entries().len() == first_sync::PAGE_SIZE + 1,
+                    "a page of issues",
+                );
+            },
         );
     });
 }
@@ -354,6 +390,47 @@ fn mutations(bench: &mut Bench) {
                 ));
             });
             check_updated(&remote_view, before, "confirmed");
+        }
+
+        // An optimistic update and a round trip on SQLite storage, whose
+        // writes the store's thread makes.
+        let n = 1000;
+        let value = Cell::new(n);
+        let local = Client::on(storage(true), n, false, bench_schema(), mutators());
+        let local_view = local.materialize(&users(local.zero.schema()));
+        bench.run(&format!("optimistic update, {n}-row view, SQLite"), || {
+            value.set(value.get() + 1);
+            let args = update_user_args(value.get() % n, value.get());
+            let _ = local.zero.mutate("updateUser", Some(args));
+        });
+        if value.get() > n {
+            check(
+                b(&local_view, value.get() % n) == Some(value.get() as f64),
+                "updated",
+            );
+        }
+        let remote = Client::on(storage(true), n, true, bench_schema(), mutators());
+        let remote_view = remote.materialize(&users(remote.zero.schema()));
+        let last_mutation_id = Cell::new(0);
+        let before = value.get();
+        bench.run(&format!("round trip, {n}-row view, SQLite"), || {
+            value.set(value.get() + 1);
+            last_mutation_id.set(last_mutation_id.get() + 1);
+            let a = value.get() % n;
+            let _ = remote
+                .zero
+                .mutate("updateUser", Some(update_user_args(a, value.get())));
+            remote.scheduler.run_due_timers();
+            remote.receive(&remote.next_poke(
+                &[vec![user_json(a, value.get())]],
+                Some(last_mutation_id.get()),
+            ));
+        });
+        if value.get() > before {
+            check(
+                b(&remote_view, value.get() % n) == Some(value.get() as f64),
+                "confirmed",
+            );
         }
     });
 }

@@ -226,6 +226,12 @@ pub fn issue_list(schema: &Arc<Schema>) -> AnyQuery {
 /// contents: nanoid keys, titles, Markdown bodies, and millisecond
 /// timestamps.
 pub fn rows() -> Vec<String> {
+    rows_times(1)
+}
+
+/// The same with `scale` times the issues, comments, and issue labels:
+/// 8,097 rows at 4, as zbugs-swift's store held after syncing more.
+pub fn rows_times(scale: usize) -> Vec<String> {
     let mut random = SplitMix64(2064);
     let now = 1_760_000_000_000.0;
     let mut out = Vec::new();
@@ -248,7 +254,7 @@ pub fn rows() -> Vec<String> {
             ("id", s(&project_id)),
             ("name", s("Zero")),
             ("lowerCaseName", s("zero")),
-            ("issueCountEstimate", Value::from(ISSUES as f64)),
+            ("issueCountEstimate", Value::from((ISSUES * scale) as f64)),
             ("supportsSearch", Value::from(true)),
             ("markURL", Value::Null),
             ("logoURL", Value::Null),
@@ -303,7 +309,7 @@ pub fn rows() -> Vec<String> {
     }
 
     let mut issues: Vec<(String, f64)> = Vec::new();
-    for n in 0..ISSUES {
+    for n in 0..ISSUES * scale {
         let iid = random.nanoid();
         let created = now - random.below(400 * 86_400) as f64 * 1000.0;
         let modified = created + random.below(30 * 86_400) as f64 * 1000.0;
@@ -340,7 +346,7 @@ pub fn rows() -> Vec<String> {
         );
     }
 
-    for _ in 0..COMMENTS {
+    for _ in 0..COMMENTS * scale {
         let (issue, issue_created) = issues[random.below(issues.len())].clone();
         let id = random.nanoid();
         let created = issue_created + random.below(60 * 86_400) as f64 * 1000.0;
@@ -360,7 +366,7 @@ pub fn rows() -> Vec<String> {
 
     // Distinct (label, issue) pairs.
     let mut pairs = HashSet::new();
-    while pairs.len() < ISSUE_LABELS {
+    while pairs.len() < ISSUE_LABELS * scale {
         let issue = issues[random.below(issues.len())].0.clone();
         let label = labels[random.below(labels.len())].clone();
         if !pairs.insert(format!("{label}/{issue}")) {

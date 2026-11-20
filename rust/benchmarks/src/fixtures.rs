@@ -4,7 +4,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
-use zero_client::client::{LogLevel, MaterializedView, Mutator, Zero, ZeroOptions};
+use zero_client::client::{LogLevel, MaterializedView, Mutator, Zero, ZeroOptions, ZeroStorage};
 use zero_client::ivm::ViewEntry;
 use zero_client::json::{self, Object, Value};
 use zero_client::query::AnyQuery;
@@ -79,17 +79,37 @@ pub fn update_user_args(a: usize, value: usize) -> Value {
     Value::from(args)
 }
 
-/// A client on memory storage with `rows` users, on a manual clock;
-/// connected to a mock socket when `connected` is set. Dropping it deletes
-/// its store, which memory storage otherwise keeps for the thread's life.
+/// A client with `rows` users, on a manual clock; connected to a mock
+/// socket when `connected` is set. Dropping it deletes its store, which
+/// memory storage otherwise keeps for the thread's life.
 pub struct Client {
     pub zero: Zero,
     pub scheduler: Rc<ManualScheduler>,
     sockets: Rc<MockSocketFactory>,
     cookie: Cell<usize>,
+    keep: Cell<bool>,
 }
 
 static NEXT_KEY: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Memory storage, or else SQLite in a folder of the process's own, with a
+/// storage key of its own.
+pub fn storage(sqlite: bool) -> (ZeroStorage, String) {
+    let key = NEXT_KEY.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let storage = if sqlite {
+        ZeroStorage::Sqlite {
+            directory: Some(sqlite_directory()),
+        }
+    } else {
+        ZeroStorage::Memory
+    };
+    (storage, format!("bench-{key}"))
+}
+
+/// Where the SQLite benchmarks keep their stores, deleted at the end.
+pub fn sqlite_directory() -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("zero-bench-{}", std::process::id()))
+}
 
 impl Client {
     pub fn new(rows: usize, connected: bool) -> Self {
@@ -102,9 +122,19 @@ impl Client {
         schema: Arc<Schema>,
         mutators: Vec<Mutator<()>>,
     ) -> Self {
+        Self::on(storage(false), rows, connected, schema, mutators)
+    }
+
+    /// The same on `storage`, with its storage key.
+    pub fn on(
+        (storage, storage_key): (ZeroStorage, String),
+        rows: usize,
+        connected: bool,
+        schema: Arc<Schema>,
+        mutators: Vec<Mutator<()>>,
+    ) -> Self {
         let scheduler = ManualScheduler::new(1_700_000_000_000.0);
         let sockets = MockSocketFactory::new();
-        let key = NEXT_KEY.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let zero = Zero::new(
             schema,
             (),
@@ -112,7 +142,8 @@ impl Client {
             ZeroOptions {
                 cache_url: connected.then(|| "http://zero.bench".to_owned()),
                 user_id: Some("bench".into()),
-                storage_key: Some(format!("bench-{key}")),
+                storage_key: Some(storage_key),
+                storage,
                 log_level: LogLevel::Error,
                 log_sink: Some(Rc::new(RecordingLogSink::default())),
                 ..ZeroOptions::default()
@@ -126,6 +157,7 @@ impl Client {
             scheduler,
             sockets,
             cookie: Cell::new(0),
+            keep: Cell::new(false),
         };
         if connected {
             // The rows come from the server, so no mutation is pending.
@@ -198,9 +230,18 @@ impl Client {
     }
 }
 
+impl Client {
+    /// Keeps the client's store when it drops, for clients made on it later.
+    pub fn keep_store(&self) {
+        self.keep.set(true);
+    }
+}
+
 impl Drop for Client {
     fn drop(&mut self) {
-        let _ = self.zero.delete();
+        if !self.keep.get() {
+            let _ = self.zero.delete();
+        }
     }
 }
 
