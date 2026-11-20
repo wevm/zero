@@ -144,14 +144,7 @@ fn index_key(sort: &[OrderPart]) -> String {
 
 impl MemorySource {
     pub fn new(table: Table) -> Rc<Self> {
-        let primary_index_sort: Vec<OrderPart> = table
-            .primary_key
-            .iter()
-            .map(|k| OrderPart {
-                field: k.clone(),
-                direction: Direction::Asc,
-            })
-            .collect();
+        let primary_index_sort = Self::primary_key_order(&table);
         let primary_index_key = index_key(&primary_index_sort);
         let mut state = State::default();
         state.indexes.insert(
@@ -423,16 +416,46 @@ impl MemorySource {
         Box::new(merged.filter(move |n| rest.iter().all(|mc| mc.iter().any(|c| c.matches(&n.row)))))
     }
 
+    /// Whether nothing is connected and the source is empty, so that adds
+    /// can build its primary index in one pass.
+    fn can_bulk_load(&self) -> bool {
+        let state = self.state.borrow();
+        state.connections.is_empty()
+            && state.indexes.len() == 1
+            && state.indexes[&self.primary_index_key].data.is_empty()
+    }
+
+    /// `push_adds` of rows already in the order of the primary key with no
+    /// two equal, as `Zero::prepare` sorts a stored replica's.
+    pub(crate) fn push_sorted_adds(&self, rows: Vec<Row>) {
+        if !self.can_bulk_load() {
+            return self.push_adds(rows);
+        }
+        let mut state = self.state.borrow_mut();
+        let index = state
+            .indexes
+            .get_mut(&self.primary_index_key)
+            .expect("primary");
+        index.data = Tree::from_sorted(rows);
+    }
+
+    /// The order of the primary key, of objects, for sorting rows on
+    /// another thread for [`push_sorted_adds`](Self::push_sorted_adds).
+    pub(crate) fn primary_key_order(table: &Table) -> Vec<OrderPart> {
+        table
+            .primary_key
+            .iter()
+            .map(|k| OrderPart {
+                field: k.clone(),
+                direction: Direction::Asc,
+            })
+            .collect()
+    }
+
     /// Pushes an add for each of `rows`. When nothing is connected and the
     /// source is empty, builds the primary index in one pass instead.
     pub fn push_adds(&self, rows: Vec<Row>) {
-        let can_bulk_load = {
-            let state = self.state.borrow();
-            state.connections.is_empty()
-                && state.indexes.len() == 1
-                && state.indexes[&self.primary_index_key].data.is_empty()
-        };
-        if !can_bulk_load {
+        if !self.can_bulk_load() {
             for row in rows {
                 if has_failed() {
                     return;

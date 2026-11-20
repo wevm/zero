@@ -8,6 +8,7 @@
 //! `kvStore: 'mem'` for memory), and two clients of one group (two windows)
 //! share one open database.
 
+use super::ivm_branch::SortedRows;
 use super::replica_store::{KvMap, compare_cookies};
 pub(crate) use super::storage::{
     AggregateWrites, ClientGroupRecord, ClientIdPair, ClientRecord, StorageOp, StoredMutation,
@@ -29,6 +30,9 @@ pub(crate) struct GroupData {
     pub(crate) cookie: Value,
     pub(crate) last_mutation_ids: BTreeMap<String, f64>,
     pub(crate) mutations: Vec<StoredMutation>,
+    /// The rows of `entries` sorted for the query sources, when
+    /// `Zero::prepare` read the group.
+    pub(crate) sources: Option<SortedRows>,
 }
 
 impl From<StoredGroup> for GroupData {
@@ -38,6 +42,7 @@ impl From<StoredGroup> for GroupData {
             cookie: g.cookie,
             last_mutation_ids: g.last_mutation_ids,
             mutations: g.mutations,
+            sources: None,
         }
     }
 }
@@ -46,13 +51,14 @@ type OnDelete = Rc<dyn Fn(&str)>;
 type FailureListener = Rc<dyn Fn(&StorageFailure)>;
 
 /// A client's database opened and read by `Zero::prepare` on its own
-/// thread: the clients, and the group a client with its mutators joins.
+/// thread: the clients, and the group a client with its mutators joins,
+/// with its replica's rows sorted for the query sources.
 #[cfg(feature = "sqlite")]
 pub(crate) struct PreparedDatabase {
     name: String,
     sqlite: super::sqlite::PreparedSqlite,
     clients: StoredClients,
-    group: Option<(String, StoredGroup)>,
+    group: Option<(String, StoredGroup, SortedRows)>,
 }
 
 /// Without SQLite there is nothing to prepare.
@@ -83,7 +89,7 @@ pub(crate) struct ReplicaDatabase {
     /// The cookie of each client group's stored snapshot.
     snapshot_cookies: RefCell<HashMap<String, Value>>,
     /// The group `Zero::prepare` read, until a client joins it.
-    prepared_group: RefCell<Option<(String, StoredGroup)>>,
+    prepared_group: RefCell<Option<(String, GroupData)>>,
 }
 
 thread_local! {
@@ -246,11 +252,18 @@ impl ReplicaDatabase {
         directory: Option<std::path::PathBuf>,
         name: String,
         mutator_names: &[String],
+        schema: &crate::schema::Schema,
     ) -> Option<PreparedDatabase> {
         let mut sqlite = super::sqlite::PreparedSqlite::open(directory, &name).ok()?;
         let clients = sqlite.database().load().ok()?;
         let group = match matching_group(&clients.groups, mutator_names) {
-            Some(g) => Some((g.id.clone(), sqlite.database().load_group(&g.id).ok()?)),
+            // Here, rather than on the client's thread: the replica's rows
+            // sorted as the query sources keep them.
+            Some(g) => {
+                let group = sqlite.database().load_group(&g.id).ok()?;
+                let sorted = SortedRows::new(schema, group.entries.iter());
+                Some((g.id.clone(), group, sorted))
+            }
             None => None,
         };
         sqlite.mark_read();
@@ -281,7 +294,13 @@ impl ReplicaDatabase {
             Some(prepared.sqlite.into_parts()),
         );
         db.set_clients(prepared.clients);
-        *db.prepared_group.borrow_mut() = prepared.group;
+        *db.prepared_group.borrow_mut() = prepared.group.map(|(id, group, sorted)| {
+            let group = GroupData {
+                sources: Some(sorted),
+                ..group.into()
+            };
+            (id, group)
+        });
         let db = Rc::new(db);
         OPEN.with(|o| o.borrow_mut().insert(key, db.clone()));
         Some(db)
@@ -580,7 +599,7 @@ impl ReplicaDatabase {
             return Ok(GroupData::default());
         };
         if let Some((_, g)) = self.prepared_group.borrow_mut().take_if(|(g, _)| g == id) {
-            return Ok(g.into());
+            return Ok(g);
         }
         match store.load_group(id) {
             Ok(g) => Ok(g.into()),
