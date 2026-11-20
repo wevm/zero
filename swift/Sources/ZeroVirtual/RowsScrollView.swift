@@ -1059,17 +1059,31 @@
       rows.maxKeptRows = maxKeptRows
       rows.update(source())
     }
+
+    /// The list takes the size it's offered, and none where it's offered
+    /// none: what the platform view's fitting size gave. Said here, SwiftUI
+    /// doesn't ask Auto Layout for that, over every row's views, each time
+    /// the stack around the list lays out, as it does for each snapshot.
+    func size(_ proposal: ProposedViewSize) -> CGSize {
+      proposal.replacingUnspecifiedDimensions(by: .zero)
+    }
   }
 
   #if canImport(UIKit)
     extension RowsScrollViewRepresentable: UIViewRepresentable {
       func makeUIView(context: Context) -> RowsScrollView { make() }
       func updateUIView(_ view: RowsScrollView, context: Context) { update(view) }
+      func sizeThatFits(
+        _ proposal: ProposedViewSize, uiView: RowsScrollView, context: Context
+      ) -> CGSize? { size(proposal) }
     }
   #else
     extension RowsScrollViewRepresentable: NSViewRepresentable {
       func makeNSView(context: Context) -> RowsScrollView { make() }
       func updateNSView(_ view: RowsScrollView, context: Context) { update(view) }
+      func sizeThatFits(
+        _ proposal: ProposedViewSize, nsView: RowsScrollView, context: Context
+      ) -> CGSize? { size(proposal) }
     }
   #endif
 #endif
