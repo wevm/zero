@@ -12,6 +12,7 @@ package final class MemorySource: Source {
   }
 
   struct Index {
+    var sort: AST.Ordering
     var comparator: BoundComparator
     var data: BTreeSet<Row>
   }
@@ -40,9 +41,11 @@ package final class MemorySource: Source {
   let columns: [String: ColumnSchema]
   let primaryKey: [String]
   let primaryIndexSort: AST.Ordering
-  let primaryIndexKey: String
-  var indexes: [String: Index] = [:]
-  var indexOrder: [String] = []
+  /// In the order they were built, the primary index first. Found by their
+  /// sort in `indexPositions`: a fetch looks its index up, and every
+  /// change writes each one.
+  var indexes: [Index] = []
+  var indexPositions: [AST.Ordering: Int] = [:]
   var connections: [Connection] = []
   var overlay: Overlay?
   var pushEpoch = 0
@@ -67,10 +70,11 @@ package final class MemorySource: Source {
     primaryKey = table.primaryKey
     primaryIndexSort = table.primaryKey.map { AST.OrderPart($0, .asc) }
     let comparator = BoundComparator(primaryIndexSort, layout: layout)
-    primaryIndexKey = Self.indexKey(primaryIndexSort)
-    indexes[primaryIndexKey] = Index(
-      comparator: comparator, data: primaryIndexData ?? BTreeSet(comparator.compareRows))
-    indexOrder.append(primaryIndexKey)
+    indexes.append(
+      Index(
+        sort: primaryIndexSort, comparator: comparator,
+        data: primaryIndexData ?? BTreeSet(comparator.compareRows)))
+    indexPositions[primaryIndexSort] = 0
   }
 
   package var tableSchema: TableSchema { schema }
@@ -89,7 +93,7 @@ package final class MemorySource: Source {
       .array(sort.map { [.string($0.field), .string($0.direction.rawValue)] }))
   }
 
-  var primaryIndex: Index { indexes[primaryIndexKey]! }
+  var primaryIndex: Index { indexes[0] }
 
   package func connect(
     sort: AST.Ordering?, filters: AST.Condition?, splitEditKeys: Set<String>?
@@ -128,18 +132,18 @@ package final class MemorySource: Source {
   }
 
   func getOrCreateIndex(_ sort: AST.Ordering) -> Index {
-    let key = Self.indexKey(sort)
-    if let index = indexes[key] { return index }
+    if let i = indexPositions[sort] { return indexes[i] }
     let comparator = BoundComparator(sort, layout: layout)
     let rows = Array(primaryIndex.data.values()).sorted { comparator.compareRows($0, $1) < 0 }
-    let index = Index(comparator: comparator, data: BTreeSet(sorted: rows, comparator.compareRows))
-    indexes[key] = index
-    indexOrder.append(key)
+    let index = Index(
+      sort: sort, comparator: comparator, data: BTreeSet(sorted: rows, comparator.compareRows))
+    indexPositions[sort] = indexes.count
+    indexes.append(index)
     return index
   }
 
   /// For tests: the keys of the indexes built so far.
-  package var indexKeys: [String] { indexOrder }
+  package var indexKeys: [String] { indexes.map { Self.indexKey($0.sort) } }
 
   func fetch(_ req: FetchRequest, _ conn: Connection) -> NodeStream {
     NodeStream { [self] in self.fetchIterator(req, conn) }
@@ -297,7 +301,7 @@ package final class MemorySource: Source {
     if !isAscending(rows, compare) {
       sorted.sort { compare($0, $1) < 0 }
     }
-    indexes[primaryIndexKey]!.data = BTreeSet(sorted: sorted, compare)
+    indexes[0].data = BTreeSet(sorted: sorted, compare)
   }
 
   package func push(_ change: SourceChange) {
@@ -377,17 +381,17 @@ package final class MemorySource: Source {
   }
 
   private func writeChange(_ change: SourceChange) {
-    for key in indexOrder {
+    for i in indexes.indices {
       switch change {
       case .add(let row):
-        indexes[key]!.data.add(row)
+        indexes[i].data.add(row)
       case .remove(let row):
-        let removed = indexes[key]!.data.delete(row)
+        let removed = indexes[i].data.delete(row)
         precondition(removed, "MemorySource: remove must succeed")
       case .edit(let row, let oldRow):
-        let removed = indexes[key]!.data.delete(oldRow)
+        let removed = indexes[i].data.delete(oldRow)
         precondition(removed, "MemorySource: edit remove must succeed")
-        indexes[key]!.data.add(row)
+        indexes[i].data.add(row)
       }
     }
   }
