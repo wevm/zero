@@ -1,5 +1,16 @@
 # zero-rust
 
+## 0.5.1
+
+### Patch Changes
+
+- 8d84a26: Opening a query with joins takes less time. zbugs' issue list at a limit of 1,000, on a replica of 8,000 rows, opens and closes in 6.3 ms instead of 6.6 ms on a Mac, and 21.3 ms instead of 24.2 ms on Linux. A join's index of its parent rows keeps no set for a join key with one parent, and none for a join on the parent's primary key.
+- cbea3dc: The README suggests jemalloc as a Linux app's global allocator. glibc's `malloc` is slow at the client's many small allocations: with jemalloc, `Zero::new` on 8,097 stored rows takes 25 ms instead of 34 ms, and a poke of 1,000 rows on SQLite 4.9 ms instead of 6.1 ms, with the same memory. mimalloc is about as fast but holds a quarter more memory for 100,000 rows.
+- d29ff10: `Zero::from_prepared` and `Zero::new` take less of the app's thread to load a stored replica. On a Mac, `from_prepared` takes 3.5 ms instead of 5.4 ms for a replica of 8,000 rows, and 2.0 ms instead of 2.6 ms for 2,000; `Zero::new` takes 22.8 ms instead of 23.7 ms for 8,000. On Linux, `from_prepared` takes 9.9 ms instead of 13.1 ms for 8,000 rows. The replica's map is built a level at a time from the stored rows, which come in key order, and the query sources load straight from it instead of from an add made for every row.
+- 7088c8b: Applying pokes takes less time. A first sync of 2,000 rows takes 3.2 ms instead of 3.6 ms on a Mac, and 6.6 ms instead of 7.0 ms with zbugs' issue list; on Linux, 7.8 ms instead of 8.8 ms, and 14.9 ms instead of 16.0 ms. A poke of 1,000 changed rows takes 2.33 ms instead of 2.45 ms on a Mac. A patch's operations are no longer copied to keep the last of each key, a one-column primary key is written straight into its row's key, and a source's index shares its sort order instead of copying it on every lookup.
+- e79729e: `Zero::from_prepared` takes less of the app's thread. On a Mac, it takes 2.1 ms instead of 3.8 ms for a replica of 8,000 rows, and 1.6 ms instead of 2.2 ms for 2,000; on Linux, 6.2 ms instead of 9.6 ms for 8,000. `Zero::prepare` now also sorts each table's rows for the query sources on its own thread, so the app's thread only puts them into the sources and hydrates the first views.
+- f3b25e1: On Linux, a client on SQLite storage applies pokes and mutations faster. A first sync of 2,000 rows with zbugs' issue list takes 17.5 ms of the app's thread instead of 26.4 ms, a poke of 1,000 changed rows 6.1 ms instead of 8.2 ms, and a mutation's round trip 51 µs instead of 107 µs. The store's thread freed the writes it was handed, which glibc does under the lock of the thread that allocated them, so the client's thread stalled on its own allocations; the writes now go back to be dropped on the client's thread. macOS didn't stall this way, and doesn't change.
+
 ## 0.5.0
 
 ### Minor Changes

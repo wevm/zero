@@ -1,5 +1,15 @@
 # zero-swift
 
+## 0.10.1
+
+### Patch Changes
+
+- 85c3325: Big pokes apply faster. A poke's rows are no longer sorted before they go into the replica, where their order doesn't matter, and a poke that changes a large share of the replica, such as the first sync, is diffed in one walk of the replica instead of sorting its keys and looking each one up. On a Mac, zbugs' first sync of 2,058 rows with the issue list open takes 11.7 ms instead of 13.8 ms, 5.7 ms instead of 8.0 ms with no view, and a poke of 1,000 rows into a 1,000-row view 3.3 ms instead of 3.8 ms.
+- eecc8aa: The replica takes a fifth less memory: the rows it keeps as JSON objects no longer keep room for up to twice their columns. Parsed objects start as big as the last one parsed like them was and give up much spare room when they close, and rows turned into JSON objects start at their size. On a Mac, 100,000 rows of 10 columns with a view of them take 129 MB instead of 161 MB. Opening a stored replica and big pokes take 2% less time.
+- 90241b6: A `LiveQuery` of many rows (and `@ZeroQuery`) updates faster: the rows it reads again copy the unchanged rows around them in runs instead of one at a time. On a Mac, an optimistic update with a live query of 1,000 rows takes 31 µs instead of 51 µs.
+- 18b4bba: Queries fetch and push their rows faster: a query source finds the index a fetch reads, and writes each index on a change, without writing the index's sort out as JSON to look it up. On a Mac, an optimistic update of an issue in zbugs' issue list takes 12% less time, and its first sync 6% less.
+- 93d8c4a: `VirtualList` scrolls with less work on the Mac's main thread: it tells SwiftUI its size (what it's offered, as before) instead of SwiftUI asking Auto Layout for it, over every row's views, each time the stack around the list laid out, which it did for each snapshot. In the TestHost's issue list on a Mac, the main thread's work per frame while scrolling falls by 15–30%. The list's size is the same in every layout.
+
 ## 0.10.0
 
 ### Minor Changes
