@@ -1,4 +1,6 @@
+import ObjectiveC
 import Observation
+import QuartzCore
 import SwiftUI
 
 #if os(iOS)
@@ -31,6 +33,16 @@ import SwiftUI
 ///
 /// Every frame also checks that the rows move together. The summary is the
 /// `probe` element's value, for the UI tests.
+///
+/// From the first phase after `open`, the summary also times the main
+/// thread: `busyms` is the time it spent busy (from the run loop's waking to
+/// its next wait) per display frame, and `stalls` how many times it was busy
+/// longer than a 120 Hz frame and a 60 Hz frame (8.3 and 16.7 ms), with the
+/// time those took (`stallms`). With `-probe-layouts 1`, `layouts` is how
+/// many times SwiftUI's hosting views (the rows', the list's) laid out, per
+/// frame the list moved. Counting them takes time itself (on macOS, about
+/// 1.5 ms per frame in the `blanking` script), so compare `busyms` only
+/// between runs with the same flags.
 @MainActor @Observable
 final class FrameProbe {
   static let shared = FrameProbe()
@@ -90,6 +102,21 @@ final class FrameProbe {
   @ObservationIgnored private var flings: [String] = []
   @ObservationIgnored private var done = false
   @ObservationIgnored private var ticker: AnyObject?
+  /// The main thread's time, from the first phase after `open` until the
+  /// probe is done: when the run loop last woke, and in all, in ms.
+  @ObservationIgnored private var busySince: Double?
+  @ObservationIgnored private var busy = 0.0
+  @ObservationIgnored private var stalls120 = 0
+  @ObservationIgnored private var stalls60 = 0
+  @ObservationIgnored private var stalled = 0.0
+  /// Frames, and moving frames, from the first phase after `open`.
+  @ObservationIgnored private var timedFrames = 0
+  @ObservationIgnored private var timedMoving = 0
+  @ObservationIgnored private var layoutsAtStart: Int?
+  static let countsLayouts = UserDefaults.standard.bool(forKey: "probe-layouts")
+  /// SwiftUI's hosting views' layouts, with `-probe-layouts 1`.
+  nonisolated(unsafe) private static var layouts = 0
+  private var timing: Bool { phase != "start" && phase != "open" && !done }
 
   struct Sample {
     var t: Double
@@ -151,7 +178,15 @@ final class FrameProbe {
       finishJump()
     }
     log("PHASE \(name)")
+    let wasTiming = timing
     phase = name
+    if timing, !wasTiming {
+      // Classes made since the start count too. The pass itself is a
+      // stall, and isn't timed.
+      if Self.countsLayouts, let scrollView { Self.countLayouts(in: scrollView) }
+      busySince = nil
+      layoutsAtStart = Self.layouts
+    }
     if !wrongByPhase.contains(where: { $0.0 == name }) { wrongByPhase.append((name, 0)) }
     publish()
   }
@@ -254,6 +289,14 @@ final class FrameProbe {
   // MARK: Frames
 
   private func start(_ view: PlatformView) {
+    let observer = CFRunLoopObserverCreateWithHandler(
+      nil, CFRunLoopActivity.afterWaiting.rawValue | CFRunLoopActivity.beforeWaiting.rawValue,
+      true, 0
+    ) { [weak self] _, activity in
+      MainActor.assumeIsolated { self?.runLoop(activity) }
+    }
+    CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
+    if Self.countsLayouts { Self.countLayouts(in: view) }
     #if os(iOS)
       let link = CADisplayLink(target: Tick(self), selector: #selector(Tick.tick))
       link.preferredFrameRateRange = CAFrameRateRange(minimum: 80, maximum: 120, preferred: 120)
@@ -271,10 +314,12 @@ final class FrameProbe {
     if scrollView.window == nil { return }
     let sample = sample(t, scrollView)
     frames += 1
+    if timing { timedFrames += 1 }
     // A frame interval over 1.5 of the display's: frames dropped while the
     // list moves.
     if let previous, drive != nil || sample.decelerating {
       moving += 1
+      if timing { timedMoving += 1 }
       if t - previous.t > 1.5 * Self.frameInterval { dropped += 1 }
     }
     if let previous { check(previous, sample) }
@@ -284,6 +329,68 @@ final class FrameProbe {
     let dt = min(0.25, previous.map { t - $0.t } ?? 1.0 / 120)
     previous = sample
     step(dt, scrollView)
+  }
+
+  /// The main run loop woke, or is about to wait: a busy span ends.
+  private func runLoop(_ activity: CFRunLoopActivity) {
+    let now = CACurrentMediaTime()
+    if activity == .afterWaiting {
+      busySince = now
+      return
+    }
+    guard let since = busySince, timing else { return }
+    busySince = nil
+    let ms = (now - since) * 1000
+    busy += ms
+    if ms > 1000 / 120 {
+      stalls120 += 1
+      stalled += ms
+    }
+    if ms > 1000 / 60 { stalls60 += 1 }
+  }
+
+  nonisolated(unsafe) private static var counted: Set<OpaquePointer> = []
+
+  /// Counts each layout of the classes named like SwiftUI's hosting views
+  /// (and their superclasses so named) of the views in `view`'s window,
+  /// then lays out as before.
+  private static func countLayouts(in view: PlatformView) {
+    #if os(iOS)
+      let selector = #selector(UIView.layoutSubviews)
+      guard let root: UIView = view.window else { return }
+    #else
+      let selector = #selector(NSView.layout)
+      guard let root = view.window?.contentView?.superview ?? view.window?.contentView else {
+        return
+      }
+    #endif
+    var classes: [ObjectIdentifier: AnyClass] = [:]
+    var pending = [root]
+    while let v = pending.popLast() {
+      var cls: AnyClass? = object_getClass(v)
+      while let c = cls, NSStringFromClass(c).contains("HostingView") {
+        classes[ObjectIdentifier(c)] = c
+        cls = class_getSuperclass(c)
+      }
+      pending += v.subviews
+    }
+    typealias Layout = @convention(c) (AnyObject, Selector) -> Void
+    for cls in classes.values {
+      var n: UInt32 = 0
+      guard let methods = class_copyMethodList(cls, &n) else { continue }
+      defer { free(methods) }
+      for j in 0..<Int(n) {
+        let method = methods[j]
+        guard method_getName(method) == selector, !counted.contains(method) else { continue }
+        let layout = unsafeBitCast(method_getImplementation(method), to: Layout.self)
+        let block: @convention(block) (AnyObject) -> Void = { view in
+          layouts += 1
+          layout(view, selector)
+        }
+        method_setImplementation(method, imp_implementationWithBlock(block))
+        counted.insert(method)
+      }
+    }
   }
 
   /// Blank space on screen: the part of the viewport within the content
@@ -610,8 +717,16 @@ final class FrameProbe {
     let phases = wrongByPhase.map { "\($0.0):\($0.1)" }.joined(separator: ",")
     let blanks = blankByPhase.map { "\($0.phase):\($0.frames)/\(fmt($0.points))pt" }
       .joined(separator: ",")
+    let busyms = String(format: "%.2f", busy / Double(max(1, timedFrames)))
+    let layouts =
+      Self.countsLayouts
+      ? " layouts="
+        + String(
+          format: "%.2f",
+          Double(Self.layouts - (layoutsAtStart ?? Self.layouts)) / Double(max(1, timedMoving)))
+      : ""
     summary =
-      "wrong=\(wrong) frames=\(frames) moving=\(moving) dropped=\(dropped) phases=[\(phases)] flings=[\(flings.suffix(8).joined(separator: ","))] blank=\(blankFrames) blanks=[\(blanks)] last=[\(lastWrong.joined(separator: "; "))]\(done ? " done" : "")"
+      "wrong=\(wrong) frames=\(frames) moving=\(moving) dropped=\(dropped) phases=[\(phases)] flings=[\(flings.suffix(8).joined(separator: ","))] blank=\(blankFrames) blanks=[\(blanks)] busyms=\(busyms) stalls=\(stalls120)/\(stalls60) stallms=\(Int(stalled))\(layouts) last=[\(lastWrong.joined(separator: "; "))]\(done ? " done" : "")"
   }
 
   private func log(_ s: String) {
