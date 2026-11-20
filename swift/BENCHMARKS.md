@@ -139,6 +139,16 @@ first page of `issueListV2` (or no view, for the cost of the poke itself).
 Each sample is timed from the poke's frames arriving to the view being
 flushed; the output also gives the fastest sample.
 
+`issue list` changes that first sync's rows: pokes and optimistic updates
+of one issue in the page or moved to its top, one label of an issue in the
+page, and 50 issues at once. They go through the list's joins, its
+`whereExists`, and its `limit`.
+
+`sqlite` runs the client on SQLite storage, as apps do. Its writes go to a
+background queue, so the benchmarks "and its write" also wait for them;
+`open` times `Zero.init` on the stored first sync, and the issue list's
+first page.
+
 JS views hand out their rows; Swift apps read them as structs, which costs
 about three times the materialization. A live query reads only the rows
 that changed after the first read.

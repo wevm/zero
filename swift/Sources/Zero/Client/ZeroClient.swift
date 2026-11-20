@@ -415,7 +415,7 @@ public final class Zero<Context: Sendable> {
   }
 
   /// Waits for the store's queued writes.
-  func flushStorage() {
+  package func flushStorage() {
     engine.database.flush()
   }
 

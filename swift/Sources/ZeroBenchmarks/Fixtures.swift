@@ -95,18 +95,20 @@ enum Mutators {
 @MainActor
 final class Client {
   let zero: Zero<Void>
+  let options: ZeroOptions
   let scheduler = ManualScheduler(now: 1_700_000_000_000)
   private let sockets = MockSocketFactory()
   private var cookie = 0
 
   init(
     rows: Int, connected: Bool = false, schema: ZeroSchema = .bench,
-    mutators: [any Mutator<Void>] = Mutators.all
+    mutators: [any Mutator<Void>] = Mutators.all, storage: ZeroStorage = .memory
   ) throws {
     var options = ZeroOptions(
       cacheURL: connected ? "http://zero.bench" : nil, userID: "bench",
-      storageKey: UUID().uuidString, storage: .memory)
+      storageKey: UUID().uuidString, storage: storage)
     options.logLevel = .error
+    self.options = options
     zero = try Zero(
       schema: schema, mutators: mutators, options: options, scheduler: scheduler,
       socketFactory: connected ? sockets : nil)

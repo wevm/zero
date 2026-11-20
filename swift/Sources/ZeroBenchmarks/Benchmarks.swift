@@ -4,7 +4,8 @@ import Zero
 /// The client's benchmarks: ports of the JS benchmarks
 /// (`zero-client/src/client/zero.bench.ts`, `shared/src/btree-set.bench.ts`,
 /// `shared/src/hash.bench.ts`) under the same names, and the Swift client's
-/// own (memory, hydration, pokes, first sync, and mutations).
+/// own (memory, hydration, pokes, first sync, the issue list, mutations, and
+/// SQLite).
 ///
 ///     swift run -c release ZeroBenchmarks [--time <seconds>] [--json <file>] [<filter>…]
 ///
@@ -33,7 +34,9 @@ enum Benchmarks {
     try hydration(bench)
     try pokes(bench)
     try firstSync(bench)
+    try issueList(bench)
     try mutations(bench)
+    try sqlite(bench)
     btree(bench)
     hash(bench)
 
