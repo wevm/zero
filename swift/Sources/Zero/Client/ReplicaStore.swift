@@ -63,6 +63,9 @@ extension KVDiff {
   /// The diff from `old` to `new` over `keys`, which must include every key
   /// whose value differs. Ordered by key, as a B-tree diff is.
   static func between(_ old: KVMap, _ new: KVMap, keys: Set<JSKey>) -> KVDiff {
+    // Sorting the keys and looking each up in both maps costs about as much
+    // per key as a step of the walk of both maps does per 32 entries.
+    if keys.count * 32 >= old.count + new.count { return between(old, new) }
     var diff: KVDiff = []
     for key in keys.map(\.string).sorted(by: StringCompare.utf8Less) {
       switch (old.get(key), new.get(key)) {
@@ -279,8 +282,12 @@ final class ReplicaStore {
   }
 
   /// `optimizePatch`: drops what the last `clear` and later puts and dels of
-  /// the same key make irrelevant, and sorts by key. A patch with an
-  /// `update` is applied as sent, from its last `clear`.
+  /// the same key make irrelevant. A patch with an `update` is applied as
+  /// sent, from its last `clear`.
+  ///
+  /// JS also sorts the ops by key, for its B-tree's `put`s. That leaves one
+  /// op per key, so their order doesn't change the map, and the diff that
+  /// follows is in key order whatever it is.
   static func optimize(_ patch: [KVPatchOp]) -> [KVPatchOp] {
     guard !patch.isEmpty else { return [] }
     var start = 0
@@ -308,14 +315,12 @@ final class ReplicaStore {
         break
       }
     }
-    var rest: [KVPatchOp] = []
     for k in order {
       let op = ops[k]!
       if clearIndex != -1, case .del = op { continue }
-      rest.append(op)
+      result.append(op)
     }
-    rest.sort { StringCompare.utf8Less($0.key!, $1.key!) }
-    return result + rest
+    return result
   }
 }
 
