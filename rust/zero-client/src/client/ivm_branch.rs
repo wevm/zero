@@ -3,7 +3,7 @@
 
 use super::replica_store::{KvDiff, KvDiffOp, KvMap};
 use crate::builder::OptimisticAggregate;
-use crate::ivm::{MemorySource, Row, Source, SourceChange, has_failed};
+use crate::ivm::{MemorySource, Row, Source, SourceChange, comparator, has_failed};
 use crate::json::{Object, Value};
 use crate::keys::{
     AGGREGATE_TABLE_PREFIX, AGGREGATES_PREFIX, ENTITIES_PREFIX, ROW_VERSION_COLUMN,
@@ -39,6 +39,63 @@ impl Layouts {
                 layouts.insert(table.to_owned(), row.clone());
             }
         }
+    }
+}
+
+/// The rows of a replica's tables as [`IvmBranch::load`] loads them, each
+/// table's in the order of its primary key: sorted on `Zero::prepare`'s
+/// thread, so that the client's thread only makes their sources' trees.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SortedRows(Vec<(String, Run)>);
+
+/// A run of one source's keys in a [`SortedRows`].
+#[derive(Clone, Debug)]
+enum Run {
+    /// A table's rows, sorted.
+    Sorted(Vec<Object>),
+    /// The keys of a source that isn't a table of the schema, for `load`.
+    Keys(Vec<String>),
+}
+
+impl SortedRows {
+    /// The rows of the tables of `schema` among `entries`, a replica's in
+    /// key order, under `e/`, by table; equal rows of a table keep the last,
+    /// as `load` does. A source that isn't a table of `schema` is left to
+    /// `load`, by its keys.
+    pub(crate) fn new<'a>(
+        schema: &Schema,
+        entries: impl Iterator<Item = (&'a String, &'a Value)>,
+    ) -> Self {
+        let mut tables = Vec::new();
+        let object = |v: &Value| v.as_object().cloned().unwrap_or_default();
+        let mut entries = entries
+            .skip_while(|(k, _)| !k.starts_with(ENTITIES_PREFIX))
+            .take_while(|(k, _)| k.starts_with(ENTITIES_PREFIX))
+            .peekable();
+        while let Some((key, v)) = entries.next() {
+            // A run of one source's keys, as `apply` pushes them together.
+            let name = source_name(key);
+            let prefix = format!("{ENTITIES_PREFIX}{name}/");
+            let run = std::iter::once((key, v)).chain(std::iter::from_fn(|| {
+                entries.next_if(|(k, _)| k.starts_with(&prefix))
+            }));
+            let Some(table) = schema.tables.get(&name) else {
+                tables.push((name, Run::Keys(run.map(|(k, _)| k.clone()).collect())));
+                continue;
+            };
+            let mut rows: Vec<Object> = run.map(|(_, v)| object(v)).collect();
+            let compare = comparator::<Object>(&MemorySource::primary_key_order(table), false);
+            rows.sort_by(&compare);
+            let mut deduped: Vec<Object> = Vec::with_capacity(rows.len());
+            for row in rows {
+                match deduped.last_mut() {
+                    Some(last) if compare(last, &row) == std::cmp::Ordering::Equal => *last = row,
+                    _ => deduped.push(row),
+                }
+            }
+            tables.push((name, Run::Sorted(deduped)));
+        }
+        SortedRows(tables)
     }
 }
 
@@ -221,7 +278,32 @@ impl IvmBranch {
     /// Loads the rows of `map` into empty sources: `apply` of the diff
     /// that adds each of its entries, without making that diff.
     pub(crate) fn load(&self, map: &KvMap) {
-        self.apply_ops(map.iter().map(|(k, v)| Op::Add(k, v)), &HashMap::new());
+        self.load_sorted(map, SortedRows::new(&self.schema, map.iter()));
+    }
+
+    /// [`load`](Self::load) of `map` with its tables' rows sorted already,
+    /// as `Zero::prepare` sorts them on its own thread: `sorted` is
+    /// `SortedRows::new` of `map`'s entries.
+    pub(crate) fn load_sorted(&self, map: &KvMap, sorted: SortedRows) {
+        // The synced aggregates' rows, which come first in key order.
+        let aggregates = map.scan(AGGREGATES_PREFIX).map(|(k, v)| Op::Add(k, v));
+        self.apply_ops(aggregates, &HashMap::new());
+        for (name, rows) in sorted.0 {
+            if has_failed() {
+                return;
+            }
+            match rows {
+                Run::Sorted(rows) => {
+                    if let Some(source) = self.source(&name) {
+                        source.push_sorted_adds(rows.into_iter().map(Rc::new).collect());
+                    }
+                }
+                Run::Keys(keys) => {
+                    let ops = keys.iter().filter_map(|k| Some(Op::Add(k, map.get(k)?)));
+                    self.apply_ops(ops, &HashMap::new());
+                }
+            }
+        }
     }
 
     fn apply_ops<'a>(&self, ops: impl Iterator<Item = Op<'a>>, written: &HashMap<String, Row>) {
@@ -351,5 +433,79 @@ fn value_type(v: &Value) -> ValueType {
         Value::Bool(_) => ValueType::Boolean,
         Value::Null => ValueType::Null,
         Value::Array(_) | Value::Object(_) => ValueType::Json,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client::replica_store::adds;
+    use crate::json;
+
+    /// `load`, which sorts each table's rows first, as `Zero::prepare` does
+    /// on its thread, loads the sources `apply` of the adds of every entry
+    /// does: each table's rows in key order, a table the schema doesn't
+    /// have left out, and the synced aggregates' rows.
+    #[test]
+    fn load_loads_what_applying_adds_loads() {
+        let schema = json::parse(
+            r#"{"tables": {
+                "issue": {"name": "issue", "primaryKey": ["n"],
+                    "columns": {"id": {"type": "string"}, "n": {"type": "number"}}},
+                "issueLabel": {"name": "issueLabel", "primaryKey": ["labelID", "issueID"],
+                    "columns": {"issueID": {"type": "string"}, "labelID": {"type": "string"}}}}}"#,
+        )
+        .unwrap();
+        let schema = Arc::new(Schema::from_json(&schema).unwrap());
+        let mut map = KvMap::default();
+        let row = |text: &str| json::parse(text).unwrap();
+        // Keys whose order isn't the primary key's: "10" before "9".
+        for i in [3, 10, 9, 1] {
+            map.set(
+                format!("e/issue/{i}"),
+                row(&format!(r#"{{"id": "i{i}", "n": {i}}}"#)),
+            );
+        }
+        for (label, issue) in [("l2", "i1"), ("l1", "i3"), ("l1", "i1")] {
+            map.set(
+                format!("e/issueLabel/{label}{issue}"),
+                row(&format!(
+                    r#"{{"issueID": "{issue}", "labelID": "{label}"}}"#
+                )),
+            );
+        }
+        map.set("e/gone/x", row(r#"{"id": "x"}"#));
+        map.set(
+            "a/q1/k",
+            row(r#"{"_0_key": "k", "_0_value": 2, "_0_count": 2}"#),
+        );
+        map.set("m/c/1", row("{}"));
+
+        let applied = IvmBranch::new(schema.clone());
+        applied.apply(&adds(map.iter()), &HashMap::new());
+        let loaded = IvmBranch::new(schema.clone());
+        loaded.load(&map);
+        let names = |b: &IvmBranch| {
+            let mut names: Vec<String> = b.sources.borrow().keys().cloned().collect();
+            names.sort();
+            names
+        };
+        assert_eq!(names(&loaded), names(&applied));
+        assert_eq!(
+            names(&loaded),
+            ["aggregate:q1", "gone", "issue", "issueLabel"]
+        );
+        for name in names(&loaded) {
+            let rows = |b: &IvmBranch| b.source(&name).map(|s| (*s.data()).clone());
+            assert_eq!(rows(&loaded), rows(&applied), "{name}");
+        }
+        let ids: Vec<String> = loaded
+            .source("issue")
+            .unwrap()
+            .data()
+            .iter()
+            .map(|r| r.get("id").unwrap().as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(ids, ["i1", "i3", "i9", "i10"]);
     }
 }
