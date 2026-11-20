@@ -72,22 +72,33 @@ private final class RowCache<Row: ZeroRow> {
   /// The rows of `value`, reusing the rows read from equal entries. Most
   /// updates change a few rows in place, or insert or remove one, so the
   /// entries are matched in order, skipping at most one.
+  ///
+  /// The rows reused go to the result a run at a time: `Row` is the app's
+  /// type, which this module can't specialize for, so each `append` of one
+  /// costs a generic call.
   func read(_ value: ViewValue) throws(ZeroValueError) -> [Row] {
     let new = value.entries
     var out: [Row] = []
     out.reserveCapacity(new.count)
+    // The old rows of `run` are next in `out`.
+    var run = 0..<0
     var j = 0
-    for entry in new {
-      if j < entries.count, entries[j] == entry {
-        out.append(rows[j])
+    for i in new.indices {
+      if j < entries.count, entries[j] == new[i] {
         j += 1
-      } else if j + 1 < entries.count, entries[j + 1] == entry {
-        out.append(rows[j + 1])
-        j += 2
+        run = run.lowerBound..<j
       } else {
-        out.append(try Row(entry: entry))
+        out.append(contentsOf: rows[run])
+        if j + 1 < entries.count, entries[j + 1] == new[i] {
+          run = j + 1..<j + 2
+          j += 2
+        } else {
+          out.append(try Row(entry: new[i]))
+          run = j..<j
+        }
       }
     }
+    out.append(contentsOf: rows[run])
     entries = new
     rows = out
     return out
