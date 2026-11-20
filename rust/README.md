@@ -160,6 +160,29 @@ excluded from backups; `%LOCALAPPDATA%\<app>\Zero` on Windows; and
 where `<app>` is the executable's name. On iOS and Apple's other platforms
 it stays `~/.local/share/zero`, in the app's container.
 
+## On Linux, use jemalloc
+
+The replica and its views make many small allocations, which glibc's
+`malloc` is slow at. A Linux app runs the client faster with
+[jemalloc](https://crates.io/crates/tikv-jemallocator) as its global
+allocator: in zero-rust's benchmarks, `Zero::new` on 8,097 stored rows
+takes about a quarter less time, and a poke of 1,000 rows on SQLite a fifth
+less, with the same memory.
+[mimalloc](https://crates.io/crates/mimalloc) is about as fast, but holds a
+quarter more memory for 100,000 rows. zero-client leaves the allocator to
+the app.
+
+```toml
+[target.'cfg(target_os = "linux")'.dependencies]
+tikv-jemallocator = "0.7"
+```
+
+```rust
+#[cfg(target_os = "linux")]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+```
+
 ## Differences from JS
 
 - **One thread.** `Zero` is neither `Send` nor `Sync`; it runs on your event
