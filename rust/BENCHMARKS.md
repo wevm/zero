@@ -84,7 +84,7 @@ rows; JS's is 1.6 times as much at 100,000.
 As `hash.bench.ts` notes, vitest keeps imported functions from being
 inlined, so its JS hash numbers are pessimistic; bundled, they are a few
 times faster. The memory figures are the change in resident memory
-(`VmRSS`).
+(`VmRSS` on Linux, `ps`'s RSS elsewhere, as on macOS).
 
 Rust and Swift only:
 

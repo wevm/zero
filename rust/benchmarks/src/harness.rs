@@ -197,10 +197,22 @@ pub fn check(condition: bool, message: &str) {
 }
 
 /// The process's resident memory in bytes, where the platform reports it
-/// without a dependency (`VmRSS` on Linux).
+/// without a dependency: `VmRSS` on Linux, else what `ps` reports, as on
+/// macOS.
 pub fn resident_memory() -> Option<usize> {
-    let status = std::fs::read_to_string("/proc/self/status").ok()?;
-    let line = status.lines().find(|l| l.starts_with("VmRSS:"))?;
-    let kb: usize = line.split_whitespace().nth(1)?.parse().ok()?;
+    let kb: usize = match std::fs::read_to_string("/proc/self/status") {
+        Ok(status) => {
+            let line = status.lines().find(|l| l.starts_with("VmRSS:"))?;
+            line.split_whitespace().nth(1)?.parse().ok()?
+        }
+        Err(_) => {
+            let pid = std::process::id().to_string();
+            let ps = std::process::Command::new("ps")
+                .args(["-o", "rss=", "-p", &pid])
+                .output()
+                .ok()?;
+            String::from_utf8(ps.stdout).ok()?.trim().parse().ok()?
+        }
+    };
     Some(kb * 1024)
 }
