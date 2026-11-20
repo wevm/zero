@@ -148,11 +148,7 @@ pub(crate) struct KvMap {
 
 impl From<BTreeMap<String, Value>> for KvMap {
     fn from(map: BTreeMap<String, Value>) -> Self {
-        let mut out = KvMap::default();
-        for (k, v) in map {
-            out.set(k, v);
-        }
-        out
+        KvMap::from_sorted(map.into_iter())
     }
 }
 
@@ -169,6 +165,44 @@ impl std::fmt::Debug for KvMap {
 }
 
 impl KvMap {
+    /// The map of `entries`, which are in key order with no key twice,
+    /// built a level at a time instead of a write per key. Its nodes are
+    /// half full, as writes in key order leave them, so later writes copy
+    /// and split them as before.
+    fn from_sorted(entries: impl ExactSizeIterator<Item = (String, Value)>) -> Self {
+        /// `items` in nodes of about half the most each holds, as even as
+        /// can be, each with its first key.
+        fn chunk<T>(
+            items: impl ExactSizeIterator<Item = T>,
+            first_key: impl Fn(&T) -> String,
+            node: impl Fn(Vec<T>) -> Node,
+        ) -> Vec<(String, Rc<Node>)> {
+            let len = items.len();
+            let nodes = len.div_ceil(MAX_NODE / 2);
+            let mut items = items;
+            (0..nodes)
+                .map(|i| {
+                    // The first `len % nodes` nodes take one more.
+                    let size = len / nodes + usize::from(i < len % nodes);
+                    let chunk: Vec<T> = items.by_ref().take(size).collect();
+                    (first_key(&chunk[0]), Rc::new(node(chunk)))
+                })
+                .collect()
+        }
+        let len = entries.len();
+        if len == 0 {
+            return KvMap::default();
+        }
+        let mut level = chunk(entries.map(Rc::new), |e| e.0.clone(), Node::Leaf);
+        while level.len() > 1 {
+            level = chunk(level.into_iter(), |c| c.0.clone(), Node::Internal);
+        }
+        KvMap {
+            root: level.pop().map(|(_, root)| root),
+            len,
+        }
+    }
+
     pub(crate) fn get(&self, key: &str) -> Option<&Value> {
         self.root.as_ref()?.get(key)
     }
@@ -917,6 +951,12 @@ mod tests {
                     map.set(key(i * 10), Value::Null);
                     model.insert(key(i * 10), Value::Null);
                 }
+            }
+            // Half the maps as a store's are loaded, all at once.
+            if seed % 2 == 0 {
+                map = KvMap::from(model.clone());
+                assert!(map.iter().eq(model.iter()), "seed {seed}: loaded");
+                check_bounds(&map);
             }
             for round in 0..ROUNDS {
                 if random(3) == 0 {
