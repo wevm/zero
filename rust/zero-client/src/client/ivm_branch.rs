@@ -1,7 +1,7 @@
 //! The IVM sources of one state of the replica
 //! (`packages/zero-client/src/client/ivm-branch.ts`).
 
-use super::replica_store::{KvDiff, KvDiffOp};
+use super::replica_store::{KvDiff, KvDiffOp, KvMap};
 use crate::builder::OptimisticAggregate;
 use crate::ivm::{MemorySource, Row, Source, SourceChange, has_failed};
 use crate::json::{Object, Value};
@@ -38,6 +38,24 @@ impl Layouts {
             _ => {
                 layouts.insert(table.to_owned(), row.clone());
             }
+        }
+    }
+}
+
+/// A change of a diff, by its key, borrowed: a [`KvDiffOp`], or an entry
+/// of a map read as its add.
+#[derive(Clone, Copy)]
+enum Op<'a> {
+    Add(&'a str, &'a Value),
+    Del(&'a str, &'a Value),
+    /// The key, the old value, and the new.
+    Change(&'a str, &'a Value, &'a Value),
+}
+
+impl<'a> Op<'a> {
+    fn key(self) -> &'a str {
+        match self {
+            Op::Add(key, _) | Op::Del(key, _) | Op::Change(key, _, _) => key,
         }
     }
 }
@@ -192,6 +210,21 @@ impl IvmBranch {
     /// is the one a transaction wrote, which is the value the diff has for
     /// it. The main branch then releases the aggregate sources nothing uses.
     pub(crate) fn apply(&self, diff: &KvDiff, written: &HashMap<String, Row>) {
+        let ops = diff.iter().map(|op| match op {
+            KvDiffOp::Add { key, new } => Op::Add(key, new),
+            KvDiffOp::Del { key, old } => Op::Del(key, old),
+            KvDiffOp::Change { key, old, new } => Op::Change(key, old, new),
+        });
+        self.apply_ops(ops, written);
+    }
+
+    /// Loads the rows of `map` into empty sources: `apply` of the diff
+    /// that adds each of its entries, without making that diff.
+    pub(crate) fn load(&self, map: &KvMap) {
+        self.apply_ops(map.iter().map(|(k, v)| Op::Add(k, v)), &HashMap::new());
+    }
+
+    fn apply_ops<'a>(&self, ops: impl Iterator<Item = Op<'a>>, written: &HashMap<String, Row>) {
         let row_of = |key: &str, v: &Value| -> Row {
             written
                 .get(key)
@@ -199,24 +232,26 @@ impl IvmBranch {
                 .unwrap_or_else(|| Rc::new(v.as_object().cloned().unwrap_or_default()))
         };
         let plain = |v: &Value| -> Row { Rc::new(v.as_object().cloned().unwrap_or_default()) };
-        let mut i = 0;
+        let mut ops = ops.peekable();
         // JS's throw ends `applyDiffs` at the change an operator failed on.
-        while i < diff.len() && !has_failed() {
-            let op = &diff[i];
-            let is_aggregate = op.key().starts_with(AGGREGATES_PREFIX);
-            if !is_aggregate && !op.key().starts_with(ENTITIES_PREFIX) {
-                i += 1;
+        while !has_failed() {
+            let Some(op) = ops.next() else {
+                break;
+            };
+            let key = op.key();
+            let is_aggregate = key.starts_with(AGGREGATES_PREFIX);
+            if !is_aggregate && !key.starts_with(ENTITIES_PREFIX) {
                 continue;
             }
-            let name = source_name(op.key());
+            let name = source_name(key);
             let mut source = self.source(&name);
             if source.is_none() && is_aggregate {
                 // A relationship aggregate's or a grouped query's rows
                 // replayed before its query materializes (a reload): the
                 // source takes the row's shape, and the builder reuses it.
                 let row = match op {
-                    KvDiffOp::Del { old, .. } => old,
-                    KvDiffOp::Add { new, .. } | KvDiffOp::Change { new, .. } => new,
+                    Op::Del(_, old) => old,
+                    Op::Add(_, new) | Op::Change(_, _, new) => new,
                 };
                 let empty = Object::new();
                 let (columns, primary_key) =
@@ -224,22 +259,15 @@ impl IvmBranch {
                 source = Some(self.aggregate_source(&name, columns, primary_key, None));
             }
             let Some(source) = source else {
-                i += 1;
                 continue;
             };
             match op {
-                KvDiffOp::Del { old, .. } => {
-                    source.push(SourceChange::Remove(plain(old)));
-                    i += 1;
-                }
-                KvDiffOp::Change { key, old, new } => {
-                    source.push(SourceChange::Edit {
-                        row: row_of(key, new),
-                        old_row: plain(old),
-                    });
-                    i += 1;
-                }
-                KvDiffOp::Add { .. } => {
+                Op::Del(_, old) => source.push(SourceChange::Remove(plain(old))),
+                Op::Change(key, old, new) => source.push(SourceChange::Edit {
+                    row: row_of(key, new),
+                    old_row: plain(old),
+                }),
+                Op::Add(key, new) => {
                     // The source's own prefix: the key up to the slash after
                     // its name.
                     let source_prefix = if is_aggregate {
@@ -250,13 +278,11 @@ impl IvmBranch {
                     } else {
                         format!("{ENTITIES_PREFIX}{name}/")
                     };
-                    let mut rows = Vec::new();
-                    while let Some(KvDiffOp::Add { key, new }) = diff.get(i) {
-                        if !key.starts_with(&source_prefix) {
-                            break;
-                        }
+                    let mut rows = vec![row_of(key, new)];
+                    while let Some(Op::Add(key, new)) = ops.next_if(
+                        |op| matches!(op, Op::Add(key, _) if key.starts_with(&source_prefix)),
+                    ) {
                         rows.push(row_of(key, new));
-                        i += 1;
                     }
                     source.push_adds(rows);
                 }

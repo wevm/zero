@@ -1000,8 +1000,8 @@ impl Engine {
         // Load the snapshot into the sources and replay the pending
         // mutations on it, with the synced aggregate rows they wrote when
         // they were last persisted, as JS's stored commits have them.
-        let initial = adds(e.store.borrow().snapshot.map.iter());
-        e.ivm_main.apply(&initial, &HashMap::new());
+        let snapshot = e.store.borrow().snapshot.map.clone();
+        e.ivm_main.load(&snapshot);
         let pending = e.store.borrow().pending.clone();
         if !pending.is_empty() {
             let snapshot_map = e.store.borrow().snapshot.map.clone();
