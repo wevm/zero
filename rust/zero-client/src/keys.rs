@@ -112,16 +112,38 @@ fn key_string(
     primary_key: &[impl AsRef<str>],
     row: &Object,
 ) -> Result<String, InvalidPrimaryKeyValue> {
+    let invalid = |column: &str, v: Option<&Value>| InvalidPrimaryKeyValue {
+        column: column.to_owned(),
+        value: v.cloned(),
+    };
     let scalar = |column: &str| match row.get(column) {
         Some(v @ (Value::String(_) | Value::Number(_) | Value::Bool(_))) => Ok(v.clone()),
-        v => Err(InvalidPrimaryKeyValue {
-            column: column.to_owned(),
-            value: v.cloned(),
-        }),
+        v => Err(invalid(column, v)),
     };
     if let [column] = primary_key {
-        let v = scalar(column.as_ref())?;
-        return Ok(format!("{prefix}{table}/{}", js_string(&v)));
+        // `js_string` of the value, written into a key of its exact size.
+        let number;
+        let value: &str = match row.get(column.as_ref()) {
+            Some(Value::String(s)) => s,
+            Some(Value::Number(n)) => {
+                number = number::format(*n);
+                &number
+            }
+            Some(Value::Bool(b)) => {
+                if *b {
+                    "true"
+                } else {
+                    "false"
+                }
+            }
+            v => return Err(invalid(column.as_ref(), v)),
+        };
+        let mut key = String::with_capacity(prefix.len() + table.len() + 1 + value.len());
+        key.push_str(prefix);
+        key.push_str(table);
+        key.push('/');
+        key.push_str(value);
+        return Ok(key);
     }
     let values = primary_key
         .iter()

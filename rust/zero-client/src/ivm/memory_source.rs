@@ -29,7 +29,8 @@ struct Overlays {
 
 #[derive(Clone)]
 struct Index {
-    sort: Vec<OrderPart>,
+    /// Shared, so that the index clones without copying it.
+    sort: Rc<[OrderPart]>,
     compare: Comparator,
     data: Tree<Row>,
 }
@@ -38,7 +39,7 @@ impl Index {
     fn new(sort: Vec<OrderPart>, data: Tree<Row>) -> Self {
         let compare = make_comparator(&sort, false);
         Index {
-            sort,
+            sort: sort.into(),
             compare,
             data,
         }
@@ -318,7 +319,7 @@ impl MemorySource {
         // `text desc, text asc` starts past every match.)
         let rows = if let Some(constraint) = fetch_or_pk {
             let mut scan_start: HashMap<String, Bound> = HashMap::new();
-            for part in &index.sort {
+            for part in index.sort.iter() {
                 if scan_start.contains_key(&part.field) {
                     continue;
                 }
