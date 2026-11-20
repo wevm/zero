@@ -300,9 +300,11 @@ import ZeroTesting
     for round in 0..<20 {
       let old = map
       let oldModel = model
+      var written = Set<JSKey>()
       for _ in 0..<500 {
         let key =
           "e/issues/" + String(rng.next() % 2000) + suffixes[Int(rng.next() % 5)]
+        written.insert(JSKey(key))
         if rng.next() % 3 == 0 {
           map.delete(key)
           model[JSKey(key)] = nil
@@ -328,15 +330,28 @@ import ZeroTesting
         default: break
         }
       }
-      let diff = KVDiff.between(old, map).map { op in
-        switch op {
-        case .add(let key, let v): "add \(key) \(v)"
-        case .del(let key, let v): "del \(key) \(v)"
-        case .change(let key, let a, let b): "change \(key) \(a) \(b)"
+      func describe(_ diff: KVDiff) -> [JSKey] {
+        diff.map { op in
+          switch op {
+          case .add(let key, let v): JSKey("add \(key) \(v)")
+          case .del(let key, let v): JSKey("del \(key) \(v)")
+          case .change(let key, let a, let b): JSKey("change \(key) \(a) \(b)")
+          }
         }
       }
       // `JSKey`s compare bytes, unlike `String`.
-      #expect(diff.map(JSKey.init) == expected.map(JSKey.init))
+      #expect(describe(KVDiff.between(old, map)) == expected.map(JSKey.init))
+      // Over the keys written: so many of them are diffed by a walk of both
+      // maps, and a few by looking each one up.
+      #expect(describe(KVDiff.between(old, map, keys: written)) == expected.map(JSKey.init))
+      var few = map
+      let put = "e/issues/" + String(rng.next() % 2000) + suffixes[Int(rng.next() % 5)]
+      let deleted = keys[Int(rng.next() % UInt64(keys.count))]
+      few.set(put, .number(-1))
+      few.delete(deleted)
+      #expect(
+        describe(KVDiff.between(map, few, keys: [JSKey(put), JSKey(deleted)]))
+          == describe(KVDiff.between(map, few)))
       #expect(KVDiff(adding: map.entries).map { JSKey($0.key) } == keys.map(JSKey.init))
     }
   }
