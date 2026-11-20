@@ -120,7 +120,7 @@ fn read_in_background<C>(
                 mutate_url.as_deref(),
                 query_url.as_deref(),
             );
-            ReplicaDatabase::prepare(directory, name, &names)
+            ReplicaDatabase::prepare(directory, name, &names, &schema)
         })
         .ok()
 }

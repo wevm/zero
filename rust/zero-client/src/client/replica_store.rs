@@ -6,7 +6,7 @@ use crate::json::{self, Object, Value, number};
 use crate::strings;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// The most entries or children a node of a [`KvMap`] holds. Unit tests
 /// use small nodes, so a few thousand keys make deep trees and many merges.
@@ -17,14 +17,15 @@ const MAX_NODE: usize = 8;
 /// A node with fewer after a delete merges with a neighbor that has room.
 const MIN_NODE: usize = MAX_NODE / 4;
 
-/// A node of a [`KvMap`]'s B+tree. Each entry is behind an `Rc`, so copying
-/// a leaf to write it doesn't copy its values.
+/// A node of a [`KvMap`]'s B+tree. Each entry is behind an `Arc`, so copying
+/// a leaf to write it doesn't copy its values. `Arc`, not `Rc`, so that
+/// `Zero::prepare` builds the map on its own thread.
 #[derive(Clone)]
 enum Node {
-    Leaf(Vec<Rc<(String, Value)>>),
+    Leaf(Vec<Arc<(String, Value)>>),
     /// Each child with a lower bound of its keys, which also bounds the keys
     /// of the child before it from above; the first child's is unused.
-    Internal(Vec<(String, Rc<Node>)>),
+    Internal(Vec<(String, Arc<Node>)>),
 }
 
 impl Node {
@@ -36,7 +37,7 @@ impl Node {
     }
 
     /// The child whose keys `key` falls among.
-    fn child_index(children: &[(String, Rc<Node>)], key: &str) -> usize {
+    fn child_index(children: &[(String, Arc<Node>)], key: &str) -> usize {
         children
             .partition_point(|(bound, _)| bound.as_str() <= key)
             .saturating_sub(1)
@@ -60,21 +61,21 @@ impl Node {
     /// Sets `key`, copying the shared nodes on its path. Returns whether the
     /// key is new, and the node's new right sibling with its lower bound if
     /// it split.
-    fn insert(&mut self, key: String, value: Value) -> (bool, Option<(String, Rc<Node>)>) {
+    fn insert(&mut self, key: String, value: Value) -> (bool, Option<(String, Arc<Node>)>) {
         let added = match self {
             Node::Leaf(entries) => match entries.binary_search_by(|e| e.0.as_str().cmp(&key)) {
                 Ok(i) => {
-                    entries[i] = Rc::new((key, value));
+                    entries[i] = Arc::new((key, value));
                     false
                 }
                 Err(i) => {
-                    entries.insert(i, Rc::new((key, value)));
+                    entries.insert(i, Arc::new((key, value)));
                     true
                 }
             },
             Node::Internal(children) => {
                 let i = Node::child_index(children, &key);
-                let (added, split) = Rc::make_mut(&mut children[i].1).insert(key, value);
+                let (added, split) = Arc::make_mut(&mut children[i].1).insert(key, value);
                 if let Some(sibling) = split {
                     children.insert(i + 1, sibling);
                 }
@@ -95,7 +96,7 @@ impl Node {
                 (right[0].0.clone(), Node::Internal(right))
             }
         };
-        (added, Some((sibling.0, Rc::new(sibling.1))))
+        (added, Some((sibling.0, Arc::new(sibling.1))))
     }
 
     /// Removes `key`, which the node has, copying the shared nodes on its
@@ -109,7 +110,7 @@ impl Node {
             }
             Node::Internal(children) => {
                 let i = Node::child_index(children, key);
-                Rc::make_mut(&mut children[i].1).remove(key);
+                Arc::make_mut(&mut children[i].1).remove(key);
                 let len = children[i].1.len();
                 if len == 0 {
                     children.remove(i);
@@ -117,8 +118,8 @@ impl Node {
                     let left = if i + 1 < children.len() { i } else { i - 1 };
                     if children[left].1.len() + children[left + 1].1.len() <= MAX_NODE {
                         let (bound, right) = children.remove(left + 1);
-                        let right = Rc::unwrap_or_clone(right);
-                        match (Rc::make_mut(&mut children[left].1), right) {
+                        let right = Arc::unwrap_or_clone(right);
+                        match (Arc::make_mut(&mut children[left].1), right) {
                             (Node::Leaf(a), Node::Leaf(b)) => a.extend(b),
                             // The first child's bound goes unused until now,
                             // and is stale once the child before it was
@@ -142,7 +143,7 @@ impl Node {
 /// snapshot and writing to it costs O(log n), not a copy of every row.
 #[derive(Clone, Default)]
 pub(crate) struct KvMap {
-    root: Option<Rc<Node>>,
+    root: Option<Arc<Node>>,
     len: usize,
 }
 
@@ -176,7 +177,7 @@ impl KvMap {
             items: impl ExactSizeIterator<Item = T>,
             first_key: impl Fn(&T) -> String,
             node: impl Fn(Vec<T>) -> Node,
-        ) -> Vec<(String, Rc<Node>)> {
+        ) -> Vec<(String, Arc<Node>)> {
             let len = items.len();
             let nodes = len.div_ceil(MAX_NODE / 2);
             let mut items = items;
@@ -185,7 +186,7 @@ impl KvMap {
                     // The first `len % nodes` nodes take one more.
                     let size = len / nodes + usize::from(i < len % nodes);
                     let chunk: Vec<T> = items.by_ref().take(size).collect();
-                    (first_key(&chunk[0]), Rc::new(node(chunk)))
+                    (first_key(&chunk[0]), Arc::new(node(chunk)))
                 })
                 .collect()
         }
@@ -193,7 +194,7 @@ impl KvMap {
         if len == 0 {
             return KvMap::default();
         }
-        let mut level = chunk(entries.map(Rc::new), |e| e.0.clone(), Node::Leaf);
+        let mut level = chunk(entries.map(Arc::new), |e| e.0.clone(), Node::Leaf);
         while level.len() > 1 {
             level = chunk(level.into_iter(), |c| c.0.clone(), Node::Internal);
         }
@@ -214,11 +215,11 @@ impl KvMap {
     pub(crate) fn set(&mut self, key: impl Into<String>, value: Value) {
         let root = self
             .root
-            .get_or_insert_with(|| Rc::new(Node::Leaf(Vec::new())));
-        let (added, split) = Rc::make_mut(root).insert(key.into(), value);
+            .get_or_insert_with(|| Arc::new(Node::Leaf(Vec::new())));
+        let (added, split) = Arc::make_mut(root).insert(key.into(), value);
         if let Some(sibling) = split {
-            let left = std::mem::replace(root, Rc::new(Node::Leaf(Vec::new())));
-            *root = Rc::new(Node::Internal(vec![(String::new(), left), sibling]));
+            let left = std::mem::replace(root, Arc::new(Node::Leaf(Vec::new())));
+            *root = Arc::new(Node::Internal(vec![(String::new(), left), sibling]));
         }
         if added {
             self.len += 1;
@@ -232,7 +233,7 @@ impl KvMap {
         let Some(root) = &mut self.root else {
             return false;
         };
-        Rc::make_mut(root).remove(key);
+        Arc::make_mut(root).remove(key);
         self.len -= 1;
         // A root with one child gives way to it.
         loop {
@@ -256,7 +257,7 @@ impl KvMap {
     /// entries without comparing them.
     pub(crate) fn same(&self, other: &KvMap) -> bool {
         match (&self.root, &other.root) {
-            (Some(a), Some(b)) => Rc::ptr_eq(a, b),
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
             (None, None) => true,
             _ => false,
         }

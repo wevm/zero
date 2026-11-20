@@ -814,6 +814,7 @@ impl Engine {
                 ok
             })
             .collect();
+        let sorted_sources = group.sources;
         let store = ReplicaStore::new(
             Snapshot {
                 map: group.entries,
@@ -1001,7 +1002,10 @@ impl Engine {
         // mutations on it, with the synced aggregate rows they wrote when
         // they were last persisted, as JS's stored commits have them.
         let snapshot = e.store.borrow().snapshot.map.clone();
-        e.ivm_main.load(&snapshot);
+        match sorted_sources {
+            Some(sorted) => e.ivm_main.load_sorted(&snapshot, sorted),
+            None => e.ivm_main.load(&snapshot),
+        }
         let pending = e.store.borrow().pending.clone();
         if !pending.is_empty() {
             let snapshot_map = e.store.borrow().snapshot.map.clone();

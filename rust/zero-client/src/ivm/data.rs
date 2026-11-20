@@ -4,7 +4,7 @@
 use super::Row;
 use crate::ast::{Direction, OrderPart};
 use crate::compare;
-use crate::json::Value;
+use crate::json::{Object, Value};
 use std::cell::Cell;
 use std::cmp::Ordering;
 use std::rc::Rc;
@@ -48,11 +48,21 @@ pub fn identical(a: Option<&Value>, b: Option<&Value>) -> bool {
 
 /// `makeComparator(order, reverse)`.
 pub fn make_comparator(order: &[OrderPart], reverse: bool) -> Comparator {
+    let compare = object_comparator(order, reverse);
+    Rc::new(move |a: &Row, b: &Row| compare(a, b))
+}
+
+/// [`make_comparator`]'s order, of objects, which can be sorted on another
+/// thread.
+pub(crate) fn object_comparator(
+    order: &[OrderPart],
+    reverse: bool,
+) -> impl Fn(&Object, &Object) -> Ordering + use<> {
     let parts: Vec<(String, bool, Cell<usize>)> = order
         .iter()
         .map(|p| (p.field.clone(), p.direction == Direction::Asc, Cell::new(0)))
         .collect();
-    Rc::new(move |a: &Row, b: &Row| {
+    move |a: &Object, b: &Object| {
         for (field, asc, hint) in &parts {
             let c = compare_values(a.get_hinted(field, hint), b.get_hinted(field, hint));
             if c != Ordering::Equal {
@@ -61,5 +71,5 @@ pub fn make_comparator(order: &[OrderPart], reverse: bool) -> Comparator {
             }
         }
         Ordering::Equal
-    })
+    }
 }
