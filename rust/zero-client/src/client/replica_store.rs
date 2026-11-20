@@ -543,7 +543,7 @@ pub(crate) fn apply_patch(patch: &[KvPatchOp], write: &mut KvWrite) -> Result<()
     for op in optimize_patch(patch) {
         match op {
             KvPatchOp::Clear => write.clear(),
-            KvPatchOp::Put { key, value } => write.set(&key, value),
+            KvPatchOp::Put { key, value } => write.set(key, value.clone()),
             KvPatchOp::Update {
                 key,
                 merge,
@@ -551,7 +551,7 @@ pub(crate) fn apply_patch(patch: &[KvPatchOp], write: &mut KvWrite) -> Result<()
             } => {
                 let mut next = Object::new();
                 let mut entries: Vec<(String, Value)> = Vec::new();
-                if let Some(existing) = write.get(&key) {
+                if let Some(existing) = write.get(key) {
                     let Value::Object(o) = existing else {
                         return Err(PatchError(format!("Expected object for update of {key}")));
                     };
@@ -561,7 +561,7 @@ pub(crate) fn apply_patch(patch: &[KvPatchOp], write: &mut KvWrite) -> Result<()
                     entries.extend(merge.iter().map(|(k, v)| (k.clone(), v.clone())));
                 }
                 for (k, v) in entries {
-                    let keep = match &constrain {
+                    let keep = match constrain {
                         None => true,
                         Some(c) => c.is_empty() || c.contains(&k),
                     };
@@ -569,11 +569,11 @@ pub(crate) fn apply_patch(patch: &[KvPatchOp], write: &mut KvWrite) -> Result<()
                         next.insert(k, v);
                     }
                 }
-                write.set(&key, Value::Object(next));
+                write.set(key, Value::Object(next));
             }
             KvPatchOp::Del { key } => {
-                if write.has(&key) {
-                    write.delete(&key);
+                if write.has(key) {
+                    write.delete(key);
                 }
             }
         }
@@ -584,45 +584,29 @@ pub(crate) fn apply_patch(patch: &[KvPatchOp], write: &mut KvWrite) -> Result<()
 /// `optimizePatch`: drops what the last `clear` and later puts and dels of
 /// the same key make irrelevant, and sorts by key. A patch with an `update`
 /// is applied as sent, from its last `clear`.
-pub(crate) fn optimize_patch(patch: &[KvPatchOp]) -> Vec<KvPatchOp> {
-    if patch.is_empty() {
-        return Vec::new();
-    }
+pub(crate) fn optimize_patch(patch: &[KvPatchOp]) -> Vec<&KvPatchOp> {
     let clear_index = patch.iter().rposition(|op| matches!(op, KvPatchOp::Clear));
-    let start = clear_index.map_or(0, |i| i + 1);
-    let mut result = Vec::new();
-    if clear_index.is_some() {
-        result.push(KvPatchOp::Clear);
+    let rest = &patch[clear_index.map_or(0, |i| i + 1)..];
+    if rest.iter().any(|op| matches!(op, KvPatchOp::Update { .. })) {
+        return patch[clear_index.unwrap_or(0)..].iter().collect();
     }
-    let mut order: Vec<String> = Vec::new();
-    let mut ops: HashMap<String, KvPatchOp> = HashMap::new();
-    for op in &patch[start..] {
-        match op {
-            KvPatchOp::Put { key, .. } | KvPatchOp::Del { key } => {
-                if ops.insert(key.clone(), op.clone()).is_none() {
-                    order.push(key.clone());
-                }
-            }
-            KvPatchOp::Update { .. } => {
-                return match clear_index {
-                    None => patch.to_vec(),
-                    Some(i) => patch[i..].to_vec(),
-                };
-            }
-            KvPatchOp::Clear => {}
+    // The last put or del of each key.
+    let mut last: HashMap<&str, &KvPatchOp> = HashMap::with_capacity(rest.len());
+    for op in rest {
+        if let Some(key) = op.key() {
+            last.insert(key, op);
         }
     }
-    let mut rest: Vec<KvPatchOp> = Vec::new();
-    for k in order {
-        let op = ops.remove(&k).expect("recorded");
-        if clear_index.is_some() && matches!(op, KvPatchOp::Del { .. }) {
-            continue;
-        }
-        rest.push(op);
-    }
-    rest.sort_by(|a, b| a.key().cmp(&b.key()));
-    result.extend(rest);
-    result
+    let mut ops: Vec<&KvPatchOp> = last
+        .into_values()
+        .filter(|op| clear_index.is_none() || !matches!(op, KvPatchOp::Del { .. }))
+        .collect();
+    ops.sort_by(|a, b| a.key().cmp(&b.key()));
+    clear_index
+        .map(|i| &patch[i])
+        .into_iter()
+        .chain(ops)
+        .collect()
 }
 
 /// `compareCookies` (`packages/replicache/src/cookies.ts`) for the cookies
