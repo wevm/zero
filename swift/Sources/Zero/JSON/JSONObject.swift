@@ -135,6 +135,16 @@ public struct JSONObject: @unchecked Sendable {
     return storage.remove(at: i)
   }
 
+  /// How many keys the object has room for without growing.
+  package var capacity: Int { storage.header.capacity }
+
+  /// Gives up the room the object has for more keys, unless its storage
+  /// is shared.
+  package mutating func shrinkToFit() {
+    guard storage.header.capacity > count, isKnownUniquelyReferenced(&storage) else { return }
+    storage = count == 0 ? .empty : storage.copy(capacity: count, moving: true)
+  }
+
   /// Removes every key.
   public mutating func removeAll() {
     self = JSONObject()

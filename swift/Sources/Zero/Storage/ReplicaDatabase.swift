@@ -1184,8 +1184,9 @@ final class SQLiteStore: @unchecked Sendable {
         g.lastMutationIDs[JSKey(k)] = v.numberValue ?? 0
       }
     }
+    var rows = JSONParser.Batch()
     try db.query("SELECT key, value FROM entries WHERE client_group_id = ?", [.text(id)]) { row in
-      g.entries.set(row.text(0), try JSONParser.parse(row.bytes(1)))
+      g.entries.set(row.text(0), try rows.parse(row.bytes(1)))
     }
     try db.query(
       """
