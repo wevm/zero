@@ -2288,9 +2288,9 @@ impl ZbugsApp {
     }
 
     fn render_list(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let rows = (*self.list.value()).clone();
+        // The live view's rows, shared rather than copied on every render.
+        let rows = self.list.value();
         let loaded = rows.len();
-        let rows = Rc::new(rows);
         if loaded == 0 {
             let synced = self.list.is_synced();
             return div()
