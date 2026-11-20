@@ -5,6 +5,7 @@ use super::*;
 use crate::json::{self, Value};
 use std::cell::RefCell;
 use std::cmp::Ordering;
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
@@ -289,12 +290,66 @@ pub type ParentPartitions = Vec<Option<Constraint>>;
 
 struct Partition {
     constraint: Constraint,
-    pks: HashSet<String>,
+    pks: Pks,
+}
+
+/// The primary keys of the parents indexed under one join key. Most join
+/// keys have one parent, so it is kept without a set; and when the join key
+/// is the parent's primary key, the one parent it can have is the key
+/// itself, kept as `Key` without a copy.
+enum Pks {
+    Key,
+    One(String),
+    Many(HashSet<String>),
+}
+
+impl Pks {
+    /// The set of `pk`; `None` is the join key.
+    fn new(pk: Option<String>) -> Self {
+        pk.map_or(Pks::Key, Pks::One)
+    }
+
+    /// Adds `pk` (`None` for the join key); whether it is new.
+    fn insert(&mut self, pk: Option<String>) -> bool {
+        match (&mut *self, pk) {
+            (Pks::Key, None) => false,
+            (Pks::One(one), Some(pk)) if *one == pk => false,
+            (Pks::One(one), Some(pk)) => {
+                let set = HashSet::from([std::mem::take(one), pk]);
+                *self = Pks::Many(set);
+                true
+            }
+            (Pks::Many(set), Some(pk)) => set.insert(pk),
+            (Pks::Many(set), None) if set.is_empty() => {
+                *self = Pks::Key;
+                true
+            }
+            _ => unreachable!("an index's join key is its primary key or never"),
+        }
+    }
+
+    /// Removes `pk` (`None` for the join key); whether it was there.
+    fn remove(&mut self, pk: Option<&str>) -> bool {
+        let removed = match (&mut *self, pk) {
+            (Pks::Key, None) => true,
+            (Pks::One(one), Some(pk)) => one == pk,
+            (Pks::Many(set), Some(pk)) => return set.remove(pk),
+            _ => false,
+        };
+        if removed {
+            *self = Pks::Many(HashSet::new());
+        }
+        removed
+    }
+
+    fn is_empty(&self) -> bool {
+        matches!(self, Pks::Many(set) if set.is_empty())
+    }
 }
 
 #[derive(Default)]
 struct JoinIndexState {
-    unpartitioned: HashMap<String, HashSet<String>>,
+    unpartitioned: HashMap<String, Pks>,
     /// Join key, then partition key. Partitions keep insertion order.
     partitioned: HashMap<String, (Vec<String>, HashMap<String, Partition>)>,
     size: usize,
@@ -331,37 +386,45 @@ impl JoinIndex {
         self.state.borrow().size
     }
 
-    fn pk_of(&self, row: &Row, join_key: &str) -> String {
-        if self.join_key_is_pk {
-            join_key.to_owned()
-        } else {
-            canonical_key(row, &self.primary_key)
-        }
+    /// The primary key of `row`; `None` when it is the join key.
+    fn pk_of(&self, row: &Row) -> Option<String> {
+        (!self.join_key_is_pk).then(|| canonical_key(row, &self.primary_key))
     }
 
     pub fn add(&self, row: &Row) {
         let Some(join_key) = join_key_of(row, &self.parent_key) else {
             return;
         };
-        let pk = self.pk_of(row, &join_key);
+        let pk = self.pk_of(row);
         let mut state = self.state.borrow_mut();
         let state = &mut *state;
         let Some(partition_key) = &self.partition_key else {
-            if state.unpartitioned.entry(join_key).or_default().insert(pk) {
+            let added = match state.unpartitioned.entry(join_key) {
+                Entry::Occupied(mut pks) => pks.get_mut().insert(pk),
+                Entry::Vacant(e) => {
+                    e.insert(Pks::new(pk));
+                    true
+                }
+            };
+            if added {
                 state.size += 1;
             }
             return;
         };
         let part_key = canonical_key(row, partition_key);
         let (order, partitions) = state.partitioned.entry(join_key).or_default();
-        let partition = partitions.entry(part_key.clone()).or_insert_with(|| {
-            order.push(part_key);
-            Partition {
-                constraint: Constraint::from_row(row, partition_key),
-                pks: HashSet::new(),
+        let added = match partitions.entry(part_key) {
+            Entry::Occupied(mut partition) => partition.get_mut().pks.insert(pk),
+            Entry::Vacant(e) => {
+                order.push(e.key().clone());
+                e.insert(Partition {
+                    constraint: Constraint::from_row(row, partition_key),
+                    pks: Pks::new(pk),
+                });
+                true
             }
-        });
-        if partition.pks.insert(pk) {
+        };
+        if added {
             state.size += 1;
         }
     }
@@ -370,12 +433,12 @@ impl JoinIndex {
         let Some(join_key) = join_key_of(row, &self.parent_key) else {
             return;
         };
-        let pk = self.pk_of(row, &join_key);
+        let pk = self.pk_of(row);
         let mut state = self.state.borrow_mut();
         let state = &mut *state;
         let Some(partition_key) = &self.partition_key else {
             if let Some(pks) = state.unpartitioned.get_mut(&join_key)
-                && pks.remove(&pk)
+                && pks.remove(pk.as_deref())
             {
                 state.size -= 1;
                 if pks.is_empty() {
@@ -391,7 +454,7 @@ impl JoinIndex {
         let Some(partition) = partitions.get_mut(&part_key) else {
             return;
         };
-        if partition.pks.remove(&pk) {
+        if partition.pks.remove(pk.as_deref()) {
             state.size -= 1;
             if partition.pks.is_empty() {
                 partitions.remove(&part_key);
