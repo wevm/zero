@@ -14,6 +14,23 @@ package enum JSONSerializer {
     Array(stringify(value).utf8)
   }
 
+  /// Encodes `row` as the JSON object of its columns without making the
+  /// object: `stringify(JSONValue(row))`, except that the columns stay in
+  /// the row's order, where an object moves array-index keys first.
+  package static func stringify(_ row: Row) -> String {
+    var out = "{"
+    var first = true
+    for (name, value) in row {
+      if !first { out += "," }
+      first = false
+      writeString(name, into: &out)
+      out += ":"
+      write(value, into: &out)
+    }
+    out += "}"
+    return out
+  }
+
   /// An array or object being written, and the index of its next value.
   private enum Container {
     case array([JSONValue], next: Int)

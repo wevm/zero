@@ -152,9 +152,10 @@ enum StorageOp: Sendable {
   case setProfileID(String)
   /// The snapshot after a poke: the keys it changed (nil for deleted),
   /// whether it cleared every key first, and its cookie and last mutation
-  /// IDs. Drops the mutations the IDs confirm.
+  /// IDs. Drops the mutations the IDs confirm. The values are the replica's,
+  /// so memory storage shares its rows.
   case updateSnapshot(
-    group: String, changes: [(String, JSONValue?)], cleared: Bool, cookie: JSONValue,
+    group: String, changes: [(String, KVValue?)], cleared: Bool, cookie: JSONValue,
     lastMutationIDs: [JSKey: Double])
   case addMutation(group: String, StoredMutation)
   /// What a rebase of a pending mutation wrote to synced aggregate rows.
@@ -442,14 +443,14 @@ final class ReplicaDatabase {
     }
   }
 
-  /// The snapshot and pending mutations of group `id`. Throws
-  /// `CorruptData` when they don't decode, and a `StorageFailure` when they
-  /// can't be read.
-  private func loadGroup(_ id: String) throws -> StoredGroup {
+  /// The snapshot and pending mutations of group `id`, with the rows of
+  /// the tables in `layouts` in their layouts. Throws `CorruptData` when
+  /// they don't decode, and a `StorageFailure` when they can't be read.
+  private func loadGroup(_ id: String, layouts: [String: RowLayout]) throws -> StoredGroup {
     if let memoryGroups { return memoryGroups[id] ?? StoredGroup() }
     guard let sqlite else { return StoredGroup() }
     do {
-      return try sqlite.sync { try SQLiteStore.loadGroup(id, from: $0) }
+      return try sqlite.sync { try SQLiteStore.loadGroup(id, from: $0, layouts: layouts) }
     } catch {
       let failure = Self.readFailure(error)
       if let failure = failure as? StorageFailure { fail(failure) }
@@ -460,7 +461,7 @@ final class ReplicaDatabase {
   /// The stored snapshot of group `id`, for the inspector's look at a
   /// client of another group.
   func storedEntries(ofGroup id: String) throws -> KVMap {
-    try loadGroup(id).entries
+    try loadGroup(id, layouts: [:]).entries
   }
 
   /// Applies `ops` to the in-memory state now and queues them for SQLite.
@@ -579,7 +580,7 @@ final class ReplicaDatabase {
   /// `prepared` is that group as `prepare` read it, used instead of reading
   /// it again when it's still the one to join.
   func initClient(
-    _ clientID: String, mutatorNames: [String], now: Double,
+    _ clientID: String, mutatorNames: [String], now: Double, layouts: [String: RowLayout],
     prepared: (id: String, group: StoredGroup)? = nil
   ) throws -> (
     clientGroupID: String, group: StoredGroup
@@ -593,7 +594,7 @@ final class ReplicaDatabase {
       if let prepared, prepared.id == groupID {
         group = prepared.group
       } else {
-        group = try loadGroup(groupID)
+        group = try loadGroup(groupID, layouts: layouts)
       }
       snapshotCookies[groupID] = group.cookie
     } else {
@@ -1092,6 +1093,14 @@ final class SQLiteStore: @unchecked Sendable {
     .text(JSONSerializer.stringify(v))
   }
 
+  /// A row written straight from its columns, not made into an object first.
+  private static func json(_ v: KVValue) -> SQLiteDatabase.Value {
+    switch v {
+    case .json(let v): json(v)
+    case .row(let row): .text(JSONSerializer.stringify(row))
+    }
+  }
+
   private static func apply(_ op: StorageOp, to db: SQLiteDatabase) throws {
     switch op {
     case .putGroup(let g):
@@ -1174,7 +1183,10 @@ final class SQLiteStore: @unchecked Sendable {
     }
   }
 
-  static func loadGroup(_ id: String, from db: SQLiteDatabase) throws -> StoredGroup {
+  /// The rows of the tables in `layouts` are loaded in their layouts.
+  static func loadGroup(
+    _ id: String, from db: SQLiteDatabase, layouts: [String: RowLayout]
+  ) throws -> StoredGroup {
     var g = StoredGroup()
     try db.query(
       "SELECT cookie, last_mutation_ids FROM client_groups WHERE id = ?", [.text(id)]
@@ -1186,7 +1198,8 @@ final class SQLiteStore: @unchecked Sendable {
     }
     var rows = JSONParser.Batch()
     try db.query("SELECT key, value FROM entries WHERE client_group_id = ?", [.text(id)]) { row in
-      g.entries.set(row.text(0), try rows.parse(row.bytes(1)))
+      let key = row.text(0)
+      g.entries.set(key, KVValue(try rows.parse(row.bytes(1)), at: key, layouts: layouts))
     }
     try db.query(
       """

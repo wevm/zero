@@ -1,9 +1,65 @@
+/// A value of the replica: JSON, or a table's row as its source holds it.
+/// The rows under `e/` are kept as rows in their table's layout, the one
+/// the IVM sources use, so the replica and the sources share each row
+/// instead of keeping it both as a JSON object and as a source row.
+enum KVValue: Sendable {
+  case json(JSONValue)
+  case row(Row)
+
+  /// `value` as the replica keeps it under `key`: an object under `e/` of a
+  /// table in `layouts` as a row in its layout, anything else as JSON.
+  init(_ value: JSONValue, at key: String, layouts: [String: RowLayout]) {
+    if case .object(let object) = value, key.utf8.starts(with: Keys.entitiesPrefix.utf8),
+      let layout = layouts[Keys.sourceName(key)]
+    {
+      self = .row(Row(object, layout: layout))
+    } else {
+      self = .json(value)
+    }
+  }
+
+  /// The value as JSON: a row as the object of its columns.
+  var json: JSONValue {
+    switch self {
+    case .json(let value): value
+    case .row(let row): JSONValue(row)
+    }
+  }
+
+  /// The row of an object's columns in `layout`, with any others after
+  /// them: the row itself when it's in `layout`. Nil for JSON that isn't an
+  /// object.
+  func row(in layout: RowLayout) -> Row? {
+    switch self {
+    case .json(let value): value.objectValue.map { Row($0, layout: layout) }
+    case .row(let row): row.conformed(to: layout)
+    }
+  }
+
+  /// The row a source takes for the value: `row(in:)`, and a row of no
+  /// columns for JSON that isn't an object.
+  func sourceRow(_ layout: RowLayout) -> Row {
+    row(in: layout) ?? Row(JSONObject(), layout: layout)
+  }
+}
+
+extension KVValue: Equatable {
+  /// As the values' JSON compares: the same columns, with equal values.
+  static func == (a: KVValue, b: KVValue) -> Bool {
+    switch (a, b) {
+    case (.json(let x), .json(let y)): x == y
+    case (.row(let x), .row(let y)): x == y
+    default: a.json == b.json
+    }
+  }
+}
+
 /// A sorted key-value map, ordered by UTF-8 bytes like Replicache's B-tree.
 /// Copies share nodes, so a copy is O(1) and writes copy only what they touch.
 struct KVMap {
   struct Entry {
     let key: String
-    var value: JSONValue
+    var value: KVValue
   }
 
   private(set) var tree = BTreeSet<Entry> { StringCompare.utf8($0.key, $1.key) }
@@ -12,19 +68,19 @@ struct KVMap {
 
   var count: Int { tree.count }
 
-  func get(_ key: String) -> JSONValue? {
-    tree.get(Entry(key: key, value: .null))?.value
+  func get(_ key: String) -> KVValue? {
+    tree.get(Entry(key: key, value: .json(.null)))?.value
   }
 
   func has(_ key: String) -> Bool { get(key) != nil }
 
-  mutating func set(_ key: String, _ value: JSONValue) {
+  mutating func set(_ key: String, _ value: KVValue) {
     tree.add(Entry(key: key, value: value))
   }
 
   @discardableResult
   mutating func delete(_ key: String) -> Bool {
-    tree.delete(Entry(key: key, value: .null))
+    tree.delete(Entry(key: key, value: .json(.null)))
   }
 
   mutating func removeAll() { tree = BTreeSet { StringCompare.utf8($0.key, $1.key) } }
@@ -46,9 +102,9 @@ struct KVMap {
 /// One change between two maps (`DiffOperation` in
 /// `packages/replicache/src/btree/node.ts`).
 enum KVDiffOp {
-  case add(key: String, newValue: JSONValue)
-  case del(key: String, oldValue: JSONValue)
-  case change(key: String, oldValue: JSONValue, newValue: JSONValue)
+  case add(key: String, newValue: KVValue)
+  case del(key: String, oldValue: KVValue)
+  case change(key: String, oldValue: KVValue, newValue: KVValue)
 
   var key: String {
     switch self {
@@ -138,9 +194,9 @@ final class KVWrite {
   init(_ map: KVMap) { self.map = map }
 
   func has(_ key: String) -> Bool { map.has(key) }
-  func get(_ key: String) -> JSONValue? { map.get(key) }
+  func get(_ key: String) -> KVValue? { map.get(key) }
 
-  func set(_ key: String, _ value: JSONValue) {
+  func set(_ key: String, _ value: KVValue) {
     map.set(key, value)
     writes.insert(JSKey(key))
   }
@@ -244,22 +300,24 @@ final class ReplicaStore {
   }
 
   /// Applies `patch` to `write` (`apply` in
-  /// `packages/replicache/src/sync/patch.ts`).
-  static func apply(_ patch: [KVPatchOp], to write: KVWrite) throws(PatchError) {
+  /// `packages/replicache/src/sync/patch.ts`). The rows of the tables in
+  /// `layouts` are kept in their layouts.
+  static func apply(
+    _ patch: [KVPatchOp], to write: KVWrite, layouts: [String: RowLayout]
+  ) throws(PatchError) {
     for op in optimize(patch) {
       switch op {
       case .clear:
         write.clear(keysOf: write.map)
       case .put(let key, let value):
-        write.set(key, value)
+        write.set(key, KVValue(value, at: key, layouts: layouts))
       case .update(let key, let merge, let constrain):
-        let existing = write.get(key)
         var entries: [(String, JSONValue)] = []
-        if let existing {
-          guard case .object(let o) = existing else {
-            throw PatchError("Expected object for update of \(key)")
-          }
-          entries += o.map { ($0.key, $0.value) }
+        switch write.get(key) {
+        case nil: break
+        case .row(let row): entries += row.map { ($0.key, $0.value) }
+        case .json(.object(let o)): entries += o.map { ($0.key, $0.value) }
+        case .json: throw PatchError("Expected object for update of \(key)")
         }
         if let merge { entries += merge.map { ($0.key, $0.value) } }
         var next: RowRecord = [:]
@@ -269,7 +327,7 @@ final class ReplicaStore {
         {
           next[k] = v
         }
-        write.set(key, .object(next))
+        write.set(key, KVValue(.object(next), at: key, layouts: layouts))
       case .del(let key):
         if write.has(key) { write.delete(key) }
       }

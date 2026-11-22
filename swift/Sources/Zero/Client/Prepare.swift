@@ -210,12 +210,17 @@ final class PreparedReplica: @unchecked Sendable {
       return nil
     }
     let file = FileID(path)
+    // The stored rows load in the branch's layouts, so the replica and its
+    // sources share them.
+    let layouts = IVMBranch.layouts(schema)
     let read: (ReplicaDatabase.Records, String?, StoredGroup, Int64)
     do {
       read = try store.sync { db in
         let records = try ReplicaDatabase.readRecords(from: db, directory: store.directory)
         let match = ReplicaDatabase.matchingGroup(records.groups, mutatorNames: mutatorNames)
-        let group = try match.map { try SQLiteStore.loadGroup($0.id, from: db) } ?? StoredGroup()
+        let group =
+          try match.map { try SQLiteStore.loadGroup($0.id, from: db, layouts: layouts) }
+          ?? StoredGroup()
         db.setBusyTimeout(ms: SQLiteDatabase.busyTimeoutMs)
         return (records, match?.id, group, try dataVersion(db))
       }
@@ -225,7 +230,7 @@ final class PreparedReplica: @unchecked Sendable {
     }
     let (records, groupID, group, version) = read
 
-    let branch = IVMBranch(schema: schema)
+    let branch = IVMBranch(schema: schema, layouts: layouts)
     branch.apply(KVDiff(adding: group.entries.entries))
     let metrics = PreparedMetrics()
     let delegate = BranchDelegate(branch)

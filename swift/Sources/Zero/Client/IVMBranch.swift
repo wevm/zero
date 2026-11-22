@@ -5,9 +5,10 @@
 final class IVMBranch {
   private var sources: [String: MemorySource?]
   private let schema: ZeroSchema
-  /// The layout of each table's rows. Forks share them, so the rows a
-  /// mutator writes in a fork go into this branch's sources as they are.
-  private let layouts: [String: RowLayout]
+  /// The layout of each table's rows. Forks share them, and the replica
+  /// keeps its rows in them, so the replica and the sources of a branch
+  /// and its forks share each row.
+  let layouts: [String: RowLayout]
   /// The synced aggregates a child row's mutation moves, shared with the
   /// forks: it is query metadata, not row state.
   private let optimism: AggregateOptimism
@@ -15,10 +16,15 @@ final class IVMBranch {
   /// aggregate sources (see `aggregateSource`).
   private let isFork: Bool
 
-  convenience init(schema: ZeroSchema) {
+  convenience init(schema: ZeroSchema, layouts: [String: RowLayout]? = nil) {
     self.init(
-      schema: schema, sources: [:], layouts: schema.tables.mapValues { RowLayout($0) },
+      schema: schema, sources: [:], layouts: layouts ?? Self.layouts(schema),
       optimism: AggregateOptimism(), isFork: false)
+  }
+
+  /// A layout for each table's rows.
+  static func layouts(_ schema: ZeroSchema) -> [String: RowLayout] {
+    schema.tables.mapValues { RowLayout($0) }
   }
 
   private init(
@@ -99,10 +105,10 @@ final class IVMBranch {
 
   /// Applies the row changes of `diff` (`applyDiffs`): the aggregate rows
   /// under `a/`, then the table rows under `e/`, which is key order. A run
-  /// of adds to one source is pushed together. A row in `rows`, by key, is
-  /// the one a transaction wrote, which is the value the diff has for it.
-  /// The main branch then releases the aggregate sources nothing uses.
-  func apply(_ diff: KVDiff, rows written: [String: Row] = [:]) {
+  /// of adds to one source is pushed together. A row the replica keeps in
+  /// the source's layout goes in as it is, shared with the replica. The
+  /// main branch then releases the aggregate sources nothing uses.
+  func apply(_ diff: KVDiff) {
     var i = 0
     // JS's throw ends `applyDiffs` at the change an operator failed on.
     while i < diff.count, !PipelineFailure.hasFailed {
@@ -118,12 +124,12 @@ final class IVMBranch {
         // A relationship aggregate's or a grouped query's rows replayed
         // before its query materializes (a reload): the source takes the
         // row's shape, and the builder reuses it.
-        let row: JSONValue
+        let row: KVValue
         switch op {
         case .del(_, let old): row = old
         case .add(_, let new), .change(_, _, let new): row = new
         }
-        let (columns, primaryKey) = Self.inferAggregateSchema(name, row.objectValue ?? [:])
+        let (columns, primaryKey) = Self.inferAggregateSchema(name, row.json.objectValue ?? [:])
         source = aggregateSource(name, columns: columns, primaryKey: primaryKey)
       }
       guard let source else {
@@ -132,13 +138,10 @@ final class IVMBranch {
       }
       switch op {
       case .del(_, let old):
-        source.push(.remove(Row(old.objectValue ?? [:], layout: source.layout)))
+        source.push(.remove(old.sourceRow(source.layout)))
         i += 1
-      case .change(let key, let old, let new):
-        source.push(
-          .edit(
-            written[key] ?? Row(new.objectValue ?? [:], layout: source.layout),
-            oldRow: Row(old.objectValue ?? [:], layout: source.layout)))
+      case .change(_, let old, let new):
+        source.push(.edit(new.sourceRow(source.layout), oldRow: old.sourceRow(source.layout)))
         i += 1
       case .add:
         // The source's own prefix: the key up to the slash after its name.
@@ -150,7 +153,7 @@ final class IVMBranch {
         while i < diff.count, case .add(let key, let value) = diff[i],
           key.utf8.starts(with: sourcePrefix.utf8)
         {
-          rows.append(written[key] ?? Row(value.objectValue ?? [:], layout: source.layout))
+          rows.append(value.sourceRow(source.layout))
           i += 1
         }
         source.pushAdds(rows)

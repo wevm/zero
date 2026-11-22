@@ -228,6 +228,9 @@ final class Engine {
     let mutatorNames = mutators.keys.sorted()
     // The store `Zero.prepare` opened and read, unless it can't be used.
     let adopted = prepared.flatMap { ReplicaDatabase.adopt($0, name: name) }
+    // The tables' row layouts: the stored rows load in them, so the
+    // replica and the sources share each row.
+    let layouts = prepared?.branch.layouts ?? IVMBranch.layouts(schema)
     var database: ReplicaDatabase
     var openFailure: StorageFailure?
     var corrupt = false
@@ -243,11 +246,12 @@ final class Engine {
       do {
         if adopted != nil, let prepared {
           joined = try database.initClient(
-            clientID, mutatorNames: mutatorNames, now: base.now,
+            clientID, mutatorNames: mutatorNames, now: base.now, layouts: layouts,
             prepared: prepared.groupID.map { ($0, prepared.group) })
           onPrepared = prepared.groupID == nil || joined.clientGroupID == prepared.groupID
         } else {
-          joined = try database.initClient(clientID, mutatorNames: mutatorNames, now: base.now)
+          joined = try database.initClient(
+            clientID, mutatorNames: mutatorNames, now: base.now, layouts: layouts)
         }
       } catch is ReplicaDatabase.CorruptData {
         // What the client group holds doesn't decode, so the client state
@@ -257,7 +261,8 @@ final class Engine {
         database.drop()
         database.release()
         (database, openFailure, _) = ReplicaDatabase.open(options.storage, name: name)
-        joined = try database.initClient(clientID, mutatorNames: mutatorNames, now: base.now)
+        joined = try database.initClient(
+          clientID, mutatorNames: mutatorNames, now: base.now, layouts: layouts)
       }
     } catch {
       // The client group can't be read: run on memory, as when the open
@@ -265,7 +270,8 @@ final class Engine {
       database.release()
       database = ReplicaDatabase.fallback(name: name, storage: options.storage)
       openFailure = StorageFailure(error)
-      joined = try database.initClient(clientID, mutatorNames: mutatorNames, now: base.now)
+      joined = try database.initClient(
+        clientID, mutatorNames: mutatorNames, now: base.now, layouts: layouts)
     }
     let (clientGroupID, group) = joined
     self.database = database
@@ -300,7 +306,7 @@ final class Engine {
       mutations.map { (MutationKey(clientID: $0.clientID, id: $0.id), $0.aggregateWrites) },
       uniquingKeysWith: { $1 })
     let preparedBranch = onPrepared ? prepared : nil
-    self.ivmMain = preparedBranch?.branch ?? IVMBranch(schema: schema)
+    self.ivmMain = preparedBranch?.branch ?? IVMBranch(schema: schema, layouts: layouts)
     let loop = self.loop
     self.connectionManager = ConnectionManager(
       disconnectTimeout: options.disconnectTimeoutMs, scheduler: scheduler,
@@ -1584,7 +1590,7 @@ final class Engine {
           timestamp: pending.timestamp, aggregateWrites: Self.aggregateWrites(write)))
     ])
     do {
-      try context.processChanges(diff, rows: tx.rows)
+      try context.processChanges(diff)
     } catch {
       // As in JS, the mutation stays committed and pending, but isn't
       // pushed now, and its client outcome is the error.
@@ -1724,7 +1730,7 @@ final class Engine {
     snapshot.cookie = poke.cookie
     let patchWrite = KVWrite(snapshot.map)
     do {
-      try ReplicaStore.apply(poke.patch, to: patchWrite)
+      try ReplicaStore.apply(poke.patch, to: patchWrite, layouts: ivmMain.layouts)
     } catch {
       throw PokeError(error.description)
     }
@@ -1812,7 +1818,11 @@ final class Engine {
         }
         _ = try mutator(tx, m.args)
         for (key, value) in restoring[MutationKey(m)] ?? [:] {
-          if let value { write.set(key.string, value) } else { write.delete(key.string) }
+          if let value {
+            write.set(key.string, KVValue(value, at: key.string, layouts: ivmMain.layouts))
+          } else {
+            write.delete(key.string)
+          }
         }
         main = write.map
         branch = fork
@@ -1833,7 +1843,7 @@ final class Engine {
   private static func aggregateWrites(_ write: KVWrite) -> [JSKey: JSONValue?] {
     var writes: [JSKey: JSONValue?] = [:]
     for key in write.writes where key.string.hasPrefix(Keys.aggregatesPrefix) {
-      writes[key] = .some(write.get(key.string))
+      writes[key] = .some(write.get(key.string)?.json)
     }
     return writes
   }
@@ -1942,8 +1952,10 @@ final class Engine {
     for case .update(let key, _, _) in patch {
       guard let value = write.get(key) else { continue }
       let table = Keys.sourceName(key)
-      guard let primaryKey = schema.tables[table]?.primaryKey else { continue }
-      let row = value.objectValue ?? [:]
+      guard let primaryKey = schema.tables[table]?.primaryKey,
+        let layout = ivmMain.layouts[table]
+      else { continue }
+      let row = value.sourceRow(layout)
       if let rowKey = try? Keys.primaryKeyString(table: table, primaryKey: primaryKey, row: row) {
         guard StringCompare.equal(rowKey, key) else {
           throw PokeError("update of \(key) changes its primary key to \(rowKey)")
@@ -1953,9 +1965,9 @@ final class Engine {
       // JS keeps a row whose merge leaves it without a usable primary key,
       // and fails once a second one collides with it in the source.
       guard let source = ivmMain.source(table) else { continue }
-      let sourceRow = Row(row, layout: source.layout)
+      let sourceRow = row.conformed(to: source.layout)
       let compare = source.primaryIndex.data.compare
-      let previous = store.main.get(key).map { Row($0.objectValue ?? [:], layout: source.layout) }
+      let previous = store.main.get(key)?.sourceRow(source.layout)
       let replacesItself = previous.map { compare($0, sourceRow) == 0 } ?? false
       if (!replacesItself && source.primaryIndex.data.contains(sourceRow))
         || keyless[table, default: []].contains(where: { compare($0, sourceRow) == 0 })
