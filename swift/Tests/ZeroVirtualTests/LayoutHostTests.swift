@@ -161,6 +161,21 @@ final class LayoutScrollView {
     #expect(view.scrollOffset == 0)
   }
 
+  @Test("a viewport shorter than its insets lays out empty, and shows its rows once it grows")
+  func negativeViewport() {
+    // On iOS, a scroll view shorter than its safe area's insets reports a
+    // negative viewport (its height less the insets).
+    let h = Harness(rowCount: 100) { $0.anchoring = .manual }
+    let view = LayoutScrollView(h, viewportHeight: -40)
+    view.settle()
+    #expect(view.host.viewportHeight == 0)
+    #expect(view.scrollOffset == 0)
+    view.viewportHeight = 400
+    view.settle()
+    #expect(view.rowTop("r0") == 0)
+    #expect(view.blank == 0)
+  }
+
   @Test("rows taller than estimated above the viewport don't move it")
   func dynamicHeights() {
     let h = Harness(rowCount: 300) { $0.anchoring = .manual }
