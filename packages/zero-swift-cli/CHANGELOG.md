@@ -1,5 +1,12 @@
 # zero-swift
 
+## 0.10.2
+
+### Patch Changes
+
+- 00376cd: `VirtualList` no longer crashes when it's shorter than its insets, as on iOS in a window shorter than its safe area: it lays out as a list with no room for rows, and shows them once it has some.
+- 06c2aa1: The replica and the queries' sources now share each synced row instead of each keeping its own copy, so 100,000 synced rows of 10 columns take 75 MB instead of 127 MB. Pokes and optimistic mutations also apply 4–15% faster.
+
 ## 0.10.1
 
 ### Patch Changes
