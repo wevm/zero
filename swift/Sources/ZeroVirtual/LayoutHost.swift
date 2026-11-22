@@ -126,6 +126,9 @@ package final class LayoutHost: VirtualHost {
   ) -> (
     frames: [VirtualRowFrame], contentHeight: Double, offset: Double
   ) {
+    // A view shorter than its insets reports a negative height, which has
+    // no rows on screen: an empty viewport.
+    let viewport = max(0, viewport)
     inPass = true
     defer { inPass = false }
     if frameStarted {
