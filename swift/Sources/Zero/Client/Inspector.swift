@@ -162,7 +162,7 @@ public struct InspectorClient: Sendable {
       done(
         Result {
           var map: [String: JSONValue] = [:]
-          for e in try self.state.kv(engine, self.id).entries { map[e.key] = e.value }
+          for e in try self.state.kv(engine, self.id).entries { map[e.key] = e.value.json }
           return map
         })
     }
@@ -174,7 +174,7 @@ public struct InspectorClient: Sendable {
       done(
         Result {
           try self.state.kv(engine, self.id).scan(prefix: Keys.entitiesPrefix + table + "/")
-            .compactMap { $0.value.objectValue.map(Row.init) }
+            .compactMap { $0.value.json.objectValue.map(Row.init) }
         })
     }
   }

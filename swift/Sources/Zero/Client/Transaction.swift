@@ -21,9 +21,6 @@ public final class Transaction {
   let write: KVWrite
   let branch: IVMBranch
   let schema: ZeroSchema
-  /// The rows written, by key, as the branch has them, so the main branch
-  /// can take the same rows rather than a copy of each.
-  private(set) var rows: [String: Row] = [:]
   /// A mutator's query computes its aggregates from the branch's rows,
   /// unless the server has answered it: then it reads the synced rows, with
   /// this client's pending changes applied, as a view of it does
@@ -86,8 +83,8 @@ public final class Transaction {
     let source = source(tableName)
     var row = value.conformed(to: source.layout)
     for column in table.columnNames where row[column] == nil { row[column] = .null }
-    write.set(key, JSONValue(row))
-    rows[key] = row
+    // The replica and the branch's source share the row.
+    write.set(key, .row(row))
     source.push(.add(row))
     try applyOptimisticAggregateDeltas(tableName, old: nil, new: row)
   }
@@ -105,14 +102,11 @@ public final class Transaction {
   func update(_ tableName: String, _ value: Row) throws {
     let table = try tableSchema(tableName)
     let key = try key(table, value)
-    guard let prev = write.get(key)?.objectValue else { return }
-    var next = prev
-    for (k, v) in value { next[k] = v }
-    write.set(key, .object(next))
     let source = source(tableName)
-    let row = Row(next, layout: source.layout)
-    let oldRow = Row(prev, layout: source.layout)
-    rows[key] = row
+    guard let oldRow = write.get(key)?.row(in: source.layout) else { return }
+    var row = oldRow
+    for (k, v) in value { row[k] = v }
+    write.set(key, .row(row))
     source.push(.edit(row, oldRow: oldRow))
     try applyOptimisticAggregateDeltas(tableName, old: oldRow, new: row)
   }
@@ -120,11 +114,9 @@ public final class Transaction {
   func delete(_ tableName: String, _ id: Row) throws {
     let table = try tableSchema(tableName)
     let key = try key(table, id)
-    guard let prev = write.get(key)?.objectValue else { return }
-    write.delete(key)
-    rows[key] = nil
     let source = source(tableName)
-    let oldRow = Row(prev, layout: source.layout)
+    guard let oldRow = write.get(key)?.row(in: source.layout) else { return }
+    write.delete(key)
     source.push(.remove(oldRow))
     try applyOptimisticAggregateDeltas(tableName, old: oldRow, new: nil)
   }
@@ -185,9 +177,9 @@ public final class Transaction {
   ) {
     // The branch holds the row when a view of its query reads it.
     let source = branch.source(agg.aggregateTable)
-    guard let cur = write.get(key)?.objectValue else {
+    guard let cur = write.get(key)?.json.objectValue else {
       if agg.grouped, let added = newGroupRow(agg, old, new) {
-        write.set(key, .object(added))
+        write.set(key, .json(.object(added)))
         source?.push(.add(Row(added, layout: source!.layout)))
       }
       return
@@ -200,7 +192,7 @@ public final class Transaction {
       if inBranch { source!.push(.remove(curRow!)) }
       return
     }
-    write.set(key, .object(updated))
+    write.set(key, .json(.object(updated)))
     if inBranch { source!.push(.edit(Row(updated, layout: source!.layout), oldRow: curRow!)) }
   }
 

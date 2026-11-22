@@ -223,13 +223,13 @@ final class QueryContext {
   /// Pushes `diff` into the branch and flushes the views. A push an
   /// operator fails (where JS throws from it) still flushes what the views
   /// got, as JS's `finally` does, and then throws.
-  func processChanges(_ diff: KVDiff, rows: [String: Row] = [:]) throws {
+  func processChanges(_ diff: KVDiff) throws {
     releasePreparedViews()
     if let branchFailure { throw branchFailure }
     var failure: PipelineError?
     batchViewUpdates {
       do {
-        try PipelineFailure.capture { branch.apply(diff, rows: rows) }
+        try PipelineFailure.capture { branch.apply(diff) }
       } catch {
         failure = error as? PipelineError ?? PipelineError("\(error)")
       }

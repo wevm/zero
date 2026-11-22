@@ -134,7 +134,7 @@ final class MutationTracker {
       largest = max(largest, mutationID)
       switch op {
       case .add(_, let value):
-        let result = try MutationResult(json: value)
+        let result = try MutationResult(json: value.json)
         switch result {
         case .ok(let data): try processMutationOk(clientID, mutationID, data)
         case .error(let e): try processMutationError(clientID, mutationID, e)

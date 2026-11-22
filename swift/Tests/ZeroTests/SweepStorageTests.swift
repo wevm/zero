@@ -310,7 +310,7 @@ import ZeroTesting
           model[JSKey(key)] = nil
         } else {
           let v = JSONValue.number(Double(round))
-          map.set(key, v)
+          map.set(key, .json(v))
           model[JSKey(key)] = v
         }
       }
@@ -333,9 +333,9 @@ import ZeroTesting
       func describe(_ diff: KVDiff) -> [JSKey] {
         diff.map { op in
           switch op {
-          case .add(let key, let v): JSKey("add \(key) \(v)")
-          case .del(let key, let v): JSKey("del \(key) \(v)")
-          case .change(let key, let a, let b): JSKey("change \(key) \(a) \(b)")
+          case .add(let key, let v): JSKey("add \(key) \(v.json)")
+          case .del(let key, let v): JSKey("del \(key) \(v.json)")
+          case .change(let key, let a, let b): JSKey("change \(key) \(a.json) \(b.json)")
           }
         }
       }
@@ -347,7 +347,7 @@ import ZeroTesting
       var few = map
       let put = "e/issues/" + String(rng.next() % 2000) + suffixes[Int(rng.next() % 5)]
       let deleted = keys[Int(rng.next() % UInt64(keys.count))]
-      few.set(put, .number(-1))
+      few.set(put, .json(.number(-1)))
       few.delete(deleted)
       #expect(
         describe(KVDiff.between(map, few, keys: [JSKey(put), JSKey(deleted)]))

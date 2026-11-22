@@ -46,9 +46,18 @@ public struct Row: @unchecked Sendable {
     var others: [(key: String, value: JSONValue)] = []
     let storage = RowStorage.make(layout) { values in
       values.initialize(repeating: nil, count: layout.names.count)
+      let names = layout.names
+      // An object's columns usually come in the layout's order, as the
+      // replica stores them, so the column after the last one found is
+      // tried before the lookup.
+      var next = 0
       for (name, value) in object {
-        if let i = layout.index(of: name) {
+        let i =
+          next < names.count && StringCompare.equal(names[next], name)
+          ? next : layout.index(of: name)
+        if let i {
           values[i] = value
+          next = i + 1
         } else {
           others.append((name, value))
         }
