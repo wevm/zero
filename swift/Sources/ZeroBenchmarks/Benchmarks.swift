@@ -174,6 +174,28 @@ enum Benchmarks {
       ) { state in
         state.0.receive(state.1)
       }
+      // The same pokes as zero-cache sends them to this client, whose
+      // protocol is past 52: in binary chunks.
+      try bench.run(
+        "issueListV2 view, zbugs poke of \(total) rows in binary chunks",
+        setup: { () throws -> (Client, MaterializedView, [SocketMessage]) in
+          let c = try client()
+          let view = try c.zero.materialize(FirstSync.issueList)
+          return (c, view, c.nextPokeChunks(parts: parts))
+        }
+      ) { state in
+        state.0.receive(state.2)
+        check(state.1.data.entries.count == FirstSync.pageSize + 1, "a page of issues")
+      }
+      try bench.run(
+        "no view, zbugs poke of \(total) rows in binary chunks",
+        setup: { () throws -> (Client, [SocketMessage]) in
+          let c = try client()
+          return (c, c.nextPokeChunks(parts: parts))
+        }
+      ) { state in
+        state.0.receive(state.1)
+      }
     }
   }
 

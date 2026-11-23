@@ -353,7 +353,7 @@ final class Engine {
       },
       onFatalError: { [weak self] error in self?.disconnect(error) })
     pokeHandler = PokeHandler(
-      clientID: clientID, schema: schema, scheduler: scheduler,
+      clientID: clientID, schema: schema, layouts: ivmMain.layouts, scheduler: scheduler,
       apply: { [weak self] poke in
         guard let self else { return }
         try self.withWriteLock { try self.applyPoke(poke) }
@@ -1062,7 +1062,8 @@ final class Engine {
     }
     let downstream: Downstream
     do {
-      downstream = try Downstream(text: text)
+      downstream =
+        try pokeHandler.rowReader.pokePart(text).map(Downstream.pokePart) ?? Downstream(text: text)
     } catch {
       failOnMessage(
         .client(

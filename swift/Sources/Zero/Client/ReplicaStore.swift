@@ -216,7 +216,8 @@ final class KVWrite {
 
 /// A patch operation of a pull response (`PatchOperationInternal`).
 enum KVPatchOp {
-  case put(key: String, value: JSONValue)
+  /// A row the poke's reader read into its layout is `.row`.
+  case put(key: String, value: KVValue)
   case update(key: String, merge: RowRecord?, constrain: [String]?)
   case del(key: String)
   case clear
@@ -309,8 +310,10 @@ final class ReplicaStore {
       switch op {
       case .clear:
         write.clear(keysOf: write.map)
-      case .put(let key, let value):
+      case .put(let key, .json(let value)):
         write.set(key, KVValue(value, at: key, layouts: layouts))
+      case .put(let key, let value):
+        write.set(key, value)
       case .update(let key, let merge, let constrain):
         var entries: [(String, JSONValue)] = []
         switch write.get(key) {

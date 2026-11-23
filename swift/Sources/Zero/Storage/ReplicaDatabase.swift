@@ -1199,7 +1199,16 @@ final class SQLiteStore: @unchecked Sendable {
     var rows = JSONParser.Batch()
     try db.query("SELECT key, value FROM entries WHERE client_group_id = ?", [.text(id)]) { row in
       let key = row.text(0)
-      g.entries.set(key, KVValue(try rows.parse(row.bytes(1)), at: key, layouts: layouts))
+      let bytes = row.bytes(1)
+      // A table's row is read straight into its layout, as a poke's are.
+      if key.utf8.starts(with: Keys.entitiesPrefix.utf8),
+        let layout = layouts[Keys.sourceName(key)],
+        let read = JSONParser.Reader.row(bytes, layout)
+      {
+        g.entries.set(key, .row(read))
+      } else {
+        g.entries.set(key, KVValue(try rows.parse(bytes), at: key, layouts: layouts))
+      }
     }
     try db.query(
       """
