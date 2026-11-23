@@ -31,6 +31,8 @@ final class PokeHandler {
   private let clientID: String
   private let schema: ZeroSchema
   private let serverToClient: NameMapper
+  /// Reads pokes' rows into the layouts of the rows the replica keeps.
+  let rowReader: PokeRowReader
   private let scheduler: any Scheduler
   /// Applies a merged poke; throws when it does not apply.
   private let apply: (MergedPoke) throws -> Void
@@ -43,7 +45,7 @@ final class PokeHandler {
   private var playbackRunning = false
 
   init(
-    clientID: String, schema: ZeroSchema, scheduler: any Scheduler,
+    clientID: String, schema: ZeroSchema, layouts: [String: RowLayout], scheduler: any Scheduler,
     apply: @escaping (MergedPoke) throws -> Void,
     onApplied: @escaping (MergedPoke) throws -> Void,
     onPokeError: @escaping (_ message: String, _ received: Bool) -> Void
@@ -51,6 +53,7 @@ final class PokeHandler {
     self.clientID = clientID
     self.schema = schema
     self.serverToClient = NameMapper.serverToClient(schema)
+    self.rowReader = PokeRowReader(serverToClient, layouts: layouts)
     self.scheduler = scheduler
     self.apply = apply
     self.onApplied = onApplied
@@ -111,12 +114,16 @@ final class PokeHandler {
     }
     var parts = receiving.parts
     if !receiving.chunks.isEmpty {
-      do {
-        parts = try PokeChunk.decode(receiving.chunks)
-      } catch {
-        // `String(e)` of what `TextDecoder` and valita throw.
-        handlePokeError("TypeError: " + valitaMessage(error))
-        return nil
+      if let read = rowReader.parts(receiving.chunks) {
+        parts = read
+      } else {
+        do {
+          parts = try PokeChunk.decode(receiving.chunks)
+        } catch {
+          // `String(e)` of what `TextDecoder` and valita throw.
+          handlePokeError("TypeError: " + valitaMessage(error))
+          return nil
+        }
       }
       for part in parts {
         if let message = Self.invalidLastMutationID(part) {
@@ -240,7 +247,7 @@ final class PokeHandler {
                 .put(
                   key: Keys.mutationResponseKey(
                     clientID: response.id.clientID, id: response.id.id),
-                  value: response.result.json))
+                  value: .json(response.result.json)))
             case .del(let id):
               merged.patch.append(
                 .del(key: Keys.mutationResponseKey(clientID: id.clientID, id: id.id)))
@@ -278,7 +285,7 @@ final class PokeHandler {
     switch op {
     case .clear: .clear
     case .del(let hash): .del(key: key(hash))
-    case .put(let hash, _): .put(key: key(hash), value: .null)
+    case .put(let hash, _): .put(key: key(hash), value: .json(.null))
     }
   }
 
@@ -290,7 +297,12 @@ final class PokeHandler {
     case .put(let serverTable, let value):
       guard let table = serverToClient.tableNameIfKnown(serverTable) else { return nil }
       let row = try serverToClient.row(serverTable, value)
-      return .put(key: try key(table, row), value: .object(row))
+      return .put(key: try key(table, row), value: .json(.object(row)))
+    case .putRow(let serverTable, let row):
+      guard let table = serverToClient.tableNameIfKnown(serverTable) else { return nil }
+      // Its columns are the client's: the reader reads only tables whose
+      // columns have the same names on the server.
+      return .put(key: try key(table, row), value: .row(row))
     case .del(let serverTable, let id):
       guard let table = serverToClient.tableNameIfKnown(serverTable) else { return nil }
       return .del(key: try key(table, try serverToClient.row(serverTable, id)))
@@ -311,7 +323,8 @@ final class PokeHandler {
   private static func aggregateRowPatchOp(_ op: RowPatchOp) throws -> KVPatchOp? {
     switch op {
     case .put(let table, let value) where isAggregateTableName(table):
-      return .put(key: try Keys.aggregateRowKey(table: table, row: value), value: .object(value))
+      return .put(
+        key: try Keys.aggregateRowKey(table: table, row: value), value: .json(.object(value)))
     case .del(let table, let id) where isAggregateTableName(table):
       return .del(key: try Keys.aggregateRowKey(table: table, row: id))
     case .update(let table, let id, let merge, let constrain) where isAggregateTableName(table):
@@ -324,6 +337,10 @@ final class PokeHandler {
   }
 
   private func key(_ table: String, _ row: RowRecord) throws -> String {
+    try Keys.primaryKeyString(table: table, primaryKey: schema.tables[table]!.primaryKey, row: row)
+  }
+
+  private func key(_ table: String, _ row: Row) throws -> String {
     try Keys.primaryKeyString(table: table, primaryKey: schema.tables[table]!.primaryKey, row: row)
   }
 }

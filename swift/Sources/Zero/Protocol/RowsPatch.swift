@@ -3,6 +3,10 @@
 package enum RowPatchOp: Sendable, Hashable, JSONCodable {
   /// Inserts or replaces the row.
   case put(tableName: String, value: RowRecord)
+  /// A `put` whose row was read straight into its table's layout
+  /// (`PokeRowReader`), the row the replica and the sources keep. Its
+  /// columns are the server's names, which are the client's.
+  case putRow(tableName: String, row: Row)
   /// Merges `merge` into the row with primary key `id`. `merge` is a
   /// `jsonObjectSchema`, which checks `typeof v === 'object'` and so admits
   /// an array as well as an object; it is kept as sent. `constrain` limits
@@ -39,6 +43,8 @@ package enum RowPatchOp: Sendable, Hashable, JSONCodable {
     switch self {
     case .put(let tableName, let value):
       return ["op": "put", "tableName": .string(tableName), "value": .object(value)]
+    case .putRow(let tableName, let row):
+      return ["op": "put", "tableName": .string(tableName), "value": JSONValue(row)]
     case .update(let tableName, let id, let merge, let constrain):
       var o = JSONObjectBuilder()
       o.set("op", "update")

@@ -107,7 +107,12 @@ package struct JSONParser {
   /// after another, with the same columns. Growing each from nothing took a
   /// few allocations. One that ends with much more room than its keys take
   /// gives it up, since it may be kept for long, as a row in the replica.
-  private mutating func parseValue(sizes: inout [Int]) throws(Error) -> JSONValue {
+  ///
+  /// `depth` is how many arrays and objects the value is in, which count
+  /// toward ``maxDepth``.
+  private mutating func parseValue(
+    sizes: inout [Int], depth: Int = 0
+  ) throws(Error) -> JSONValue {
     var parents: [Container] = []
     var array: [JSONValue]?
     var object: JSONObject?
@@ -138,7 +143,7 @@ package struct JSONParser {
       switch b[i] {
       case UInt8(ascii: "{"), UInt8(ascii: "["):
         let isObject = b[i] == UInt8(ascii: "{")
-        if parents.count + (array == nil && object == nil ? 0 : 1) >= Self.maxDepth {
+        if depth + parents.count + (array == nil && object == nil ? 0 : 1) >= Self.maxDepth {
           throw error("JSON nested too deeply")
         }
         i += 1
@@ -381,5 +386,131 @@ package struct JSONParser {
     // Double(String) rounds correctly and overflows to infinity, as JS does.
     guard let d = Double(text) else { throw error("Bad number") }
     return d
+  }
+}
+
+extension JSONParser {
+  /// Reads JSON text a part at a time, for a decoder that knows the shape
+  /// it expects: it reads the brackets, keys, and strings it expects
+  /// itself, and the values in between with the parser. A read of
+  /// something else returns nil or false; the decoder can go back to a
+  /// ``mark`` and read it another way. A read throws where the text isn't
+  /// JSON.
+  struct Reader {
+    private var p: JSONParser
+    /// How many arrays and objects the reader is in, which count toward
+    /// ``maxDepth`` as the parser counts them.
+    private var depth = 0
+    private var sizes: [Int] = []
+
+    init(_ buffer: UnsafeBufferPointer<UInt8>) { p = JSONParser(buffer) }
+
+    /// Where the reader is, to go back to.
+    struct Mark {
+      fileprivate let offset: Int
+      fileprivate let depth: Int
+    }
+
+    var mark: Mark { Mark(offset: p.i, depth: depth) }
+
+    mutating func reset(to mark: Mark) {
+      p.i = mark.offset
+      depth = mark.depth
+    }
+
+    /// Whether only whitespace is left.
+    mutating func atEnd() -> Bool {
+      p.skipWhitespace()
+      return p.i == p.end
+    }
+
+    /// Reads `c` if it is next, after whitespace.
+    mutating func read(_ c: Unicode.Scalar) -> Bool {
+      p.skipWhitespace()
+      guard p.i < p.end, p.b[p.i] == UInt8(ascii: c) else { return false }
+      p.i += 1
+      return true
+    }
+
+    /// Reads `[` or `{` if it is next, going into the array or object.
+    mutating func open(_ c: Unicode.Scalar) throws(Error) -> Bool {
+      p.skipWhitespace()
+      guard p.i < p.end, p.b[p.i] == UInt8(ascii: c) else { return false }
+      if depth >= JSONParser.maxDepth { throw p.error("JSON nested too deeply") }
+      p.i += 1
+      depth += 1
+      return true
+    }
+
+    /// Reads `]` or `}` if it is next, leaving the array or object.
+    mutating func close(_ c: Unicode.Scalar) -> Bool {
+      guard read(c) else { return false }
+      depth -= 1
+      return true
+    }
+
+    /// A string, if one is next.
+    mutating func string() throws(Error) -> String? {
+      p.skipWhitespace()
+      guard p.i < p.end, p.b[p.i] == UInt8(ascii: "\"") else { return nil }
+      return try p.parseString()
+    }
+
+    /// A property name and its colon.
+    mutating func key() throws(Error) -> String { try p.parseKey() }
+
+    /// The value that is next, whatever it is.
+    mutating func value() throws(Error) -> JSONValue {
+      p.skipWhitespace()
+      return try p.parseValue(sizes: &sizes, depth: depth)
+    }
+
+    /// `bytes` as a row in `layout`: nil unless they are the JSON of an
+    /// object whose keys are all columns of the layout.
+    static func row(_ bytes: [UInt8], _ layout: RowLayout) -> Row? {
+      bytes.withUnsafeBufferPointer { buffer in
+        var r = Reader(buffer)
+        guard let row = try? r.row(layout), r.atEnd() else { return nil }
+        return row
+      }
+    }
+
+    /// The object that is next as a row in `layout`, without making the
+    /// object: nil, with the reader where it was, when the next value isn't
+    /// an object or has a key that isn't a column of the layout. A key given
+    /// twice keeps its last value, as it does in an object.
+    mutating func row(_ layout: RowLayout) throws(Error) -> Row? {
+      let start = mark
+      guard try open("{") else { return nil }
+      let names = layout.names
+      // Freed without recursion if it isn't kept, as the parser frees what
+      // it drops.
+      var row = Row(storage: .make(layout) { $0.initialize(repeating: nil, count: names.count) })
+      if !close("}") {
+        // The columns usually come in the layout's order, so the one
+        // after the last one found is tried before the lookup.
+        var next = 0
+        repeat {
+          let key = try p.parseKey()
+          let i =
+            next < names.count && StringCompare.equal(names[next], key)
+            ? next : layout.index(of: key)
+          guard let i else {
+            reset(to: start)
+            return nil
+          }
+          // A key given twice: the value it replaces is freed without
+          // recursion.
+          if var old = row[slot: i] {
+            row[slot: i] = nil
+            JSONValue.discard(&old)
+          }
+          row[slot: i] = try p.parseValue(sizes: &sizes, depth: depth)
+          next = i + 1
+        } while read(",")
+        guard close("}") else { throw p.error("Expected ',' or '}' after property value") }
+      }
+      return row
+    }
   }
 }

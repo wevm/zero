@@ -149,6 +149,25 @@ final class Client {
     ]
   }
 
+  /// The messages of the next poke as zero-cache sends it to a client of
+  /// protocol 52 or later: its parts as the JSON of an array, in binary
+  /// chunks of up to 1 MB (`PokeChunkEncoder`).
+  func nextPokeChunks(parts: [[String]]) -> [SocketMessage] {
+    let frames = nextPoke(parts: parts)
+    // A part's body is its frame without `["pokePart",` and `]`.
+    let bodies = frames.dropFirst().dropLast().map {
+      $0.dropFirst(#"["pokePart","#.count).dropLast()
+    }
+    let payload = Array(("[" + bodies.joined(separator: ",") + "]").utf8)
+    let size = 1024 * 1024 - 1
+    var messages: [SocketMessage] = [.text(frames.first!)]
+    for start in stride(from: 0, to: payload.count, by: size) {
+      messages.append(
+        .binary([PokeChunk.messageType] + payload[start..<min(start + size, payload.count)]))
+    }
+    return messages + [.text(frames.last!)]
+  }
+
   private static func cookie(_ n: Int) -> String {
     let digits = String(n)
     return String(repeating: "0", count: 12 - digits.count) + digits
@@ -157,6 +176,11 @@ final class Client {
   /// Delivers frames from the server and lets the client apply them.
   func receive(_ frames: [String]) {
     for frame in frames { socket.receive(text: frame) }
+    scheduler.runDueTimers()
+  }
+
+  func receive(_ messages: [SocketMessage]) {
+    for message in messages { socket.receive(message) }
     scheduler.runDueTimers()
   }
 }
