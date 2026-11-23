@@ -4,7 +4,7 @@ import type {LogConfig} from '../../otel/src/log-options.ts';
 import {assert, unreachable} from '../../shared/src/asserts.ts';
 import {getOrInsertComputed} from '../../shared/src/map.ts';
 import {must} from '../../shared/src/must.ts';
-import {assignProperty} from '../../shared/src/objects.ts';
+import {assignProperty, getOwnProperty} from '../../shared/src/objects.ts';
 import type {Writable} from '../../shared/src/writable.ts';
 import type {Condition, Ordering} from '../../zero-protocol/src/ast.ts';
 import type {Row, Value} from '../../zero-protocol/src/data.ts';
@@ -1169,9 +1169,7 @@ export function rawColumn(
   tableName: string,
 ): RawColumn {
   // Not a column that `valueTypes` merely inherits, e.g. `toString`.
-  const valueType = Object.hasOwn(valueTypes, name)
-    ? valueTypes[name]
-    : undefined;
+  const valueType = getOwnProperty(valueTypes, name);
   if (valueType === undefined) {
     throw invalidColumnError(valueTypes, name, tableName);
   }
@@ -1213,6 +1211,8 @@ export function fromSQLiteRawRow(
   return newRow;
 }
 
+const INT64_MIN = -(2n ** 63n);
+
 function fromSQLiteType(
   valueType: ValueType,
   v: SQLiteValue,
@@ -1229,6 +1229,16 @@ function fromSQLiteType(
     case 'string':
     case 'null':
       if (typeof v === 'bigint') {
+        if (v === INT64_MIN) {
+          // Since SQLite check-in 03f699544e (2026-10-21, in zero-sqlite3
+          // 1.2.0), a REAL of exactly -2^63 bound to a column with INTEGER or
+          // NUMERIC affinity is stored as the integer -9223372036854775808,
+          // which safeIntegers(true) reads as a bigint. It used to stay a
+          // REAL, and a double reads back fine. -2^63 is exactly
+          // representable as a double, so converting it loses nothing.
+          // https://sqlite.org/src/info/03f699544e
+          return -(2 ** 63);
+        }
         if (v > Number.MAX_SAFE_INTEGER || v < Number.MIN_SAFE_INTEGER) {
           throw new UnsupportedValueError(
             `value ${v} (in ${tableName}.${column}) is outside of supported bounds`,
