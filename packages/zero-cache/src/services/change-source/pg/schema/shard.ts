@@ -253,7 +253,9 @@ const replicaInfoSchema = v.object({
   id: v.string(),
   rank: v.bigint(),
   slot: v.string(),
-  epoch: v.number(),
+  // The column is INT4 on shards created before epochs became TEXT (and is
+  // read as a number); accept both and normalize to a string.
+  epoch: v.union(v.number(), v.string()).map(String),
   generation: v.string(),
   stage: replicaStageSchema,
   backupPath: v.string().nullable(),
@@ -323,7 +325,7 @@ export async function createReplica(
   shard: ShardID,
   id: string,
   slot: string,
-  epoch: number,
+  epoch: string,
   replicaVersion: string,
   {backupPath, backupV5, pgChangeLog}: BackupOptions,
   stage: ReplicaStage,
@@ -382,6 +384,26 @@ export async function initRestoreReplica(
 }
 
 /**
+ * Deletes a replica created for a fork (i.e. in the `Restore` stage) that
+ * was abandoned before being initialized with {@link initRestoreReplica}.
+ * Its slot, once inactive and without a replica, is then dropped by
+ * `dropUnclaimedSlots()` or the replication-slot-cleanup-monitor.
+ *
+ * Only an uninitialized replica (i.e. with an empty `generation`) is deleted.
+ */
+export async function deleteUninitializedReplica(
+  sql: PostgresDB,
+  shard: ShardID,
+  id: string,
+): Promise<void> {
+  const schema = upstreamSchema(shard);
+  await sql`
+    DELETE FROM ${sql(schema)}.replicas
+      WHERE id = ${id} AND "generation" = '';
+  `;
+}
+
+/**
  * Gets at the given version and optional ID. If no ID is specified, gets
  * the latest (i.e. highest rank) replica with that version.
  */
@@ -399,7 +421,7 @@ export async function getReplicaAtVersion(
       replicas."id",
       replicas."rank",
       replicas."slot",
-      replicas."epoch",
+      replicas."epoch"::text AS "epoch",
       replicas."generation",
       replicas."stage",
       replicas."backupPath",
@@ -441,7 +463,7 @@ export async function getActiveReplicas(
       replicas."id",
       replicas."rank",
       replicas."slot",
-      replicas."epoch",
+      replicas."epoch"::text AS "epoch",
       replicas."generation",
       replicas."stage",
       replicas."backupPath",
@@ -476,7 +498,7 @@ export async function getActiveReplicas(
 export async function getRestoreCandidates(
   sql: PostgresDB,
   shard: ShardID,
-  epoch: number,
+  epoch: string,
 ): Promise<ReplicaState[]> {
   const schema = sql(upstreamSchema(shard));
   const results = await sql`
@@ -484,7 +506,7 @@ export async function getRestoreCandidates(
       replicas."id",
       replicas."rank",
       replicas."slot",
-      replicas."epoch",
+      replicas."epoch"::text AS "epoch",
       replicas."generation",
       replicas."stage",
       replicas."backupPath",
@@ -495,18 +517,31 @@ export async function getRestoreCandidates(
     FROM ${schema}.replicas JOIN pg_replication_slots slots ON slot = slot_name
 
       -- coalesce on the newest generation in the epoch
+      --
+      -- "epoch" is compared as TEXT explicitly because the column is INT4 on
+      -- older shards: an uncast parameter would be prepared as INT4, and the
+      -- cached statement would then fail ("operator does not exist: text =
+      -- integer") once the column is altered to TEXT.
       WHERE generation = (
         SELECT MAX(r.generation)
           FROM ${schema}.replicas r
           JOIN pg_replication_slots s ON r.slot = s.slot_name
-         WHERE r."epoch" = ${epoch} AND r."backupV5"
+         WHERE r."epoch"::text = ${epoch}::text AND r."backupV5"
            -- ignore orphaned InitialSyncs, which cannot be restored from
            AND (s."active" OR r."stage" != ${InitialSync})
            AND s.restart_lsn IS NOT NULL
            AND s.wal_status IS DISTINCT FROM 'lost'
+           -- ignore fork destinations not yet initialized from a source
+           -- (see initRestoreReplica()), which cannot be restored from
+           AND r.generation != ''
+           -- ignore inactive replicas without a backup, e.g. a fork
+           -- destination whose task exited before taking over its slot
+           -- (which sets the backupPath), which cannot be restored from
+           AND (s."active" OR r."backupPath" IS NOT NULL)
       )
-           AND "epoch" = ${epoch} AND "backupV5"
+           AND "epoch"::text = ${epoch}::text AND "backupV5"
            AND (slots.active OR "stage" != ${InitialSync})
+           AND (slots.active OR "backupPath" IS NOT NULL)
            AND slots.restart_lsn IS NOT NULL
            AND slots.wal_status IS DISTINCT FROM 'lost'
 
@@ -529,7 +564,7 @@ export async function getReplicaState(
       replicas."id",
       replicas."rank",
       replicas."slot",
-      replicas."epoch",
+      replicas."epoch"::text AS "epoch",
       replicas."generation",
       replicas."stage",
       replicas."backupPath",
